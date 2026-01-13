@@ -1,29 +1,51 @@
 package xyz.cereshost;
 
-import org.jetbrains.annotations.Contract;
+import com.google.gson.Gson;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.endpoint.BinanceClient;
+import xyz.cereshost.file.IOdata;
 import xyz.cereshost.market.*;
 import xyz.cereshost.utils.TaskReturn;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
 public class Main {
 
+    public static final Gson GSON = new Gson();
     private static final int TICK_SIZE = 2000;
+    private static final int SAVE_INTERVAL = 5;
     private static final List<String> MARKETS_NAMES = List.of("BTCUSDT", "ETHUSDT", "XRPUSDT");
-    private static final HashMap<String, Market> MARKETS = new HashMap<>();
+    public static final ConcurrentHashMap<String, Market> MARKETS = new ConcurrentHashMap<>();
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) throws Exception {
+        int i = 0;
+
+        for (String name : MARKETS_NAMES) {
+            Optional<Path> last = IOdata.getLastSnapshot(name);
+
+            if (last.isPresent()) {
+                String json = Files.readString(last.get());
+                Market book = new Gson().fromJson(json, Market.class);
+                MARKETS.put(name, book);
+                System.out.println("Loaded " + name);
+            }
+        }
+
         while (!Thread.currentThread().isInterrupted()) {
             long start = System.nanoTime();
+            i++;
+
             runTick();
+            if ((i % SAVE_INTERVAL) == 0){
+                IOdata.saveData();
+            }
             long end = System.nanoTime();
             long deltaMilis = TimeUnit.NANOSECONDS.toMillis(end - start);
             LockSupport.parkNanos(TimeUnit.MICROSECONDS.toNanos(TICK_SIZE - deltaMilis));
@@ -65,16 +87,7 @@ public class Main {
         runnable.accept(results);
     }
 
-    @Contract(value = "_ -> new", pure = true)
-    public static @NotNull ThreadFactory createThreadFactoryNamed(String name) {
-        return new ThreadFactory() {
-            private final AtomicInteger count = new AtomicInteger(0);
-            @Override
-            public Thread newThread(@NotNull Runnable r) {
-                Thread t = new Thread(r);
-                t.setName("Vesta-" + name + "-" + count.getAndIncrement());
-                return t;
-            }
-        };
+    public static void clearData(){
+        MARKETS.clear();
     }
 }

@@ -17,7 +17,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.HashSet;
 import java.util.List;
 
 @UtilityClass
@@ -84,7 +83,8 @@ public class BinanceClient {
             double price = trade.get("price").asDouble();
             boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
             long id = trade.get("id").asLong();
-            trades.add(new Trade(id, price, quoteQty, isBuyerMaker));
+            long time = trade.get("time").asLong();
+            trades.add(new Trade(id, time, price, quoteQty, isBuyerMaker));
         }
         return trades;
     }
