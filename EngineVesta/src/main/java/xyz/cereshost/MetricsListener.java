@@ -15,7 +15,7 @@ public class MetricsListener extends TrainingListenerAdapter {
         var result = trainer.getTrainingResult();
 
         trainLoss.add(result.getTrainLoss());
-        trainMae.add(result.getTrainEvaluation("Accuracy"));
+        trainMae.add(result.getTrainEvaluation("mae"));
 
         System.out.printf(
                 "Progreso=%.6f\n",

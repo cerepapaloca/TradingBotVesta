@@ -11,6 +11,7 @@ import ai.djl.nn.Activation;
 import ai.djl.nn.Blocks;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
+import ai.djl.nn.norm.Dropout;
 import ai.djl.nn.recurrent.LSTM;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
@@ -22,6 +23,7 @@ import ai.djl.training.evaluator.Accuracy;
 import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Optimizer;
+import ai.djl.training.tracker.Tracker;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
@@ -42,7 +44,7 @@ import static xyz.cereshost.Engine.checkEngines;
 public class Main {
 
     private static final int LOOK_BACK = 10;
-    public static final int EPOCH = 5_000;
+    public static final int EPOCH = 500;
 
     public static void main(String[] args) throws IOException, TranslateException {
         IOdata.loadAll();
@@ -80,15 +82,46 @@ public class Main {
             float[][][] Xraw = pair.getKey();
             float[][] yraw = pair.getValue();
 
-            int samples = Xraw.length;
-            int lookback = Xraw[0].length;
-            int features = Xraw[0][0].length;
+            // 1. Normalizar X robustamente
+            RobustNormalizer xNormalizer = new RobustNormalizer();
+            xNormalizer.fit(Xraw);
+            float[][][] Xnorm = xNormalizer.transform(Xraw);
 
-            // Crear arrays
+            // 2. Normalizar y con estadísticas simples
+            // Calcular retornos porcentuales en lugar de precios absolutos
+            for (int i = 0; i < yraw.length; i++) {
+                // Convertir a retorno porcentual
+                // yraw[i][0] = open, yraw[i][1] = close
+                // Normalizar a [-1, 1] aproximado
+                yraw[i][0] = yraw[i][0] / 1000f; // Ajusta este divisor según tu rango de precios
+                yraw[i][1] = yraw[i][1] / 1000f;
+            }
+
+            // 3. Verificar que no haya NaN
+            for (int i = 0; i < Xnorm.length; i++) {
+                for (int j = 0; j < Xnorm[0].length; j++) {
+                    for (int k = 0; k < Xnorm[0][0].length; k++) {
+                        if (Float.isNaN(Xnorm[i][j][k]) || Float.isInfinite(Xnorm[i][j][k])) {
+                            Xnorm[i][j][k] = 0f;
+                        }
+                    }
+                }
+            }
+
+            Normalizer normalizer = new Normalizer();
+            normalizer.fit(Xraw, yraw);
+            float[][] ynorm = normalizer.transformY(yraw);
+
+            // Usar Xnorm y ynorm en lugar de Xraw y yraw
+            int samples = Xnorm.length;
+            int lookback = Xnorm[0].length;
+            int features = Xnorm[0][0].length;
+
+            // Crear arrays planos desde Xnorm
             float[] Xflat = new float[samples * lookback * features];
             int idx = 0;
 
-            for (float[][] floats : Xraw) {
+            for (float[][] floats : Xnorm) {
                 for (int j = 0; j < lookback; j++) {
                     for (int k = 0; k < features; k++) {
                         Xflat[idx++] = floats[j][k];
@@ -97,7 +130,7 @@ public class Main {
             }
 
             NDArray x = manager.create(Xflat, new Shape(samples, lookback, features));
-            NDArray y = manager.create(yraw);
+            NDArray y = manager.create(ynorm); // Usar y normalizado
 
             System.out.println("Datos preparados:");
             System.out.println("  X shape: " + x.getShape());
@@ -110,17 +143,19 @@ public class Main {
             // Construir el modelo LSTM
             SequentialBlock block = new SequentialBlock()
                     .add(LSTM.builder()
-                            .setStateSize(128*4)
-                            .setNumLayers(12)
+                            .setStateSize(256)
+                            .setNumLayers(8)
                             .optReturnState(false)
                             .optBatchFirst(true)
-                            .optDropRate(0.1f)
+                            .optDropRate(0.3f)
                             .build())
                     .add(Blocks.batchFlattenBlock())
-                    .add(Linear.builder().setUnits(64).build())
+                    .add(Dropout.builder().optRate(0.2f).build())
+                    .add(Linear.builder().setUnits(32).build())
                     .add(Activation.reluBlock())
-                    .add(Linear.builder().setUnits(2).build());
-
+                    .add(Linear.builder().setUnits(16).build())
+                    .add(Activation.reluBlock())
+                    .add(Linear.builder().setUnits(4).build());
             // Crear modelo especificando PyTorch EXPLÍCITAMENTE
             Model model = Model.newInstance("vesta-lstm", device, "PyTorch");
             model.setBlock(block);
@@ -128,9 +163,19 @@ public class Main {
             MetricsListener metrics = new MetricsListener();
             TrainingConfig config = new DefaultTrainingConfig(Loss.l2Loss())
                     .optOptimizer(Optimizer.adam()
+                            .optLearningRateTracker(Tracker.fixed(0.0001f))
+                            .optWeightDecays(0.001f)
+                            .optClipGrad(1.0f)  // ¡IMPORTANTE!
+                            .build())
+                    .optOptimizer(Optimizer.adam()
+                            .optLearningRateTracker(Tracker.cosine()
+                                    .setBaseValue(0.001f)  // Learning rate inicial
+                                    .optFinalValue(0.0001f) // Learning rate final
+                                    .setMaxUpdates(EPOCH)     // Número total de epochs
+                                    .build())
                             .optWeightDecays(0.001f)
                             .build())
-                    .addEvaluator(new Accuracy())
+                    .addEvaluator(new MAEEvaluator())
                     .optDevices(new Device[]{device})
                     .addTrainingListeners(TrainingListener.Defaults.logging())
                     .addTrainingListeners(metrics);
