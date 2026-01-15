@@ -16,6 +16,16 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <repositories>
+        <repository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+        </repository>
+    </repositories>
+
+
+
     <dependencies>
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -40,6 +50,10 @@
             <version>24.1.0</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>xyz.cereshost</groupId>
+            <artifactId>Common</artifactId>
+            <version>1.0</version>
+        </dependency>
     </dependencies>
-
 </project>

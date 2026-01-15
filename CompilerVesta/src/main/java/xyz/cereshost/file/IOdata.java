@@ -1,6 +1,7 @@
 package xyz.cereshost.file;
 
 import xyz.cereshost.Main;
+import xyz.cereshost.Utils;
 import xyz.cereshost.market.Market;
 
 import java.nio.file.Files;
@@ -34,13 +35,13 @@ public class IOdata {
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING
         );
-        System.out.println("Saved " + symbol + " to " + dir);
+        //System.out.println("Saved " + symbol + " to " + dir);
     }
 
     public static void saveData() throws Exception {
-        for (Market market : Main.MARKETS.values()){
+        for (Market market : Utils.MARKETS.values()){
             String symbol = market.getSymbol();
-            saveFile(symbol, Main.GSON.toJson(market));
+            saveFile(symbol, Utils.GSON.toJson(market));
         }
     }
 

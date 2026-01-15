@@ -69,7 +69,7 @@ public class BinanceClient {
     }
 
     public Deque<Trade> getTrades(String symbol) {
-        String raw = getRequest(BASE_URL + "trades" + "?symbol=" + symbol + "&limit=" + 20);
+        String raw = getRequest(BASE_URL + "trades" + "?symbol=" + symbol + "&limit=" + 100);
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
         try {

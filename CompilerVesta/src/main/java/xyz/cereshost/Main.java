@@ -1,6 +1,5 @@
 package xyz.cereshost;
 
-import com.google.gson.Gson;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.endpoint.BinanceClient;
 import xyz.cereshost.file.IOdata;
@@ -10,19 +9,17 @@ import xyz.cereshost.utils.TaskReturn;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
-public class Main {
+import static xyz.cereshost.Utils.MARKETS;
+import static xyz.cereshost.Utils.MARKETS_NAMES;
 
-    public static final Gson GSON = new Gson();
+public class Main {
     private static final int TICK_SIZE = 2000;
-    private static final int SAVE_INTERVAL = 5;
-    private static final List<String> MARKETS_NAMES = List.of("BTCUSDT", "ETHUSDT", "XRPUSDT");
-    public static final ConcurrentHashMap<String, Market> MARKETS = new ConcurrentHashMap<>();
+    private static final int SAVE_INTERVAL = 15;
 
     public static void main(String[] args) throws Exception {
         int i = 0;
@@ -32,7 +29,7 @@ public class Main {
 
             if (last.isPresent()) {
                 String json = Files.readString(last.get());
-                Market book = new Gson().fromJson(json, Market.class);
+                Market book = Utils.GSON.fromJson(json, Market.class);
                 MARKETS.put(name, book);
                 System.out.println("Loaded " + name);
             }
@@ -49,7 +46,7 @@ public class Main {
             long end = System.nanoTime();
             long deltaMilis = TimeUnit.NANOSECONDS.toMillis(end - start);
             LockSupport.parkNanos(TimeUnit.MICROSECONDS.toNanos(TICK_SIZE - deltaMilis));
-            System.out.println("duración=" + ((int)deltaMilis)+ "/" + TICK_SIZE + "ms StopTime=" + (TICK_SIZE - deltaMilis));
+            //System.out.println("duración=" + ((int)deltaMilis)+ "/" + TICK_SIZE + "ms StopTime=" + (TICK_SIZE - deltaMilis));
         }
     }
 

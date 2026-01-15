@@ -18,7 +18,9 @@ public class Market {
     @NotNull
     @Getter
     private final String symbol;
+    @Getter
     private final Deque<Trade> trades;
+    @Getter
     private final Deque<TickMarket> tickMarkers;
 
 
@@ -35,7 +37,7 @@ public class Market {
     }
 
     public void add(TickMarket tickMarker) {
-        this.tickMarkers.addFirst(tickMarker);
+        this.tickMarkers.addLast(tickMarker);
     }
 
 }
