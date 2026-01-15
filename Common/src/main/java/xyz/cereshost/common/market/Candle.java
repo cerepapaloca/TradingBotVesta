@@ -1,4 +1,4 @@
-package xyz.cereshost.market;
+package xyz.cereshost.common.market;
 
 public record Candle(
         long openTime,       // inicio del minuto

@@ -1,4 +1,4 @@
-package xyz.cereshost.market;
+package xyz.cereshost.common.market;
 
 public record Trade(long id, long time, double price, double qty, boolean isBuyerMaker) {
 

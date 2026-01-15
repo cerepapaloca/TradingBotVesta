@@ -1,4 +1,4 @@
-package xyz.cereshost.packet;
+package xyz.cereshost.common.packet;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;

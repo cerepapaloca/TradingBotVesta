@@ -23,11 +23,7 @@
     <repositories>
         <repository>
             <id>djl.ai</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
-        </repository>
-        <repository>
-            <id>sonatype</id>
-            <url>https://oss.sonatype.org/content/groups/public/</url>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
         </repository>
     </repositories>
 
@@ -100,11 +96,6 @@
         <dependency>
             <groupId>ai.djl.tensorflow</groupId>
             <artifactId>tensorflow-model-zoo</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>ai.djl.tensorflow</groupId>
-            <artifactId>tensorflow-native-cu113</artifactId>
-            <version>2.10.1</version>
         </dependency>
 
         <!-- O usa auto para que DJL elija automáticamente -->

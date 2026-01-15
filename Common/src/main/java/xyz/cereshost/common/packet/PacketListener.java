@@ -1,4 +1,4 @@
-package xyz.cereshost.packet;
+package xyz.cereshost.common.packet;
 
 import com.google.gson.reflect.TypeToken;
 import lombok.Getter;

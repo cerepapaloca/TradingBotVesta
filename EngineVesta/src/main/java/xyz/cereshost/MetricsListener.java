@@ -18,10 +18,8 @@ public class MetricsListener extends TrainingListenerAdapter {
         trainMae.add(result.getTrainEvaluation("Accuracy"));
 
         System.out.printf(
-                "Epoch %d | loss=%.6f | MAE=%.6f%n",
-                trainer.getTrainingResult().getEpoch(),
-                result.getTrainLoss(),
-                result.getTrainEvaluation("Accuracy")
+                "Progreso=%.6f\n",
+                ((double) trainer.getTrainingResult().getEpoch()/Main.EPOCH)*100
         );
     }
 

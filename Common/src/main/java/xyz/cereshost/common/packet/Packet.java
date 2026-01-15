@@ -1,11 +1,11 @@
-package xyz.cereshost.packet;
+package xyz.cereshost.common.packet;
 
 import lombok.Getter;
 import lombok.Setter;
 
 import java.util.UUID;
 
-import static xyz.cereshost.packet.PacketManager.gsonPacket;
+import static xyz.cereshost.common.packet.PacketManager.gsonPacket;
 
 @Getter
 @Setter

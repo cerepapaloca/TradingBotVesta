@@ -1,4 +1,4 @@
-package xyz.cereshost.market;
+package xyz.cereshost.common.market;
 
 import lombok.Getter;
 import org.jetbrains.annotations.NotNull;

@@ -1,21 +1,24 @@
 package xyz.cereshost;
 
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.common.Utils;
+import xyz.cereshost.common.market.*;
 import xyz.cereshost.endpoint.BinanceClient;
 import xyz.cereshost.file.IOdata;
-import xyz.cereshost.market.*;
 import xyz.cereshost.utils.TaskReturn;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
-import static xyz.cereshost.Utils.MARKETS;
-import static xyz.cereshost.Utils.MARKETS_NAMES;
+import static xyz.cereshost.common.Utils.MARKETS;
+import static xyz.cereshost.common.Utils.MARKETS_NAMES;
 
 public class Main {
     private static final int TICK_SIZE = 2000;
@@ -23,6 +26,7 @@ public class Main {
 
     public static void main(String[] args) throws Exception {
         int i = 0;
+        int j = 0;
 
         for (String name : MARKETS_NAMES) {
             Optional<Path> last = IOdata.getLastSnapshot(name);
@@ -39,10 +43,15 @@ public class Main {
             long start = System.nanoTime();
             i++;
 
+
             runTick();
             if ((i % SAVE_INTERVAL) == 0){
                 IOdata.saveData();
             }
+            if ((j % 50) == 0){
+                System.out.printf("[%s] Tamaño: %dkb", LocalTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME), (Utils.getFolderSize(Paths.get("data").toFile()) / 1024));
+            }
+            j++;
             long end = System.nanoTime();
             long deltaMilis = TimeUnit.NANOSECONDS.toMillis(end - start);
             LockSupport.parkNanos(TimeUnit.MICROSECONDS.toNanos(TICK_SIZE - deltaMilis));
@@ -54,35 +63,46 @@ public class Main {
     public static void runTick() throws InterruptedException {
         for (String symbol : MARKETS_NAMES) {
             multiThreadBlocking(result -> {
-                TickMarket tickMarket = new TickMarket((Volumen) result.get(0), (Depth) result.get(1));
-                Market market = MARKETS.computeIfAbsent(symbol, Market::new);
+                try {
+                    TickMarket tickMarket = new TickMarket((Volumen) result.get(0), (Depth) result.get(1));
+                    Market market = MARKETS.computeIfAbsent(symbol, Market::new);
 
-                market.add(tickMarket);
-                market.add((Deque<Trade>) result.get(2));
+                    market.add(tickMarket);
+                    market.add((Deque<Trade>) result.get(2));
+                }catch (Exception e) {
+                    e.printStackTrace();
+                    System.out.println("recopilador funcionado...");
+                }
             }, () -> BinanceClient.getVolumen(symbol),() -> BinanceClient.getDepth(symbol),() -> BinanceClient.getTrades(symbol));
         }
     }
 
-    public static void multiThreadBlocking(Consumer<List<?>> runnable, TaskReturn<?> @NotNull ... functions) throws InterruptedException {
-        CountDownLatch latch = new CountDownLatch(functions.length);
-        HashMap<Integer, Object> resultsMap = new HashMap<>();
-        HashMap<Integer, TaskReturn<?>> functionMap = new HashMap<>();
-        for (int i = 0; i < functions.length; i++) {
-            functionMap.put(i, functions[i]);
+    private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(4);
+
+    public static void multiThreadBlocking(
+            Consumer<List<?>> runnable,
+            TaskReturn<?>... functions
+    ) throws InterruptedException {
+
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (TaskReturn<?> task : functions) {
+            futures.add(EXECUTOR.submit(task::run));
         }
-        for (Map.Entry<Integer, TaskReturn<?>> r : functionMap.entrySet()) {
-            new Thread(() -> {
-                resultsMap.put(r.getKey(), r.getValue().run());
-                latch.countDown();
-            }).start();
-        }
-        latch.await();
+
         List<Object> results = new ArrayList<>();
-        for (int i = 0; i < resultsMap.size(); i++) {
-            results.add(resultsMap.get(i));
+
+        for (Future<?> future : futures) {
+            try {
+                results.add(future.get());
+            } catch (ExecutionException e) {
+                throw new RuntimeException(e.getCause());
+            }
         }
+
         runnable.accept(results);
     }
+
 
     public static void clearData(){
         MARKETS.clear();

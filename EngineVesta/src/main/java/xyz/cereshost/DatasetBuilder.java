@@ -1,13 +1,11 @@
 package xyz.cereshost;
 
 import ai.djl.util.Pair;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.market.*;
+import xyz.cereshost.common.market.*;
 
 import java.util.*;
-
-import static xyz.cereshost.Main.extractFeatures;
-import static xyz.cereshost.Main.extractTarget;
 
 public class DatasetBuilder {
 
@@ -15,29 +13,85 @@ public class DatasetBuilder {
             List<Candle> candles,
             int lookback
     ) {
+        if (candles == null) {
+            throw new IllegalArgumentException("candles == null");
+        }
+        int n = candles.size();
+        if (n <= lookback) {
+            return new Pair<>(new float[0][][], new float[0][]);
+        }
+
         List<float[][]> X = new ArrayList<>();
         List<float[]> y = new ArrayList<>();
 
-        for (int i = lookback; i < candles.size() - 1; i++) {
+        final int NUM_FEATURES = 8;
 
-            float[][] seq = new float[lookback][8];
+        for (int i = lookback; i < n; i++) {
+            // construir ventana: índices [i-lookback, ..., i-1]
+            float[][] seq = new float[lookback][NUM_FEATURES];
+            boolean skip = false;
 
             for (int j = 0; j < lookback; j++) {
-                double[] f = extractFeatures(candles.get(i - lookback + j));
-                for (int k = 0; k < f.length; k++) {
-                    seq[j][k] = (float) f[k];
+                Candle c = candles.get(i - lookback + j);
+                double[] f = extractFeatures(c);
+                if (f.length != NUM_FEATURES) {
+                    skip = true;
+                    break;
                 }
+                for (int k = 0; k < NUM_FEATURES; k++) {
+                    double v = f[k];
+                    if (Double.isNaN(v) || Double.isInfinite(v)) {
+                        skip = true;
+                        break;
+                    }
+                    seq[j][k] = (float) v;
+                }
+                if (skip) break;
             }
+            if (skip) continue;
 
-            double[] t = extractTarget(candles.get(i + 1));
+            // target = candle i (la vela inmediatamente siguiente al window)
+            Candle targetC = candles.get(i);
+            double[] t = extractTarget(targetC);
+            if (t.length != 2) continue;
+            if (Double.isNaN(t[0]) || Double.isNaN(t[1])) continue;
+
+            // Opcional: convertir target a retorno relativo (recomendado)
+            // float openTarget = (float)((t[0] - candles.get(i-1).close()) / candles.get(i-1).close());
+            // float closeTarget = (float)((t[1] - candles.get(i-1).close()) / candles.get(i-1).close());
+            // y.add(new float[]{openTarget, closeTarget});
+
+            // Por defecto: target en valores absolutos (precio)
             y.add(new float[]{(float) t[0], (float) t[1]});
             X.add(seq);
         }
 
-        return new Pair<>(
-                X.toArray(new float[0][][]),
-                y.toArray(new float[0][])
-        );
+        float[][][] Xarr = X.toArray(new float[0][][]);
+        float[][] yarr = y.toArray(new float[0][]);
+        return new Pair<>(Xarr, yarr);
+    }
+
+
+    @Contract("_ -> new")
+    public static double @NotNull [] extractFeatures(@NotNull Candle c) {
+        return new double[]{
+                c.close(),
+                c.quoteVolume(),
+                c.deltaUSDT(),
+                c.buyRatio(),
+                c.bidLiquidity(),
+                c.askLiquidity(),
+                c.depthImbalance(),
+                c.spread()
+        };
+    }
+
+    @Contract("_ -> new")
+    public static double @NotNull [] extractTarget(@NotNull Candle next) {
+        return new double[]{
+                next.open(),
+                next.close()
+        };
     }
 
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {

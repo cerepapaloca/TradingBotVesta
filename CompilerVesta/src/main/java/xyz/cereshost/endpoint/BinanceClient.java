@@ -6,9 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import lombok.Getter;
 import lombok.experimental.UtilityClass;
-import xyz.cereshost.market.Depth;
-import xyz.cereshost.market.Trade;
-import xyz.cereshost.market.Volumen;
+import xyz.cereshost.common.market.Depth;
+import xyz.cereshost.common.market.Trade;
+import xyz.cereshost.common.market.Volumen;
 
 import java.io.IOException;
 import java.net.URI;

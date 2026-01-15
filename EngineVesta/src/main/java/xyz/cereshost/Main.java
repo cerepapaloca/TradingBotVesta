@@ -5,9 +5,9 @@ import ai.djl.Model;
 import ai.djl.engine.Engine;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.index.NDIndex;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
-import ai.djl.nn.Block;
 import ai.djl.nn.Blocks;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
@@ -24,10 +24,10 @@ import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Optimizer;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
-import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.common.Utils;
+import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.file.IOdata;
-import xyz.cereshost.market.Candle;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -35,16 +35,19 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 
+import static xyz.cereshost.Engine.checkEngines;
+
 //TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
 // click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 public class Main {
 
     private static final int LOOK_BACK = 10;
+    public static final int EPOCH = 5_000;
 
     public static void main(String[] args) throws IOException, TranslateException {
         IOdata.loadAll();
 
-        //checkEngines();
+        checkEngines();
 
         Model model = training("BTCUSDT");
     }
@@ -63,8 +66,7 @@ public class Main {
         Device device = Device.gpu();
         System.out.println("Usando dispositivo: " + device);
 
-        // Crear manager sin especificar dispositivo (usará CPU por defecto)
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(device)) {
             List<Candle> candles = DatasetBuilder.to1mCandles(Utils.MARKETS.get(symbol));
 
             if (candles.size() <= LOOK_BACK + 1) {
@@ -94,11 +96,11 @@ public class Main {
                 }
             }
 
-            NDArray X = manager.create(Xflat, new Shape(samples, lookback, features));
+            NDArray x = manager.create(Xflat, new Shape(samples, lookback, features));
             NDArray y = manager.create(yraw);
 
             System.out.println("Datos preparados:");
-            System.out.println("  X shape: " + X.getShape());
+            System.out.println("  X shape: " + x.getShape());
             System.out.println("  y shape: " + y.getShape());
             System.out.println("  Candles: " + candles.size());
             System.out.println("  Samples: " + samples);
@@ -108,11 +110,11 @@ public class Main {
             // Construir el modelo LSTM
             SequentialBlock block = new SequentialBlock()
                     .add(LSTM.builder()
-                            .setStateSize(128)
-                            .setNumLayers(2)
+                            .setStateSize(128*4)
+                            .setNumLayers(12)
                             .optReturnState(false)
                             .optBatchFirst(true)
-                            .optDropRate(0.0f)
+                            .optDropRate(0.1f)
                             .build())
                     .add(Blocks.batchFlattenBlock())
                     .add(Linear.builder().setUnits(64).build())
@@ -124,48 +126,41 @@ public class Main {
             model.setBlock(block);
 
             MetricsListener metrics = new MetricsListener();
-
             TrainingConfig config = new DefaultTrainingConfig(Loss.l2Loss())
                     .optOptimizer(Optimizer.adam()
                             .optWeightDecays(0.001f)
                             .build())
                     .addEvaluator(new Accuracy())
+                    .optDevices(new Device[]{device})
                     .addTrainingListeners(TrainingListener.Defaults.logging())
                     .addTrainingListeners(metrics);
 
+            // split train/val (ejemplo 80/20)
+            int split = (int) (samples * 0.8);
+            NDArray X_train = x.get(new NDIndex("0:" + split));
+            NDArray y_train = y.get(new NDIndex("0:" + split));
+
+            NDArray X_val = x.get(new NDIndex(split + ":" + samples));
+            NDArray y_val = y.get(new NDIndex(split + ":" + samples));
+
+            int batchSize = 32;
+            Dataset trainDataset = new ArrayDataset.Builder()
+                    .setData(X_train)
+                    .optLabels(y_train)
+                    .setSampling(batchSize, true)
+                    .build();
+            Dataset valDataset = new ArrayDataset.Builder()
+                    .setData(X_val)
+                    .optLabels(y_val)
+                    .setSampling(batchSize, false)
+                    .build();
 
             Trainer trainer = model.newTrainer(config);
-            try {
-                // Obtener el bloque del modelo
-                SequentialBlock SequentialBlock = (SequentialBlock) model.getBlock();
-
-                // Buscar la capa LSTM y compactar parámetros
-                for (int i = 0; i < SequentialBlock.getChildren().size(); i++) {
-                    Block child = SequentialBlock.getChildren().get(i).getValue();
-                    if (child instanceof LSTM) {
-                        LSTM lstm = (LSTM) child;
-                        // Forzar la compactación (equivalente a flatten_parameters() en PyTorch)
-                        // En DJL, podrías necesitar reconstruir la capa
-                        System.out.println("Compactando parámetros LSTM...");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("No se pudo compactar parámetros: " + e.getMessage());
-            }
             trainer.initialize(new Shape(1, LOOK_BACK, features));
-
-
-
-            // Crear dataset
-            Dataset dataset = new ArrayDataset.Builder()
-                    .setData(X)
-                    .optLabels(y)
-                    .setSampling(1, true)
-                    .build();
 
             // Entrenar
             System.out.println("Iniciando entrenamiento...");
-            EasyTrain.fit(trainer, 100, dataset, null);
+            EasyTrain.fit(trainer, EPOCH, trainDataset, valDataset);
 
             ChartUtils.plot(
                     "Training Loss",
@@ -189,29 +184,5 @@ public class Main {
 
             return model;
         }
-    }
-
-
-
-    @Contract("_ -> new")
-    public static double @NotNull [] extractFeatures(@NotNull Candle c) {
-        return new double[]{
-                c.close(),
-                c.quoteVolume(),
-                c.deltaUSDT(),
-                c.buyRatio(),
-                c.bidLiquidity(),
-                c.askLiquidity(),
-                c.depthImbalance(),
-                c.spread()
-        };
-    }
-
-    @Contract("_ -> new")
-    public static double @NotNull [] extractTarget(@NotNull Candle next) {
-        return new double[]{
-                next.open(),
-                next.close()
-        };
     }
 }
