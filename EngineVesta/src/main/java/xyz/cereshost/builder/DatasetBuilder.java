@@ -1,4 +1,4 @@
-package xyz.cereshost;
+package xyz.cereshost.builder;
 
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.Contract;
@@ -9,20 +9,17 @@ import java.util.*;
 
 public class DatasetBuilder {
 
-    public static Pair<float[][][], float[][]> build(
-            List<Candle> candles,
-            int lookback
-    ) {
+    public static Pair<float[][][], float[]> build(List<Candle> candles, int lookback) {
         if (candles == null) {
             throw new IllegalArgumentException("candles == null");
         }
         int n = candles.size();
         if (n <= lookback) {
-            return new Pair<>(new float[0][][], new float[0][]);
+            return new Pair<>(new float[0][][], new float[0]);  // Cambiado: float[0][] -> float[0]
         }
 
         List<float[][]> X = new ArrayList<>();
-        List<float[]> y = new ArrayList<>();
+        List<Float> y = new ArrayList<>();  // Cambiado: float[] -> Float
 
         final int NUM_FEATURES = 8;
 
@@ -50,27 +47,32 @@ public class DatasetBuilder {
             }
             if (skip) continue;
 
-            // target = candle i (la vela inmediatamente siguiente al window)
+            // target = SOLO el cierre de la vela i
             Candle targetC = candles.get(i);
-            double[] t = extractTarget(targetC);
-            if (t.length != 2) continue;
-            if (Double.isNaN(t[0]) || Double.isNaN(t[1])) continue;
+            double close = targetC.close();
 
-            // Opcional: convertir target a retorno relativo (recomendado)
-            // float openTarget = (float)((t[0] - candles.get(i-1).close()) / candles.get(i-1).close());
-            // float closeTarget = (float)((t[1] - candles.get(i-1).close()) / candles.get(i-1).close());
-            // y.add(new float[]{openTarget, closeTarget});
+            if (Double.isNaN(close)) continue;
 
-            // Por defecto: target en valores absolutos (precio)
-            y.add(new float[]{(float) t[0], (float) t[1]});
+            // Opcional: convertir target a retorno relativo
+            // double prevClose = candles.get(i-1).close();
+            // double returnValue = (close - prevClose) / prevClose;
+            // y.add((float) returnValue);
+
+            // Por defecto: target en valor absoluto (precio de cierre)
+            y.add((float) close);
             X.add(seq);
         }
 
         float[][][] Xarr = X.toArray(new float[0][][]);
-        float[][] yarr = y.toArray(new float[0][]);
+
+        // Convertir List<Float> a float[]
+        float[] yarr = new float[y.size()];
+        for (int i = 0; i < y.size(); i++) {
+            yarr[i] = y.get(i);
+        }
+
         return new Pair<>(Xarr, yarr);
     }
-
 
     @Contract("_ -> new")
     public static double @NotNull [] extractFeatures(@NotNull Candle c) {
@@ -86,15 +88,14 @@ public class DatasetBuilder {
         };
     }
 
+    // Este método ya no es necesario, pero lo dejo por compatibilidad
     @Contract("_ -> new")
     public static double @NotNull [] extractTarget(@NotNull Candle next) {
-        return new double[]{
-                next.open(),
-                next.close()
-        };
+        return new double[]{next.close()};  // Solo el cierre
     }
 
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
+        // ... (código sin cambios) ...
         // Agrupar trades por minuto (tree map para iterar en orden)
         NavigableMap<Long, List<Trade>> tradesByMinute = new TreeMap<>();
         for (Trade t : market.getTrades()) {
@@ -208,6 +209,4 @@ public class DatasetBuilder {
 
         return candles;
     }
-
 }
-

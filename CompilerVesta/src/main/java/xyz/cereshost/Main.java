@@ -1,7 +1,7 @@
 package xyz.cereshost;
 
-import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Utils;
+import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 import xyz.cereshost.endpoint.BinanceClient;
 import xyz.cereshost.file.IOdata;
@@ -12,13 +12,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
-
-import static xyz.cereshost.common.Utils.MARKETS;
-import static xyz.cereshost.common.Utils.MARKETS_NAMES;
 
 public class Main {
     private static final int TICK_SIZE = 2000;
@@ -28,13 +28,13 @@ public class Main {
         int i = 0;
         int j = 0;
 
-        for (String name : MARKETS_NAMES) {
+        for (String name : Vesta.MARKETS_NAMES) {
             Optional<Path> last = IOdata.getLastSnapshot(name);
 
             if (last.isPresent()) {
                 String json = Files.readString(last.get());
                 Market book = Utils.GSON.fromJson(json, Market.class);
-                MARKETS.put(name, book);
+                Vesta.MARKETS.put(name, book);
                 System.out.println("Loaded " + name);
             }
         }
@@ -44,7 +44,11 @@ public class Main {
             i++;
 
 
-            runTick();
+            try {
+                runTick();
+            }catch (Exception e) {
+                e.printStackTrace();
+            }
             if ((i % SAVE_INTERVAL) == 0){
                 IOdata.saveData();
             }
@@ -61,11 +65,11 @@ public class Main {
 
     @SuppressWarnings("unchecked")
     public static void runTick() throws InterruptedException {
-        for (String symbol : MARKETS_NAMES) {
+        for (String symbol : Vesta.MARKETS_NAMES) {
             multiThreadBlocking(result -> {
                 try {
                     TickMarket tickMarket = new TickMarket((Volumen) result.get(0), (Depth) result.get(1));
-                    Market market = MARKETS.computeIfAbsent(symbol, Market::new);
+                    Market market = Vesta.MARKETS.computeIfAbsent(symbol, Market::new);
 
                     market.add(tickMarket);
                     market.add((Deque<Trade>) result.get(2));
@@ -105,6 +109,6 @@ public class Main {
 
 
     public static void clearData(){
-        MARKETS.clear();
+        Vesta.MARKETS.clear();
     }
 }

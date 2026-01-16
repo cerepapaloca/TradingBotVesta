@@ -2,6 +2,7 @@ package xyz.cereshost.file;
 
 import xyz.cereshost.Main;
 import xyz.cereshost.common.Utils;
+import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
 
 import java.nio.file.Files;
@@ -39,7 +40,7 @@ public class IOdata {
     }
 
     public static void saveData() throws Exception {
-        for (Market market : Utils.MARKETS.values()){
+        for (Market market : Vesta.MARKETS.values()){
             String symbol = market.getSymbol();
             saveFile(symbol, Utils.GSON.toJson(market));
         }

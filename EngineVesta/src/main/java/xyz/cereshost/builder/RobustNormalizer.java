@@ -1,4 +1,4 @@
-package xyz.cereshost;
+package xyz.cereshost.builder;
 
 import java.util.ArrayList;
 import java.util.Collections;

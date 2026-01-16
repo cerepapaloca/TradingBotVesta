@@ -1,11 +1,14 @@
 package xyz.cereshost.file;
 
+import ai.djl.Model;
 import xyz.cereshost.common.Utils;
+import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -34,10 +37,17 @@ public class IOdata {
                 }
 
                 if (merged != null) {
-                    Utils.MARKETS.put(symbolPath.getFileName().toString(), merged);
+                    Vesta.MARKETS.put(symbolPath.getFileName().toString(), merged);
                 }
             }
         }
+    }
+
+    public static void saveModel(Model model) throws IOException {
+        Path modelDir = Paths.get("models");
+        Files.createDirectories(modelDir);
+        model.save(modelDir, "VestaModelIA");
+        Vesta.info("\n✅ Modelo guardado en: " + modelDir.resolve("VestaModelIA").toAbsolutePath());
     }
 
 }
