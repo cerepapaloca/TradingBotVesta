@@ -13,9 +13,7 @@ import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.common.Vesta;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
 @UtilityClass
 public class EngineUtils {
@@ -225,6 +223,7 @@ public class EngineUtils {
             }
 
             if (count > 0) {
+                List<ResultEvaluator> results = new ArrayList<>();
                 maeReal /= count;
                 mape /= count;
 
@@ -236,13 +235,24 @@ public class EngineUtils {
 
                 // Mostrar algunos ejemplos
                 Vesta.info("\n🔍 Ejemplos de predicción:");
-                int examples = Math.min(25, predPrices.length);
-                for (int i = 0; i < examples; i++) {
-                    Vesta.info(String.format("  Pred: $%.4f | Real: $%.4f | Error: $%.4f (%.2f%%)",
-                            predPrices[i], truePrices[i],
-                            Math.abs(predPrices[i] - truePrices[i]),
-                            (Math.abs(predPrices[i] - truePrices[i]) / truePrices[i]) * 100));
+
+                for (int i = 0; i < predPrices.length; i++) {
+                    double p = (Math.abs(predPrices[i] - truePrices[i]) / truePrices[i]) * 100;
+                    results.add(new ResultEvaluator(predPrices[i], truePrices[i], Math.abs(predPrices[i] - truePrices[i]), p));
                 }
+                results.sort(
+                        Comparator.comparingDouble(ResultEvaluator::p).reversed()
+                );
+
+                for (ResultEvaluator result : results) {
+                    Vesta.info(String.format("  Pred: $%.4f | Real: $%.4f | Error: $%.4f (%.3f%%)"
+                            , result.pred()
+                            , result.real()
+                            , result.error()
+                            , result.p()
+                    ));
+                }
+                ChartUtils.plot("Distribución del Error", "Resultados", List.of(new ChartUtils.DataPlot("error%", results.stream().map(r -> (float) r.p()).toList())));
             }
 
             // También podemos usar el evaluador configurado para obtener métricas
@@ -268,6 +278,18 @@ public class EngineUtils {
                 float testMae = evaluator.getAccumulator("test");
                 Vesta.info("  MAE (usando evaluador): " + testMae);
 
+
+                List<Double> actualList = new ArrayList<>();
+                List<Double> predList = new ArrayList<>();
+                List<String> labelsList = new ArrayList<>();
+
+                for (int i = 0; i < Math.min(50, predPrices.length); i++) {
+                    actualList.add((double) truePrices[i]);
+                    predList.add((double) predPrices[i]);
+                    labelsList.add("Muestra " + i);
+                }
+
+                ChartUtils.CandleChartUtils.showPriceComparison("Predicciones vs Real", actualList, predList, labelsList);
             } catch (Exception e) {
                 Vesta.waring("No se pudo calcular métricas usando evaluador: " + e.getMessage());
             }
@@ -276,5 +298,65 @@ public class EngineUtils {
             Vesta.error("Error durante la evaluación: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private record ResultEvaluator(float pred, float real, float error, double p) {}
+
+    public static Pair<float[][][], float[]> removeDuplicates(float[][][] X, float[] y) {
+        final float EPS = 1e-9f;
+
+        Map<String, Integer> seen = new HashMap<>();
+        List<float[][]> uniqueX = new ArrayList<>();
+        List<Float> uniqueY = new ArrayList<>();
+
+        int removedDuplicates = 0;
+        int removedZeroClose = 0;
+        int removedBadValue = 0;
+
+        for (int i = 0; i < X.length; i++) {
+            float yi = y[i];
+
+            // 1) filtrar NaN / Inf / valores inválidos
+            if (Float.isNaN(yi) || Float.isInfinite(yi)) {
+                removedBadValue++;
+                Vesta.waring("Eliminando muestra con y inválido en índice " + i + " (y=" + yi + ")");
+                continue;
+            }
+
+            // 2) filtrar cierres cero (o muy cercanos a 0)
+            if (Math.abs(yi) < EPS) {
+                removedZeroClose++;
+                Vesta.waring("Eliminando muestra con cierre ~0 en índice " + i + " (y=" + yi + ")");
+                continue;
+            }
+
+            // 3) detectar duplicados por hash de la ventana X[i]
+            String hash = Arrays.deepToString(X[i]);
+            if (!seen.containsKey(hash)) {
+                seen.put(hash, i);
+                uniqueX.add(X[i]);
+                uniqueY.add(yi);
+            } else {
+                removedDuplicates++;
+                Vesta.waring("Eliminando duplicado en índice " + i +
+                        " (igual a índice " + seen.get(hash) + ")");
+            }
+        }
+
+        // Convertir de vuelta a arrays
+        float[][][] Xunique = new float[uniqueX.size()][][];
+        float[] yunique = new float[uniqueY.size()];
+
+        for (int i = 0; i < Xunique.length; i++) {
+            Xunique[i] = uniqueX.get(i);
+            yunique[i] = uniqueY.get(i);
+        }
+
+        Vesta.info("Eliminados " + (removedDuplicates) + " duplicados");
+        Vesta.info("Eliminadas " + (removedZeroClose) + " muestras con cierre = 0 (o ~0)");
+        Vesta.info("Eliminadas " + (removedBadValue) + " muestras con valores inválidos (NaN/Inf)");
+        Vesta.info("Total resultante: " + Xunique.length + " muestras (de " + X.length + " originales)");
+
+        return new Pair<>(Xunique, yunique);
     }
 }

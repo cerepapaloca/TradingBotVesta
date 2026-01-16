@@ -3,6 +3,7 @@ package xyz.cereshost.builder;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 
 import java.util.*;
@@ -122,7 +123,7 @@ public class DatasetBuilder {
         long endMinute = tradesByMinute.lastKey();
 
         // diagnostico opcional
-        System.out.println("to1mCandles: startMinute=" + startMinute + " endMinute=" + endMinute
+        Vesta.info("to1mCandles: startMinute=" + startMinute + " endMinute=" + endMinute
                 + " minutes=" + ((endMinute - startMinute) / 60000 + 1)
                 + " tradesMinutes=" + tradesByMinute.size()
                 + " tickSnapshots=" + tickByMinute.size());

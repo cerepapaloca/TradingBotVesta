@@ -1,10 +1,10 @@
 package xyz.cereshost;
 
 import ai.djl.translate.TranslateException;
-import xyz.cereshost.common.Vesta;
 import xyz.cereshost.file.IOdata;
 
 import java.io.IOException;
+import java.util.List;
 
 import static xyz.cereshost.EngineUtils.checkEngines;
 
@@ -14,6 +14,6 @@ public class Main {
         IOdata.loadAll();
         checkEngines();
 
-        VestaEngine.trainingModel(Vesta.MARKETS_NAMES);
+        VestaEngine.trainingModel(List.of("XRPUSDT"));
     }
 }
