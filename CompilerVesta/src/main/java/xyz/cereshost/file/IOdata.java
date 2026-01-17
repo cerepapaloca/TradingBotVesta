@@ -1,6 +1,5 @@
 package xyz.cereshost.file;
 
-import xyz.cereshost.Main;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
@@ -15,7 +14,6 @@ import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 public class IOdata {
 
@@ -29,10 +27,6 @@ public class IOdata {
 
         Path file = dir.resolve(hour + ".json");
 
-        if (!Files.exists(file)) {
-            Main.clearData();
-        }
-
         Files.writeString(
                 file,
                 json,
@@ -44,6 +38,7 @@ public class IOdata {
 
     public static void saveData() throws Exception {
         for (Market market : Vesta.MARKETS.values()){
+            market.sortd();
             String symbol = market.getSymbol();
             saveFile(symbol, Utils.GSON.toJson(market));
         }
@@ -68,7 +63,7 @@ public class IOdata {
         return Integer.parseInt(name.replace(".json", ""));
     }
 
-    public static Market loadForIa(String symbol) {
+    public static Market loadMarket(String symbol) {
         Market merged = null;
 
         Path basePath = Path.of("data", symbol);

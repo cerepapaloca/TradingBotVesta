@@ -149,7 +149,7 @@ public class BuilderData {
 
         // Indexar tickMarkers por minuto en un TreeMap para floorKey / ceilingKey
         NavigableMap<Long, TickMarket> tickByMinute = new TreeMap<>();
-        for (TickMarket tm : market.getTickMarkers()) {
+        for (TickMarket tm : market.getDepths()) {
             long minute = (tm.getDepth().getDate() / 60_000) * 60_000;
             tickByMinute.put(minute, tm);
         }

@@ -3,25 +3,26 @@ package xyz.cereshost.common.market;
 import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayDeque;
-import java.util.Collection;
-import java.util.Deque;
+import java.util.*;
 
 public class Market {
 
     public Market(@NotNull String symbol) {
         this.symbol = symbol;
-        this.trades = new ArrayDeque<>();
-        this.tickMarkers = new ArrayDeque<>();
+        this.trades = new LinkedHashSet<>();
+        this.depths = new LinkedHashSet<>();
+        this.candleSimples = new LinkedHashSet<>();
     }
 
     @NotNull
     @Getter
     private final String symbol;
     @Getter
-    private final Deque<Trade> trades;
+    private LinkedHashSet<Trade> trades;
     @Getter
-    private final Deque<TickMarket> tickMarkers;
+    private LinkedHashSet<CandleSimple> candleSimples;
+    @Getter
+    private LinkedHashSet<Depth> depths;
 
 
     public void concat(@NotNull Market market) {
@@ -29,15 +30,25 @@ public class Market {
             throw new IllegalArgumentException("Symbols don't match");
         }
         this.trades.addAll(market.trades);
-        this.tickMarkers.addAll(market.tickMarkers);
+        this.depths.addAll(market.depths);
+        this.candleSimples.addAll(market.candleSimples);
     }
 
-    public void add(Collection<Trade> trade) {
+    public void addTrade(Collection<Trade> trade) {
         this.trades.addAll(trade);
     }
 
-    public void add(TickMarket tickMarker) {
-        this.tickMarkers.addLast(tickMarker);
+    public void addDepth(Depth tickMarker) {
+        this.depths.add(tickMarker);
     }
 
+    public void addCandles(Collection<CandleSimple> candleSimple) {
+        this.candleSimples.addAll(candleSimple);
+    }
+
+    public synchronized void sortd(){
+        trades = trades.stream().sorted(Comparator.comparingLong(Trade::time)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+        depths = depths.stream().sorted(Comparator.comparingLong(Depth::getDate)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+        candleSimples = candleSimples.stream().sorted(Comparator.comparingLong(CandleSimple::openTime)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+    }
 }
