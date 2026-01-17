@@ -3,12 +3,55 @@ package xyz.cereshost.builder;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.ChartUtils;
+import xyz.cereshost.EngineUtils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 
 import java.util.*;
 
-public class DatasetBuilder {
+import static xyz.cereshost.VestaEngine.LOOK_BACK;
+
+public class BuilderData {
+
+    public static @NotNull Pair<float[][][], float[]> fullBuild(@NotNull List<String> symbols) {
+        // Combinar datos de todos los símbolos
+        List<float[][][]> allX = new ArrayList<>();
+        List<float[]> allY = new ArrayList<>(); // Cambiado: float[][] -> float[]
+
+        for (String symbol : symbols) {
+            try {
+                Vesta.info("Procesando símbolo: " + symbol);
+                List<Candle> candles = BuilderData.to1mCandles(Vesta.MARKETS.get(symbol));
+
+                if (candles.size() <= LOOK_BACK + 1) {
+                    Vesta.error("Símbolo " + symbol + " no tiene suficientes velas: " + candles.size());
+                    continue;
+                }
+
+                Pair<float[][][], float[]> pair = BuilderData.build(candles, LOOK_BACK); // Cambiado
+                float[][][] Xraw = pair.getKey();
+                float[] yraw = pair.getValue(); // Cambiado
+
+                if (Xraw.length > 0) {
+                    // Añadir símbolo como característica adicional
+                    float[][][] XwithSymbol = EngineUtils.addSymbolFeature(Xraw, symbol, symbols);
+                    allX.add(XwithSymbol);
+                    allY.add(yraw); // Cambiado
+                    Vesta.info("Añadidas " + Xraw.length + " muestras");
+                }
+                ChartUtils.CandleChartUtils.showCandleChart("Datos Originales", candles, symbol);
+            } catch (Exception e) {
+                Vesta.error("Error procesando símbolo " + symbol + ": " + e.getMessage());
+            }
+        }
+
+        if (allX.isEmpty()) {
+            throw new RuntimeException("No hay datos suficientes de ningún símbolo");
+        }
+
+        return EngineUtils.combineDatasets(allX, allY);
+    }
 
     public static Pair<float[][][], float[]> build(List<Candle> candles, int lookback) {
         if (candles == null) {

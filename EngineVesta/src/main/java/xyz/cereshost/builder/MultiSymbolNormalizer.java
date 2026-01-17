@@ -1,5 +1,7 @@
 package xyz.cereshost.builder;
 
+import lombok.Getter;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -9,7 +11,9 @@ import java.util.List;
  * Maneja diferentes escalas de precios entre símbolos
  * AHORA solo para un valor (close)
  */
+@Getter
 public class MultiSymbolNormalizer {
+    // Métodos getter para usar las estadísticas en otros lugares
     private float priceMedian;
     private float priceMAD; // Median Absolute Deviation
     private static final float EPSILON = 1e-8f;
@@ -74,12 +78,4 @@ public class MultiSymbolNormalizer {
         return Math.max(min, Math.min(max, value));
     }
 
-    // Métodos getter para usar las estadísticas en otros lugares
-    public float getPriceMedian() {
-        return priceMedian;
-    }
-
-    public float getPriceMAD() {
-        return priceMAD;
-    }
 }

@@ -230,7 +230,7 @@ public class EngineUtils {
                 Vesta.info("\n📊 Resultados de evaluación:");
                 Vesta.info("  MAE (normalizado): " + String.format("%.6f", maeNormalized));
                 Vesta.info("  MAE (precio real): $" + String.format("%.4f", maeReal));
-                Vesta.info("  MAPE (error porcentual): " + String.format("%.2f", mape) + "%");
+                Vesta.info("  MAPE (error porcentual): " + String.format("%.2f", mape));
                 Vesta.info("  Predicciones válidas: " + count + "/" + predPrices.length);
 
                 // Mostrar algunos ejemplos
@@ -245,12 +245,12 @@ public class EngineUtils {
                 );
 
                 for (ResultEvaluator result : results) {
-                    Vesta.info(String.format("  Pred: $%.4f | Real: $%.4f | Error: $%.4f (%.3f%%)"
+                    Vesta.info("  Pred: $%.4f | Real: $%.4f | Error: $%.4f (%.3f%%)"
                             , result.pred()
                             , result.real()
                             , result.error()
                             , result.p()
-                    ));
+                    );
                 }
                 ChartUtils.plot("Distribución del Error", "Resultados", List.of(new ChartUtils.DataPlot("error%", results.stream().map(r -> (float) r.p()).toList())));
             }
@@ -302,7 +302,7 @@ public class EngineUtils {
 
     private record ResultEvaluator(float pred, float real, float error, double p) {}
 
-    public static Pair<float[][][], float[]> removeDuplicates(float[][][] X, float[] y) {
+    public static Pair<float[][][], float[]> clearData(float[][][] X, float[] y) {
         final float EPS = 1e-9f;
 
         Map<String, Integer> seen = new HashMap<>();

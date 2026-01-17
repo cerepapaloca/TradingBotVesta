@@ -1,10 +1,13 @@
 package xyz.cereshost;
 
+import lombok.Getter;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 import xyz.cereshost.endpoint.BinanceClient;
 import xyz.cereshost.file.IOdata;
+import xyz.cereshost.packet.PacketHandler;
+import xyz.cereshost.packet.RequestMarketListener;
 import xyz.cereshost.utils.TaskReturn;
 
 import java.nio.file.Files;
@@ -21,12 +24,17 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
 public class Main {
-    private static final int TICK_SIZE = 2000;
+    private static final int TICK_SIZE = 10000;
     private static final int SAVE_INTERVAL = 15;
+    @Getter
+    private static PacketHandler packetHandler;
 
     public static void main(String[] args) throws Exception {
         int i = 0;
         int j = 0;
+        new RequestMarketListener();
+        packetHandler = new PacketHandler();
+        packetHandler.upServer();
 
         for (String name : Vesta.MARKETS_NAMES) {
             Optional<Path> last = IOdata.getLastSnapshot(name);
@@ -53,6 +61,7 @@ public class Main {
                 IOdata.saveData();
             }
             if ((j % 50) == 0){
+                System.gc();
                 System.out.printf("[%s] Tamaño: %dkb", LocalTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME), (Utils.getFolderSize(Paths.get("data").toFile()) / 1024));
             }
             j++;

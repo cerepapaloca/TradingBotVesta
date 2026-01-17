@@ -3,6 +3,7 @@ package xyz.cereshost;
 import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
@@ -24,21 +25,19 @@ import ai.djl.training.tracker.Tracker;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.builder.DatasetBuilder;
+import xyz.cereshost.builder.BuilderData;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
 import xyz.cereshost.common.Vesta;
-import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.file.IOdata;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 
 public class VestaEngine {
 
-    private static final int LOOK_BACK = 35;
-    public static final int EPOCH = 300;
+    public static final int LOOK_BACK = 35;
+    public static final int EPOCH = 10;//300
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
@@ -59,12 +58,14 @@ public class VestaEngine {
         Vesta.info("Usando dispositivo: " + device);
         Vesta.info("Entrenando con " + symbols.size() + " símbolos: " + symbols);
 
-        Pair<float[][][], float[]> combined = getBuildData(symbols);
+        Pair<float[][][], float[]> combined = BuilderData.fullBuild(symbols);
 
 
-        Pair<float[][][], float[]> deduped = EngineUtils.removeDuplicates(combined.getKey(), combined.getValue());
+        Pair<float[][][], float[]> deduped = EngineUtils.clearData(combined.getKey(), combined.getValue());
         float[][][] xCombined = deduped.getKey();
         float[] yCombined = deduped.getValue();
+
+
         ChartUtils.CandleChartUtils.showDataDistribution("Datos Combinados", xCombined, yCombined, "Todos");
 
 
@@ -150,10 +151,8 @@ public class VestaEngine {
             Vesta.info("  X_test shape: " + X_test.getShape());
 
             // Construir modelo (usa tu método existente)
-            SequentialBlock block = getSequentialBlock();
-
-            Model model = Model.newInstance("VestaIA", device, "PyTorch");
-            model.setBlock(block);
+            Model model = Model.newInstance(Main.NAME_MODEL, device, "PyTorch");
+            model.setBlock(getSequentialBlock());
 
             // Configuración de entrenamiento (igual a tu código)
             MetricsListener metrics = new MetricsListener();
@@ -164,7 +163,7 @@ public class VestaEngine {
                                     .optFinalValue(0.00001f)
                                     .setMaxUpdates(EPOCH)
                                     .build())
-                            .optWeightDecays(0.01f)
+                            .optWeightDecays(0.001f)
                             .optClipGrad(2.5f)
                             .build())
                     .addEvaluator(new MAEEvaluator())
@@ -197,6 +196,8 @@ public class VestaEngine {
 
             // Guardar modelo (igual que antes)
             IOdata.saveModel(model);
+            IOdata.saveYNormalizer(yNormalizer);
+            IOdata.saveXNormalizer(xNormalizer);
 
             // Evaluar en conjunto de test si hay muestras
             if (testSize > 0) {
@@ -210,57 +211,21 @@ public class VestaEngine {
         }
     }
 
-    private static @NotNull Pair<float[][][], float[]> getBuildData(@NotNull List<String> symbols) {
-        // Combinar datos de todos los símbolos
-        List<float[][][]> allX = new ArrayList<>();
-        List<float[]> allY = new ArrayList<>(); // Cambiado: float[][] -> float[]
-
-        for (String symbol : symbols) {
-            try {
-                Vesta.info("\nProcesando símbolo: " + symbol);
-                List<Candle> candles = DatasetBuilder.to1mCandles(Vesta.MARKETS.get(symbol));
-
-                if (candles.size() <= LOOK_BACK + 1) {
-                    Vesta.error("Símbolo " + symbol + " no tiene suficientes velas: " + candles.size());
-                    continue;
-                }
-
-                Pair<float[][][], float[]> pair = DatasetBuilder.build(candles, LOOK_BACK); // Cambiado
-                float[][][] Xraw = pair.getKey();
-                float[] yraw = pair.getValue(); // Cambiado
-
-                if (Xraw.length > 0) {
-                    // Añadir símbolo como característica adicional
-                    float[][][] XwithSymbol = EngineUtils.addSymbolFeature(Xraw, symbol, symbols);
-                    allX.add(XwithSymbol);
-                    allY.add(yraw); // Cambiado
-                    Vesta.info("Añadidas " + Xraw.length + " muestras");
-                }
-                ChartUtils.CandleChartUtils.showCandleChart("Datos Originales", candles, symbol);
-            } catch (Exception e) {
-                Vesta.error("Error procesando símbolo " + symbol + ": " + e.getMessage());
-            }
-        }
-
-        if (allX.isEmpty()) {
-            throw new RuntimeException("No hay datos suficientes de ningún símbolo");
-        }
-
-        // Combinar todos los datos
-        Pair<float[][][], float[]> combined = EngineUtils.combineDatasets(allX, allY); // Cambiado
-        return combined;
-    }
-
-    private static SequentialBlock getSequentialBlock() {
+    public static SequentialBlock getSequentialBlock() {
         return new SequentialBlock()
                 .add(LSTM.builder()
-                        .setStateSize(1024)//2048
+                        .setStateSize(1024)//2048 / 1024
                         .setNumLayers(4)
                         .optReturnState(false)
                         .optBatchFirst(true)
                         .optDropRate(0.5f)
                         .build())
-                .add(Blocks.batchFlattenBlock())
+                .add(ndList -> {
+                    NDArray x = ndList.singletonOrThrow();
+                    // batchFirst = true → eje 1 es seqLen
+                    NDArray last = x.get(":, -1, :");
+                    return new NDList(last);
+                })
                 .add(Dropout.builder().optRate(0.02f).build())
                 .add(Linear.builder().setUnits(128).build())
                 .add(Activation.reluBlock())

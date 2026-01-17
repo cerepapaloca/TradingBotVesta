@@ -13,8 +13,8 @@ public class Vesta {
     private static final Logger LOGGER = LogManager.getLogger(Vesta.class);
     public static final List<String> MARKETS_NAMES = List.of("BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT");
 
-    public static void info(String message) {
-        LOGGER.info(message);
+    public static void info(String message, Object... o) {
+        LOGGER.info(String.format(message, o));
     }
 
     public static void waring(String message) {

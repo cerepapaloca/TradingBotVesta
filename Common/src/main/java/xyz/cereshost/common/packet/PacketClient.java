@@ -5,7 +5,7 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public abstract class PacketServer extends Packet {
+public abstract class PacketClient extends Packet {
 
     private String from;
 }

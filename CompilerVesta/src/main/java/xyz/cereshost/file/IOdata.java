@@ -5,6 +5,7 @@ import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -12,7 +13,9 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 public class IOdata {
 
@@ -63,5 +66,47 @@ public class IOdata {
     private static int hourFromFile(Path path) {
         String name = path.getFileName().toString();
         return Integer.parseInt(name.replace(".json", ""));
+    }
+
+    public static Market loadForIa(String symbol) {
+        Market merged = null;
+
+        Path basePath = Path.of("data", symbol);
+
+        try {
+            // 1️⃣ Carpetas de fecha ordenadas
+            List<Path> dateFolders = Files.list(basePath)
+                    .filter(Files::isDirectory)
+                    .sorted() // yyyy-MM-dd se ordena perfecto en String
+                    .toList();
+
+            for (Path dateFolder : dateFolders) {
+
+                // 2️⃣ JSONs ordenados por hora (número)
+                List<Path> jsons = Files.list(dateFolder)
+                        .filter(p -> p.toString().endsWith(".json"))
+                        .sorted(Comparator.comparingInt(p ->
+                                Integer.parseInt(
+                                        p.getFileName().toString().replace(".json", "")
+                                )
+                        ))
+                        .toList();
+
+                for (Path json : jsons) {
+                    Market m = Utils.GSON.fromJson(Files.readString(json), Market.class);
+
+                    if (merged == null) {
+                        merged = m;
+                    } else {
+                        merged.concat(m);
+                    }
+                }
+            }
+
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        return merged;
     }
 }

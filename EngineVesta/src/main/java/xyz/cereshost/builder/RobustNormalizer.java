@@ -1,9 +1,12 @@
 package xyz.cereshost.builder;
 
+import lombok.Getter;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+@Getter
 public class RobustNormalizer {
     private float[] featureMedians;
     private float[] featureIQRs; // Rango intercuartílico
@@ -11,7 +14,6 @@ public class RobustNormalizer {
 
     public void fit(float[][][] X) {
         int features = X[0][0].length;
-        int totalSamples = X.length * X[0].length;
 
         featureMedians = new float[features];
         featureIQRs = new float[features];
@@ -39,6 +41,18 @@ public class RobustNormalizer {
     }
 
     public float[][][] transform(float[][][] X) {
+        if (featureMedians == null || featureIQRs == null) {
+            throw new IllegalStateException("Normalizer not fitted yet");
+        }
+
+        int inputFeatures = X[0][0].length;
+        if (inputFeatures != featureMedians.length) {
+            throw new IllegalArgumentException(
+                    String.format("Feature dimension mismatch. Expected %d, got %d",
+                            featureMedians.length, inputFeatures)
+            );
+        }
+
         float[][][] normalized = new float[X.length][X[0].length][X[0][0].length];
 
         for (int i = 0; i < X.length; i++) {

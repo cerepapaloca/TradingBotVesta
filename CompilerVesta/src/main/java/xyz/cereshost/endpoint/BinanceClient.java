@@ -48,6 +48,7 @@ public class BinanceClient {
         String raw = getRequest(BASE_URL + "klines" + "?symbol=" + symbol + "&interval=1m");
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
+        System.out.println(raw);
         try {
             root = mapper.readTree(raw);
         } catch (JsonProcessingException e) {
