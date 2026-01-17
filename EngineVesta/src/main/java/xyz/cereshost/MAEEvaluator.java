@@ -6,7 +6,6 @@ import ai.djl.training.evaluator.Evaluator;
 import ai.djl.util.Pair;
 
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.Map;
 
 public class MAEEvaluator extends Evaluator {
 
@@ -76,7 +75,6 @@ public class MAEEvaluator extends Evaluator {
             return Float.NaN;
         }
         // media absoluta por elemento
-        double average = p.getValue() / (double) p.getKey();
-        return (float) average;
+        return (float) (p.getValue() / (double) p.getKey());
     }
 }

@@ -10,7 +10,9 @@ import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
-import xyz.cereshost.common.market.Market;
+import xyz.cereshost.common.packet.client.RequestMarketClient;
+import xyz.cereshost.common.packet.server.MarketDataServer;
+import xyz.cereshost.packet.PacketHandler;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -20,9 +22,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
-import java.util.stream.Stream;
+import java.util.concurrent.CountDownLatch;
 
 public class IOdata {
 
@@ -39,32 +42,21 @@ public class IOdata {
         );
     }
 
-    public static void loadAll() throws IOException {
-        try (Stream<Path> symbols = Files.list(Path.of("data"))) {
-            for (Path symbolPath : symbols.toList()) {
-
-                List<Path> jsons = Files.walk(symbolPath)
-                        .filter(p -> p.toString().endsWith(".json"))
-                        .sorted()
-                        .toList();
-
-                Market merged = null;
-
-                for (Path json : jsons) {
-                    Market m = Utils.GSON.fromJson(Files.readString(json), Market.class);
-
-                    if (merged == null) {
-                        merged = m;
-                    } else {
-                        merged.concat(m);
-                    }
-                }
-
-                if (merged != null) {
-                    Vesta.MARKETS.put(symbolPath.getFileName().toString(), merged);
-                }
-            }
+    public static void loadMarkets(List<String> symbols) throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(symbols.size());
+        for (String s : symbols){
+            Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
+            PacketHandler.sendPacket(new RequestMarketClient(s), MarketDataServer.class).thenAccept(packet -> {
+                Vesta.MARKETS.put(s, packet.getMarket());
+                latch.countDown();
+                Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
+            });
         }
+        latch.await();
+    }
+
+    public static void loadMarkets(String... symbols) throws InterruptedException {
+        loadMarkets(Arrays.asList(symbols));
     }
 
     static {

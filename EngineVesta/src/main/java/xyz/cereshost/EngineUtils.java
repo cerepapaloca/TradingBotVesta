@@ -5,6 +5,7 @@ import ai.djl.engine.StandardCapabilities;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.index.NDIndex;
+import ai.djl.pytorch.jni.LibUtils;
 import ai.djl.training.Trainer;
 import ai.djl.util.Pair;
 import lombok.experimental.UtilityClass;
@@ -44,18 +45,18 @@ public class EngineUtils {
     /**
      * Mezcla los datos aleatoriamente
      */
-    public void shuffleData(float[][][] X, float[] y) { // Cambiado
+    public void shuffleData(double[][][] X, double[] y) { // Cambiado
         Random rand = new Random(42); // Semilla para reproducibilidad
         for (int i = X.length - 1; i > 0; i--) {
             int j = rand.nextInt(i + 1);
 
             // Intercambiar X
-            float[][] tempX = X[i];
+            double[][] tempX = X[i];
             X[i] = X[j];
             X[j] = tempX;
 
             // Intercambiar y
-            float tempY = y[i]; // Cambiado
+            double tempY = y[i]; // Cambiado
             y[i] = y[j];
             y[j] = tempY;
         }
@@ -126,8 +127,7 @@ public class EngineUtils {
             }
         }
 
-        // Mezclar los datos para evitar sesgo por símbolo
-        EngineUtils.shuffleData(Xcombined, ycombined); // Cambiado
+        // EngineUtils.shuffleData(Xcombined, ycombined);
 
         return new Pair<>(Xcombined, ycombined); // Cambiado
     }
@@ -160,99 +160,101 @@ public class EngineUtils {
     /**
      * Evaluar modelo en conjunto de test
      */
-    public static void evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test,
-                                      MultiSymbolNormalizer normalizer) {
+    public static void evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer normalizer) {
         Vesta.info("  Test samples: " + X_test.getShape().get(0));
 
         // Hacer predicciones
         try {
-            // Obtener el bloque del modelo
             var block = trainer.getModel().getBlock();
             var manager = trainer.getManager();
 
-            // Procesar en lotes para evitar problemas de memoria
+            // --- Procesamiento por lotes (Sin cambios) ---
             int batchSize = 32;
             int totalSamples = (int) X_test.getShape().get(0);
-
             List<NDArray> batchPredictions = new ArrayList<>();
 
             for (int i = 0; i < totalSamples; i += batchSize) {
                 int end = Math.min(i + batchSize, totalSamples);
                 NDArray batchX = X_test.get(new NDIndex(i + ":" + end));
-
-                // Crear ParameterStore para el forward pass
-                // En modo evaluación, training = false
                 var parameterStore = new ai.djl.training.ParameterStore(manager, false);
-
-                // Forward pass para obtener predicciones
                 NDList output = block.forward(parameterStore, new NDList(batchX), false);
-                NDArray batchPred = output.singletonOrThrow();
-
-                batchPredictions.add(batchPred);
+                batchPredictions.add(output.singletonOrThrow());
             }
 
-            // Concatenar todas las predicciones
             NDArray allPredictions = batchPredictions.get(0);
             for (int i = 1; i < batchPredictions.size(); i++) {
                 allPredictions = allPredictions.concat(batchPredictions.get(i), 0);
             }
 
-            // Calcular error directamente (MAE)
+            // --- Cálculos de Métricas ---
             NDArray error = allPredictions.sub(y_test).abs();
             float maeNormalized = error.mean().getFloat();
 
-            // Desnormalizar predicciones y valores reales
             float[] predArray = allPredictions.toFloatArray();
             float[] trueArray = y_test.toFloatArray();
 
             float[] predPrices = normalizer.inverseTransform(predArray);
             float[] truePrices = normalizer.inverseTransform(trueArray);
 
-            // Calcular MAE en precios reales
             double maeReal = 0.0;
             double mape = 0.0;
             int count = 0;
 
+            List<ResultEvaluator> results = new ArrayList<>();
+
             for (int i = 0; i < predPrices.length; i++) {
+                // Validar que los datos sean finitos y reales
                 if (Float.isFinite(predPrices[i]) && Float.isFinite(truePrices[i]) && truePrices[i] != 0) {
-                    double errorReal = Math.abs(predPrices[i] - truePrices[i]);
-                    maeReal += errorReal;
-                    mape += (errorReal / Math.abs(truePrices[i])) * 100;
+
+                    // Diferencia absoluta para métricas generales
+                    double errorAbs = Math.abs(predPrices[i] - truePrices[i]);
+
+                    // Diferencia con signo para saber si sobre/sub estima
+                    float diff = predPrices[i] - truePrices[i];
+
+                    // Variación porcentual (+/-)
+                    double varPct = (diff / truePrices[i]) * 100;
+
+                    maeReal += errorAbs;
+                    mape += Math.abs(varPct); // MAPE usa valor absoluto
+
+                    // Guardamos en la lista: (pred, real, errorAbsoluto, variacionPorcentual)
+                    results.add(new ResultEvaluator(predPrices[i], truePrices[i], (float)errorAbs, varPct));
                     count++;
                 }
             }
 
             if (count > 0) {
-                List<ResultEvaluator> results = new ArrayList<>();
                 maeReal /= count;
                 mape /= count;
 
                 Vesta.info("\n📊 Resultados de evaluación:");
                 Vesta.info("  MAE (normalizado): " + String.format("%.6f", maeNormalized));
                 Vesta.info("  MAE (precio real): $" + String.format("%.4f", maeReal));
-                Vesta.info("  MAPE (error porcentual): " + String.format("%.2f", mape));
+                Vesta.info("  MAPE (error promedio): " + String.format("%.2f", mape));
                 Vesta.info("  Predicciones válidas: " + count + "/" + predPrices.length);
 
-                // Mostrar algunos ejemplos
-                Vesta.info("\n🔍 Ejemplos de predicción:");
+                // Ordenar por el error absoluto más grande para ver los peores casos primero
+                results.sort(Comparator.comparingDouble(ResultEvaluator::varPct).reversed());
 
-                for (int i = 0; i < predPrices.length; i++) {
-                    double p = (Math.abs(predPrices[i] - truePrices[i]) / truePrices[i]) * 100;
-                    results.add(new ResultEvaluator(predPrices[i], truePrices[i], Math.abs(predPrices[i] - truePrices[i]), p));
-                }
-                results.sort(
-                        Comparator.comparingDouble(ResultEvaluator::p).reversed()
-                );
+                Vesta.info("\n🔍 Ejemplos de predicción (Top errores):");
+                // Mostrar los primeros 15 para no saturar la consola
+                int limit = Math.min(15, results.size());
 
-                for (ResultEvaluator result : results) {
-                    Vesta.info("  Pred: $%.4f | Real: $%.4f | Error: $%.4f (%.3f%%)"
-                            , result.pred()
-                            , result.real()
-                            , result.error()
-                            , result.p()
+                for (int i = 0; i < limit; i++) {
+                    ResultEvaluator res = results.get(i);
+                    // El formato %+ (con signo más) forzará a mostrar +2.5% o -1.2%
+                    Vesta.info("  Pred: $%.4f | Real: $%.4f | Diff: $%.4f | Var: %+.3f%%",
+                            res.pred(),
+                            res.real(),
+                            (res.pred() - res.real()), // Diferencia neta en $
+                            res.varPct()               // Variación %
                     );
                 }
-                ChartUtils.plot("Distribución del Error", "Resultados", List.of(new ChartUtils.DataPlot("error%", results.stream().map(r -> (float) r.p()).toList())));
+
+                // Gráfica de distribución de errores porcentuales
+                ChartUtils.plot("Distribución Variación %", "Resultados",
+                        List.of(new ChartUtils.DataPlot("Var%", results.stream().map(r -> (float) r.varPct()).toList())));
             }
 
             // También podemos usar el evaluador configurado para obtener métricas
@@ -279,17 +281,14 @@ public class EngineUtils {
                 Vesta.info("  MAE (usando evaluador): " + testMae);
 
 
-                List<Double> actualList = new ArrayList<>();
-                List<Double> predList = new ArrayList<>();
-                List<String> labelsList = new ArrayList<>();
+                List<ResultPrediccion> predList = new ArrayList<>();
 
                 for (int i = 0; i < Math.min(50, predPrices.length); i++) {
-                    actualList.add((double) truePrices[i]);
-                    predList.add((double) predPrices[i]);
-                    labelsList.add("Muestra " + i);
+                    predList.add(new ResultPrediccion(predPrices[i], truePrices[i]));
                 }
+                predList.sort(Comparator.comparingDouble(r -> r.pred() - r.real()));
 
-                ChartUtils.CandleChartUtils.showPriceComparison("Predicciones vs Real", actualList, predList, labelsList);
+                ChartUtils.CandleChartUtils.showPriceComparison("Predicciones vs Real", predList.stream().map(ResultPrediccion::pred).toList(), predList.stream().map(ResultPrediccion::real).toList());
             } catch (Exception e) {
                 Vesta.waring("No se pudo calcular métricas usando evaluador: " + e.getMessage());
             }
@@ -300,7 +299,10 @@ public class EngineUtils {
         }
     }
 
-    private record ResultEvaluator(float pred, float real, float error, double p) {}
+    private record ResultPrediccion(float pred, float real) {}
+
+
+    private record ResultEvaluator(float pred, float real, float absError, double varPct) {}
 
     public static Pair<float[][][], float[]> clearData(float[][][] X, float[] y) {
         final float EPS = 1e-9f;

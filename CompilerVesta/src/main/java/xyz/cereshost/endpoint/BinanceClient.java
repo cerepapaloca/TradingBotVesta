@@ -26,7 +26,7 @@ public class BinanceClient {
     public static final String BASE_URL = "https://api.binance.com/api/v3/";
     public static final int LIMIT_DEPTH = 40;
 
-    public Depth getDepth(String symbol) {
+    public synchronized Depth getDepth(String symbol) {
         String raw = getRequest(BASE_URL + "depth" + "?symbol=" + symbol + "&limit=" + LIMIT_DEPTH);
         Gson gson = new Gson();
         OrderBookRaw orderBookRaw = gson.fromJson(raw, OrderBookRaw.class);
@@ -45,7 +45,7 @@ public class BinanceClient {
         private List<List<String>> asks;
     }
 
-    public List<CandleSimple> getCandleAndVolumen(String symbol) {
+    public synchronized List<CandleSimple> getCandleAndVolumen(String symbol) {
         String raw = getRequest(BASE_URL + "klines" + "?symbol=" + symbol + "&interval=1m&limit=" + 300);
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
@@ -77,8 +77,8 @@ public class BinanceClient {
         return List.of(deque.toArray(new CandleSimple[0]));
     }
 
-    public Deque<Trade> getTrades(String symbol) {
-        String raw = getRequest(BASE_URL + "trades" + "?symbol=" + symbol + "&limit=" + 100);
+    public synchronized Deque<Trade> getTrades(String symbol) {
+        String raw = getRequest(BASE_URL + "trades" + "?symbol=" + symbol + "&limit=" + 400);
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
         try {

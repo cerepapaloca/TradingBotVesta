@@ -9,6 +9,7 @@ import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 
 import java.util.*;
+import java.util.stream.Stream;
 
 import static xyz.cereshost.VestaEngine.LOOK_BACK;
 
@@ -23,7 +24,7 @@ public class BuilderData {
             try {
                 Vesta.info("Procesando símbolo: " + symbol);
                 List<Candle> candles = BuilderData.to1mCandles(Vesta.MARKETS.get(symbol));
-
+                candles.sort(Comparator.comparingLong(Candle::openTime));
                 if (candles.size() <= LOOK_BACK + 1) {
                     Vesta.error("Símbolo " + symbol + " no tiene suficientes velas: " + candles.size());
                     continue;
@@ -91,19 +92,20 @@ public class BuilderData {
             }
             if (skip) continue;
 
-            // target = SOLO el cierre de la vela i
+            // Target: Retorno Logarítmico
             Candle targetC = candles.get(i);
-            double close = targetC.close();
+            Candle prevC = candles.get(i - 1); // La última vela de tu ventana de entrada
 
-            if (Double.isNaN(close)) continue;
+            double currentClose = targetC.close();
+            double prevClose = prevC.close();
 
-            // Opcional: convertir target a retorno relativo
-            // double prevClose = candles.get(i-1).close();
-            // double returnValue = (close - prevClose) / prevClose;
-            // y.add((float) returnValue);
+            // Evitar log(0) o división por cero
+            if (prevClose <= 0 || currentClose <= 0) continue;
 
-            // Por defecto: target en valor absoluto (precio de cierre)
-            y.add((float) close);
+            // Usamos Log Return porque es simétrico y sumable
+            double logReturn = Math.log(currentClose / prevClose);
+
+            y.add((float) logReturn);
             X.add(seq);
         }
 
@@ -139,91 +141,79 @@ public class BuilderData {
     }
 
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
-        // ... (código sin cambios) ...
-        // Agrupar trades por minuto (tree map para iterar en orden)
-        NavigableMap<Long, List<Trade>> tradesByMinute = new TreeMap<>();
-        for (Trade t : market.getTrades()) {
-            long minute = (t.time() / 60_000) * 60_000;
-            tradesByMinute.computeIfAbsent(minute, k -> new ArrayList<>()).add(t);
+
+        market.sortd();
+
+        // CandleSimple por minuto
+        NavigableMap<Long, CandleSimple> simpleByMinute = new TreeMap<>();
+        for (CandleSimple cs : market.getCandleSimples()) {
+            long minute = (cs.openTime() / 60_000) * 60_000;
+            simpleByMinute.put(minute, cs);
         }
 
-        // Indexar tickMarkers por minuto en un TreeMap para floorKey / ceilingKey
-        NavigableMap<Long, TickMarket> tickByMinute = new TreeMap<>();
-        for (TickMarket tm : market.getDepths()) {
-            long minute = (tm.getDepth().getDate() / 60_000) * 60_000;
-            tickByMinute.put(minute, tm);
+        // Depth por minuto
+        NavigableMap<Long, Depth> depthByMinute = new TreeMap<>();
+        for (Depth d : market.getDepths()) {
+            long minute = (d.getDate() / 60_000) * 60_000;
+            depthByMinute.put(minute, d);
         }
 
         List<Candle> candles = new ArrayList<>();
+        if (simpleByMinute.isEmpty()) return candles;
 
-        if (tradesByMinute.isEmpty()) {
-            // no trades -> devolver lista vacía
-            return candles;
-        }
+        long startMinute = simpleByMinute.firstKey();
+        long endMinute = simpleByMinute.lastKey();
 
-        // Rango completo de minutos (desde el primer trade hasta el último trade)
-        long startMinute = tradesByMinute.firstKey();
-        long endMinute = tradesByMinute.lastKey();
+        double lastClose = Double.NaN;
 
-        // diagnostico opcional
-        Vesta.info("to1mCandles: startMinute=" + startMinute + " endMinute=" + endMinute
-                + " minutes=" + ((endMinute - startMinute) / 60000 + 1)
-                + " tradesMinutes=" + tradesByMinute.size()
-                + " tickSnapshots=" + tickByMinute.size());
-
-        double lastClose = Double.NaN; // para forward-fill si no hay trades en un minuto
-
-        // recorrer EVERY minute entre start y end
         for (long minute = startMinute; minute <= endMinute; minute += 60_000L) {
-            List<Trade> trades = tradesByMinute.get(minute);
+            // OHLC + VOLUMEN
+            CandleSimple cs = simpleByMinute.get(minute);
 
             double open, high, low, close;
             double volumeBase = 0;
             double quoteVolume = 0;
             double buyQV = 0;
             double sellQV = 0;
+            double deltaUSDT = 0;
+            double buyRatio = 0;
 
-            if (trades == null || trades.isEmpty()) {
-                // minuto SIN trades -> crear vela "vacía" usando lastClose si existe
-                if (Double.isNaN(lastClose)) {
-                    // si no hay lastClose (primeros minutos sin trades) no podemos crear OHLC real:
-                    // opcional: saltar o usar 0. Aquí uso 0 para evitar NaNs.
-                    open = high = low = close = 0.0;
-                } else {
-                    open = high = low = close = lastClose;
-                }
-                // volúmenes quedan en 0
-            } else {
-                // hay trades -> ordenar por time para OHLC
-                trades.sort(Comparator.comparingLong(Trade::time));
-                open = trades.get(0).price();
-                close = trades.get(trades.size() - 1).price();
-                high = trades.stream().mapToDouble(Trade::price).max().orElse(open);
-                low = trades.stream().mapToDouble(Trade::price).min().orElse(open);
-
-                for (Trade t : trades) {
-                    double q = t.quoteQty();
-                    volumeBase += t.qty();
-                    quoteVolume += q;
-                    if (t.isBuyerMaker()) sellQV += q; // sale agresiva
-                    else buyQV += q; // compra agresiva
-                }
+            if (cs != null) {
+                open = cs.open();
+                high = cs.high();
+                low = cs.low();
+                close = cs.close();
                 lastClose = close;
+                Volumen v = cs.volumen();
+                quoteVolume = v.quoteVolume();
+                buyQV = v.takerBuyQuoteVolume();
+                sellQV = v.sellQuoteVolume();
+                deltaUSDT = v.deltaUSDT();
+                buyRatio = v.buyRatio();
+                // Calculo de volumenBase TODO: Añadir como valor aguardable
+                double avgPrice = (open + high + low + close) / 4.0;
+                volumeBase = avgPrice > 0 ? quoteVolume / avgPrice : 0.0;
+            } else if (!Double.isNaN(lastClose)) {
+                open = high = low = close = lastClose;
+            } else {
+                open = high = low = close = 0.0;
             }
 
-            double deltaUSDT = buyQV - sellQV;
-            double buyRatio = quoteVolume == 0.0 ? 0.0 : buyQV / quoteVolume;
-
-            // Depth: usa el snapshot más cercano por floorKey(minute)
+            // DEPTH
             double bidLiq = 0, askLiq = 0, mid = close, spread = 0;
-            Map.Entry<Long, TickMarket> floor = tickByMinute.floorEntry(minute);
-            TickMarket tick = (floor != null) ? floor.getValue() : null;
 
-            if (tick != null && tick.getDepth() != null) {
-                Depth depth = tick.getDepth();
-                // sumar liq (por ejemplo primeros 10 niveles)
-                bidLiq = depth.getBids().stream().mapToDouble(o -> o.price() * o.qty()).sum();
-                askLiq = depth.getAsks().stream().mapToDouble(o -> o.price() * o.qty()).sum();
+            Map.Entry<Long, Depth> floor = depthByMinute.floorEntry(minute);
+            Depth depth = floor != null ? floor.getValue() : null;
+
+            if (depth != null) {
+                bidLiq = depth.getBids().stream()
+                        .mapToDouble(o -> o.price() * o.qty())
+                        .sum();
+
+                askLiq = depth.getAsks().stream()
+                        .mapToDouble(o -> o.price() * o.qty())
+                        .sum();
+
                 if (!depth.getBids().isEmpty() && !depth.getAsks().isEmpty()) {
                     double bestBid = depth.getBids().peekFirst().price();
                     double bestAsk = depth.getAsks().peekFirst().price();
@@ -232,7 +222,8 @@ public class BuilderData {
                 }
             }
 
-            double depthImbalance = (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
+            double depthImbalance =
+                    (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
 
             candles.add(new Candle(
                     minute,
@@ -253,4 +244,5 @@ public class BuilderData {
 
         return candles;
     }
+
 }

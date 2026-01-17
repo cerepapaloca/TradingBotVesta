@@ -27,6 +27,8 @@ public class IOdata {
 
         Path file = dir.resolve(hour + ".json");
 
+        if (!Files.exists(file)) Vesta.MARKETS.clear();
+
         Files.writeString(
                 file,
                 json,

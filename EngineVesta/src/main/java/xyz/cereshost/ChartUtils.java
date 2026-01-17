@@ -1,12 +1,15 @@
 package xyz.cereshost;
 
+import org.jetbrains.annotations.NotNull;
 import org.jfree.chart.*;
 import org.jfree.chart.axis.DateAxis;
+import org.jfree.chart.axis.NumberAxis;
 import org.jfree.chart.plot.PlotOrientation;
 import org.jfree.chart.plot.XYPlot;
 import org.jfree.data.category.DefaultCategoryDataset;
 import org.jfree.data.xy.DefaultHighLowDataset;
 import org.jfree.data.xy.OHLCDataset;
+import org.jfree.data.xy.XYSeriesCollection;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 
@@ -14,6 +17,7 @@ import javax.swing.*;
 import java.awt.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 
@@ -56,7 +60,7 @@ public class ChartUtils {
             List<Float> values
     ) {}
 
-    public class CandleChartUtils {
+    public static class CandleChartUtils {
 
         public static void showCandleChart(String title, List<Candle> candles, String symbol) {
             if (candles == null || candles.isEmpty()) {
@@ -103,6 +107,18 @@ public class ChartUtils {
                 DateAxis axis = (DateAxis) plot.getDomainAxis();
                 axis.setDateFormatOverride(new SimpleDateFormat("dd/MM HH:mm"));
 
+                // Ajusta el zoon
+                double minPrice = Arrays.stream(lows).min().orElse(0);
+                double maxPrice = Arrays.stream(highs).max().orElse(0);
+
+                double padding = (maxPrice - minPrice) * 0.02; // pading
+
+                NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
+                rangeAxis.setRange(
+                        minPrice - padding,
+                        maxPrice + padding
+                );
+
                 // Mostrar en ventana
                 ChartPanel chartPanel = new ChartPanel(chart);
                 chartPanel.setPreferredSize(new Dimension(1200, 600));
@@ -122,28 +138,21 @@ public class ChartUtils {
             }
         }
 
-        public static void showPriceComparison(String title, List<Double> actualPrices,
-                                               List<Double> predictedPrices, List<String> labels) {
+        public static void showPriceComparison(
+                String title,
+                List<Float> actualPrices,
+                List<Float> predictedPrices
+        ) {
             if (actualPrices.size() != predictedPrices.size()) {
                 Vesta.error("Los arrays de precios no tienen el mismo tamaño");
                 return;
             }
 
             try {
-                // Crear dataset para línea
-                org.jfree.data.xy.XYSeries actualSeries = new org.jfree.data.xy.XYSeries("Actual");
-                org.jfree.data.xy.XYSeries predictedSeries = new org.jfree.data.xy.XYSeries("Predicho");
+                // Dataset
+                XYSeriesCollection dataset = getXySeriesCollection(actualPrices, predictedPrices);
 
-                for (int i = 0; i < actualPrices.size(); i++) {
-                    actualSeries.add(i, actualPrices.get(i));
-                    predictedSeries.add(i, predictedPrices.get(i));
-                }
-
-                org.jfree.data.xy.XYSeriesCollection dataset = new org.jfree.data.xy.XYSeriesCollection();
-                dataset.addSeries(actualSeries);
-                dataset.addSeries(predictedSeries);
-
-                // Crear gráfico de línea
+                // Crear gráfico
                 JFreeChart chart = ChartFactory.createXYLineChart(
                         title,
                         "Muestra",
@@ -151,7 +160,33 @@ public class ChartUtils {
                         dataset
                 );
 
-                // Mostrar en ventana
+                XYPlot plot = chart.getXYPlot();
+
+                double min = Double.POSITIVE_INFINITY;
+                double max = Double.NEGATIVE_INFINITY;
+
+                for (int i = 0; i < actualPrices.size(); i++) {
+                    double a = actualPrices.get(i);
+                    double p = predictedPrices.get(i);
+                    min = Math.min(min, Math.min(a, p));
+                    max = Math.max(max, Math.max(a, p));
+                }
+
+                // margen del 2%
+                double padding = (max - min) * 0.02;
+                if (padding == 0) padding = max * 0.001; // por si todo es constante
+
+                NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
+                rangeAxis.setAutoRange(false);
+                rangeAxis.setLowerBound(min - padding);
+                rangeAxis.setUpperBound(max + padding);
+
+                // ===== MEJORAS VISUALES OPCIONALES =====
+                rangeAxis.setAutoTickUnitSelection(true);
+                plot.setDomainGridlinesVisible(true);
+                plot.setRangeGridlinesVisible(true);
+
+                // Mostrar
                 ChartPanel chartPanel = new ChartPanel(chart);
                 chartPanel.setPreferredSize(new Dimension(1200, 600));
 
@@ -170,18 +205,33 @@ public class ChartUtils {
             }
         }
 
+        private static @NotNull XYSeriesCollection getXySeriesCollection(List<Float> actualPrices, List<Float> predictedPrices) {
+            org.jfree.data.xy.XYSeries actualSeries = new org.jfree.data.xy.XYSeries("Actual");
+            org.jfree.data.xy.XYSeries predictedSeries = new org.jfree.data.xy.XYSeries("Predicho");
+
+            for (int i = 0; i < actualPrices.size(); i++) {
+                actualSeries.add(i, actualPrices.get(i));
+                predictedSeries.add(i, predictedPrices.get(i));
+            }
+
+            XYSeriesCollection dataset = new XYSeriesCollection();
+            dataset.addSeries(actualSeries);
+            dataset.addSeries(predictedSeries);
+            return dataset;
+        }
+
         public static void showDataDistribution(String title, float[][][] X, float[] y, String symbol) {
             try {
                 // Extraer precios de cierre de la última vela de cada muestra
-                List<Double> closes = new ArrayList<>();
-                List<Double> targets = new ArrayList<>();
+                List<Float> closes = new ArrayList<>();
+                List<Float> targets = new ArrayList<>();
 
                 for (int i = 0; i < X.length; i++) {
                     // Suponiendo que el precio de cierre está en alguna posición
                     // Ajusta según tu estructura de datos
                     if (X[i].length > 0 && X[i][X[i].length-1].length > 0) {
-                        closes.add((double) X[i][X[i].length-1][3]); // Índice 3 = close?
-                        targets.add((double) y[i]);
+                        closes.add(X[i][X[i].length-1][3]); // Índice 3 = close?
+                        targets.add(y[i]);
                     }
                 }
 

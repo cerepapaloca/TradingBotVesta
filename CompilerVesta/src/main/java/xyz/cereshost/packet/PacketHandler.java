@@ -23,34 +23,34 @@ public class PacketHandler extends BasePacketHandler {
     @Getter
     private static final HashSet<SocketProperties> sockets = new HashSet<>();
 
-    private final int PORT = 2525;
+    private final int PORT = 2545;
 
     public void upServer() {
         executor.submit(() -> {
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    ServerSocket serverSocket = new ServerSocket();
-                    serverSocket.setReuseAddress(true);
-                    serverSocket.bind(new InetSocketAddress("0.0.0.0", PORT));
-                    Vesta.info("Escuchando en: %s:%s" , "0.0.0.0", PORT);
-                    while (!Thread.currentThread().isInterrupted()) {
-                        Socket socket = serverSocket.accept();
-                        DataInputStream in = new DataInputStream(socket.getInputStream());
-                        DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            try (ServerSocket serverSocket = new ServerSocket()) {
+                serverSocket.setReuseAddress(true);
+                serverSocket.bind(new InetSocketAddress("0.0.0.0", PORT));
+                Vesta.info("Escuchando en 0.0.0.0:%d", PORT);
 
-                        socket.setTcpNoDelay(true);
-                        socket.setKeepAlive(true);
-                        socket.setReuseAddress(true);
-                        String code = generateIdServer(socket);
-                        Vesta.info("Servidor conectado %s", code);
-                        SocketProperties sp = new SocketProperties(socket, out, in);
-                        sockets.add(sp);
-                        executor.submit(() -> startListening(sp));
-                    }
-                } catch (IOException e) {
-                    //AviaTerraProxy.getLogger().warn("No se pudo conectar al servidor: " + e.getMessage() + " con " + host + ":" + (port + 5));
-                    LockSupport.parkNanos((long) 5.0E+9);// 5s
+                while (!Thread.currentThread().isInterrupted()) {
+                    Socket socket = serverSocket.accept();
+
+                    socket.setTcpNoDelay(true);
+                    socket.setKeepAlive(true);
+
+                    DataInputStream in = new DataInputStream(socket.getInputStream());
+                    DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+
+                    String code = generateIdServer(socket);
+                    Vesta.info("Servidor conectado %s", code);
+
+                    SocketProperties sp = new SocketProperties(socket, out, in);
+                    sockets.add(sp);
+
+                    executor.submit(() -> startListening(sp));
                 }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         });
 

@@ -2,6 +2,7 @@ package xyz.cereshost.packet;
 
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.Main;
+import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.packet.*;
 
 import java.io.DataInputStream;
@@ -24,8 +25,8 @@ public class PacketHandler extends BasePacketHandler {
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private static SocketProperties socketProperties;
     private static String id;
-    private static final String HOST = "127.0.0.1";
-    private static final int PORT = 2525;
+    private static final String HOST = "192.168.1.55";// 192.168.1.55
+    private static final int PORT = 2545;
 
     public PacketHandler() {
         executor.submit(() -> {
@@ -35,7 +36,8 @@ public class PacketHandler extends BasePacketHandler {
                     socket.setTcpNoDelay(true);
                     socket.setKeepAlive(true);
                     //socket.setReuseAddress(true);
-                    socket.connect(new InetSocketAddress(HOST, PORT));
+                    socket.connect(new InetSocketAddress(HOST, PORT), 5_000);
+                    Vesta.info("✅ Cliente Conectado a %s", HOST);
                     DataOutputStream out = new DataOutputStream(socket.getOutputStream());
                     DataInputStream in = new DataInputStream(socket.getInputStream());
                     socketProperties = new SocketProperties(socket, out, in);

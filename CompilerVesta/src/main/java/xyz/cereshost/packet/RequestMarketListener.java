@@ -8,18 +8,29 @@ import xyz.cereshost.common.packet.client.RequestMarketClient;
 import xyz.cereshost.common.packet.server.MarketDataServer;
 import xyz.cereshost.file.IOdata;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public class RequestMarketListener extends PacketListener<RequestMarketClient> {
+
+    private static final ExecutorService EXECUTOR_NETWORK = Executors.newScheduledThreadPool(6);
+
     @Override
     public void onReceive(RequestMarketClient packet) {
+        EXECUTOR_NETWORK.submit(() -> {
+            long systemTime = System.currentTimeMillis();
+            Vesta.info("Preparando datos para: " + packet.getSymbol());
+            Market marketLoaded = IOdata.loadMarket(packet.getSymbol());
+            try {
+                Main.updateData(packet.getSymbol());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            marketLoaded.concat(Vesta.MARKETS.get(packet.getSymbol()));
+            marketLoaded.sortd();
+            Vesta.info("✅ Datos recopilados de: " + packet.getSymbol() + " (" + ( System.currentTimeMillis() - systemTime) + "ms)" );
+            PacketHandler.sendPacketReply(packet, new MarketDataServer(marketLoaded));
+        });
 
-        Market marketLoaded = IOdata.loadMarket(packet.getSymbol());
-        try {
-            Main.updateData(packet.getSymbol());
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-        marketLoaded.concat(Vesta.MARKETS.get(packet.getSymbol()));
-        marketLoaded.sortd();
-        PacketHandler.sendPacketReply(packet, new MarketDataServer(marketLoaded));
     }
 }

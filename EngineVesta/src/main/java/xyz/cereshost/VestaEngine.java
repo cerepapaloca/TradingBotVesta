@@ -36,14 +36,13 @@ import java.util.List;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 35;
-    public static final int EPOCH = 10;//300
+    public static final int LOOK_BACK = 20;
+    public static final int EPOCH = 300;//300
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
      */
-    public static void trainingModel(
-            @NotNull List<String> symbols) throws TranslateException, IOException {
+    public static void trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException {
 
         ai.djl.engine.Engine TensorFlow = ai.djl.engine.Engine.getEngine("PyTorch");
         if (TensorFlow == null) {
@@ -214,11 +213,11 @@ public class VestaEngine {
     public static SequentialBlock getSequentialBlock() {
         return new SequentialBlock()
                 .add(LSTM.builder()
-                        .setStateSize(1024)//2048 / 1024
-                        .setNumLayers(4)
+                        .setStateSize(256)//2048 / 1024
+                        .setNumLayers(2)
                         .optReturnState(false)
                         .optBatchFirst(true)
-                        .optDropRate(0.5f)
+                        .optDropRate(0.2f)
                         .build())
                 .add(ndList -> {
                     NDArray x = ndList.singletonOrThrow();
