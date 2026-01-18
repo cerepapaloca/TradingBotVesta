@@ -9,27 +9,26 @@ import xyz.cereshost.packet.PacketHandler;
 import java.io.IOException;
 import java.util.List;
 
-import static xyz.cereshost.EngineUtils.checkEngines;
-
 public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
+
+    public static final List<String> SYMBOLS_TRAINING = List.of("XRPUSDT");
 
     @Getter
     private static Main instance;
 
     public static void main(String[] args) throws IOException, TranslateException, InterruptedException {
         instance = new Main();
-        System.setProperty("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:512");
         new PacketHandler();
         if (args.length > 0 && args[0].equals("tr")) {
-            List<String> symbols = Vesta.MARKETS_NAMES;
-            IOdata.loadMarkets(symbols);
+            //List.of("BTCUSDT");// Vesta.MARKETS_NAMES;
+            IOdata.loadMarkets(true, SYMBOLS_TRAINING);
             //checkEngines();
-            VestaEngine.trainingModel(symbols);
+            VestaEngine.trainingModel(SYMBOLS_TRAINING);
         }else {
-            String symbol = "BTCUSDT";
-            IOdata.loadMarkets(symbol);
+            String symbol = "XRPUSDT";
+            IOdata.loadMarkets(false, symbol);
             PredictionEngine.makePrediction(symbol);
         }
     }

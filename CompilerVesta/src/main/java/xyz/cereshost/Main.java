@@ -12,15 +12,15 @@ import xyz.cereshost.packet.RequestMarketListener;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Optional;
-import java.util.concurrent.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 public class Main {
-    private static final int TICK_SIZE = 10000;
-    private static final int SAVE_INTERVAL = 15;
+
     @Getter
     private static PacketHandler packetHandler;
     private static final ScheduledExecutorService EXECUTOR = Executors.newScheduledThreadPool(6);
@@ -62,7 +62,7 @@ public class Main {
         }, 0, 30, TimeUnit.SECONDS);
 
         EXECUTOR.scheduleAtFixedRate(() -> {
-           Vesta.info("Datos recopilados: %.2fmb", ((Utils.getFolderSize(Paths.get("data").toFile()) / 1024) / 1024));
+            Vesta.info("Datos recopilados: " + ((double) (Utils.getFolderSize(Paths.get("data").toFile()) / 1024) / 1024) + " mb");
         }, 0, 1, TimeUnit.MINUTES);
 
         // Mantener en pausa anta que detenga el programa

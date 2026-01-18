@@ -19,6 +19,7 @@ import xyz.cereshost.common.market.Market;
 import xyz.cereshost.file.IOdata;
 
 import java.io.IOException;
+import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -113,23 +114,39 @@ public class PredictionEngine {
         // Envolvemos en array 3D [1, lookback, features]
         float[][][] rawInput = new float[][][]{seq};
 
-        // IMPORTANTE: Debemos pasar la lista de símbolos usada en entrenamiento para que el OneHot coincida.
-        // Si solo entrenaste con BTCUSDT, la lista es List.of("BTCUSDT").
-        List<String> trainingSymbols = List.of("BTCUSDT"); // TODO: Pasar esto dinámicamente si usas más símbolos
-        float[][][] inputWithSymbol = EngineUtils.addSymbolFeature(rawInput, market.getSymbol(), trainingSymbols);
+        float[][][] inputWithSymbol = EngineUtils.addSymbolFeature(rawInput, market.getSymbol(), Main.SYMBOLS_TRAINING);
 
         // 5. Obtener predicción (Log Return)
-        float predictedLogReturn = predictRaw(inputWithSymbol);
+        float predictedLogReturnNormalized = predictRaw(inputWithSymbol);
 
-        // 6. Reconstruir precio absoluto
-        // Precio Futuro = Precio Actual * e^(log_return)
+        // 6. Desnormalizar el log return
+        float[] denormalizedArray = yNormalizer.inverseTransform(new float[]{predictedLogReturnNormalized});
+        float predictedLogReturn = denormalizedArray[0];
+
+        // 7. Verificar que el log return sea razonable
+        if (Math.abs(predictedLogReturn) > 0.1) { // Más del 10% en 1 minuto es improbable
+            Vesta.waring("Log return predicho muy grande: " + predictedLogReturn +
+                    ". Limitando a ±0.1");
+            predictedLogReturn = Math.max(-0.1f, Math.min(0.1f, predictedLogReturn));
+        }
+
+        // 8. Reconstruir precio absoluto
         double currentPrice = candles.get(candles.size() - 1).close();
         double predictedPrice = currentPrice * Math.exp(predictedLogReturn);
+
+        // 9. Calcular porcentaje de cambio
+        double percentChange = predictedLogReturn * 100;  // Log return ≈ porcentaje para valores pequeños
+
+        if (Math.abs(percentChange) > 10) {  // Más de 10% en 1 minuto es improbable
+            percentChange = Math.signum(percentChange) * 10;
+            predictedLogReturn = (float) (percentChange / 100);
+        }
 
         return new PredictionDetail(
                 (float) currentPrice,
                 (float) predictedPrice,
-                predictedLogReturn
+                (float) percentChange,  // Cambiado: ahora es % no log return
+                predictedLogReturn      // Mantener log return también
         );
     }
 
@@ -154,11 +171,8 @@ public class PredictionEngine {
         return new PredictionResult(model, normalizers.getKey(), normalizers.getValue(), lookBack, features, device);
     }
 
-    // --- Clases de soporte ---
-
-    public record PredictionDetail(float currentPrice, float predictedPrice, float logReturn) {
+    public record PredictionDetail(float currentPrice, float predictedPrice, float percentChange, float logReturn) {
         public float getAbsChange() { return predictedPrice - currentPrice; }
-        public float getPercentChange() { return (predictedPrice - currentPrice) / currentPrice * 100f; }
     }
 
     @Getter
@@ -208,19 +222,19 @@ public class PredictionEngine {
 
                 // Realizar predicción detallada
                 PredictionDetail result = engine.predictNextPriceDetail(market);
-
+                DecimalFormat df = new DecimalFormat("###,##0.00###$");
+                DecimalFormat df2 = new DecimalFormat("###,##0.00###%");
                 // Mostrar resultados
                 Vesta.info("\n🔮 Análisis de Predicción para " + symbol + ":");
-                Vesta.info("  Precio Actual (Close):   $%.2f", result.currentPrice());
-                Vesta.info("  Precio Predicho (t+1):   $%.2f", result.predictedPrice());
+                Vesta.info("  Precio Actual (Close):   %s", df.format(result.currentPrice()));
+                Vesta.info("  Precio Predicho (t+1):   %s", df.format(result.predictedPrice()));
 
-                String directionIcon = result.getPercentChange() > 0 ? "🚀 Subida" : "🔻 Bajada";
-                String color = result.getPercentChange() > 0 ? "\u001B[32m" : "\u001B[31m"; // Verde o Rojo en consola
+
+                String color = result.getAbsChange() > 0 ? "\u001B[32m" : "\u001B[31m"; // Verde o Rojo en consola
                 String reset = "\u001B[0m";
 
-                Vesta.info("  Tendencia: " + directionIcon);
-                Vesta.info("  Variación Esperada:      %s%+.2f$ (%+.3f%%)%s",
-                        color, result.getAbsChange(), result.getPercentChange(), reset);
+                Vesta.info("  Variación Esperada:    %s %s (%s)%s",
+                        color, df.format(result.getAbsChange()), df2.format(result.logReturn()), reset);
 
             } finally {
                 fullSystem.close();

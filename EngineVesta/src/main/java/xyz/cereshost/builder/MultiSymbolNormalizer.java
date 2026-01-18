@@ -19,17 +19,16 @@ public class MultiSymbolNormalizer {
     private static final float EPSILON = 1e-8f;
 
     public void fit(float[] y) {
-        List<Float> closes = new ArrayList<>();
+        List<Float> logReturns = new ArrayList<>();
 
         for (float value : y) {
-            closes.add(value);
+            // y ya son log returns directamente
+            logReturns.add(value);
         }
 
-        Collections.sort(closes);
-        priceMedian = median(closes);
-        priceMAD = mad(closes, priceMedian);
-
-        System.out.println("  Close stats - Median: " + priceMedian + ", MAD: " + priceMAD);
+        Collections.sort(logReturns);
+        priceMedian = median(logReturns);
+        priceMAD = mad(logReturns, priceMedian);
     }
 
     public float[] transform(float[] y) {
@@ -40,7 +39,7 @@ public class MultiSymbolNormalizer {
             normalized[i] = (y[i] - priceMedian) / (priceMAD + EPSILON);
 
             // Clamping para valores extremos
-            normalized[i] = clamp(normalized[i], -10, 10);
+            normalized[i] = clamp(normalized[i], -3, 3);
         }
 
         return normalized;

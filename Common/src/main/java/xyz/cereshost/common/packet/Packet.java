@@ -2,10 +2,9 @@ package xyz.cereshost.common.packet;
 
 import lombok.Getter;
 import lombok.Setter;
+import xyz.cereshost.common.Utils;
 
 import java.util.UUID;
-
-import static xyz.cereshost.common.packet.PacketManager.gsonPacket;
 
 @Getter
 @Setter
@@ -28,6 +27,6 @@ public abstract class Packet {
 
     @Override
     public String toString() {
-        return gsonPacket.toJson(this);
+        return Utils.GSON.toJson(this);
     }
 }

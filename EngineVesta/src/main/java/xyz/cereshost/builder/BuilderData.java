@@ -190,9 +190,7 @@ public class BuilderData {
                 sellQV = v.sellQuoteVolume();
                 deltaUSDT = v.deltaUSDT();
                 buyRatio = v.buyRatio();
-                // Calculo de volumenBase TODO: Añadir como valor aguardable
-                double avgPrice = (open + high + low + close) / 4.0;
-                volumeBase = avgPrice > 0 ? quoteVolume / avgPrice : 0.0;
+                volumeBase = v.baseVolume();
             } else if (!Double.isNaN(lastClose)) {
                 open = high = low = close = lastClose;
             } else {

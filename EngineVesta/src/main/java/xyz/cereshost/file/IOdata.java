@@ -42,11 +42,11 @@ public class IOdata {
         );
     }
 
-    public static void loadMarkets(List<String> symbols) throws InterruptedException {
+    public static void loadMarkets(boolean forTraining, List<String> symbols) throws InterruptedException {
         CountDownLatch latch = new CountDownLatch(symbols.size());
         for (String s : symbols){
             Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
-            PacketHandler.sendPacket(new RequestMarketClient(s), MarketDataServer.class).thenAccept(packet -> {
+            PacketHandler.sendPacket(new RequestMarketClient(s, forTraining), MarketDataServer.class).thenAccept(packet -> {
                 Vesta.MARKETS.put(s, packet.getMarket());
                 latch.countDown();
                 Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
@@ -55,8 +55,8 @@ public class IOdata {
         latch.await();
     }
 
-    public static void loadMarkets(String... symbols) throws InterruptedException {
-        loadMarkets(Arrays.asList(symbols));
+    public static void loadMarkets(boolean forTraining, String... symbols) throws InterruptedException {
+        loadMarkets(forTraining, Arrays.asList(symbols));
     }
 
     static {

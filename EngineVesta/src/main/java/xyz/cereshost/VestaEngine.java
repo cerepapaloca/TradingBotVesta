@@ -36,8 +36,8 @@ import java.util.List;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 20;
-    public static final int EPOCH = 300;//300
+    public static final int LOOK_BACK = 35;
+    public static final int EPOCH = 4000;//300
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
@@ -48,7 +48,7 @@ public class VestaEngine {
         if (TensorFlow == null) {
             Vesta.error("PyTorch no está disponible. Engines disponibles:");
             for (String engine : ai.djl.engine.Engine.getAllEngines()) {
-                System.err.println("  - " + engine);
+                Vesta.error("  - " + engine);
             }
             throw new RuntimeException("PyTorch engine no encontrado");
         }
@@ -163,7 +163,7 @@ public class VestaEngine {
                                     .setMaxUpdates(EPOCH)
                                     .build())
                             .optWeightDecays(0.001f)
-                            .optClipGrad(2.5f)
+                            .optClipGrad(2.8f)
                             .build())
                     .addEvaluator(new MAEEvaluator())
                     .optDevices(new Device[]{device})
@@ -213,7 +213,7 @@ public class VestaEngine {
     public static SequentialBlock getSequentialBlock() {
         return new SequentialBlock()
                 .add(LSTM.builder()
-                        .setStateSize(256)//2048 / 1024
+                        .setStateSize(256)
                         .setNumLayers(2)
                         .optReturnState(false)
                         .optBatchFirst(true)

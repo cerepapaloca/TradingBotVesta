@@ -59,7 +59,7 @@ public class BinanceClient {
         for (int i = 0; i < 300; i++) {
             JsonNode kline = root.get(i);
 
-            //double baseVolume = kline.get(5).asDouble();
+            double baseVolume = kline.get(5).asDouble();
             double quoteVolume = kline.get(7).asDouble();  // USDT
             double takerBuyQuoteVolume = kline.get(10).asDouble(); // USDT agresivo
 
@@ -72,7 +72,7 @@ public class BinanceClient {
                     kline.get(2).asDouble(), // high
                     kline.get(3).asDouble(), // low
                     kline.get(4).asDouble(), // close
-                    new Volumen(quoteVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
+                    new Volumen(quoteVolume, baseVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
         }
         return List.of(deque.toArray(new CandleSimple[0]));
     }

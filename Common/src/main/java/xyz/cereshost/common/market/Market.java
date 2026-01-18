@@ -34,15 +34,15 @@ public class Market {
         this.candleSimples.addAll(market.candleSimples);
     }
 
-    public void addTrade(Collection<Trade> trade) {
+    public synchronized void addTrade(Collection<Trade> trade) {
         this.trades.addAll(trade);
     }
 
-    public void addDepth(Depth tickMarker) {
+    public synchronized void addDepth(Depth tickMarker) {
         this.depths.add(tickMarker);
     }
 
-    public void addCandles(Collection<CandleSimple> candleSimple) {
+    public synchronized void addCandles(Collection<CandleSimple> candleSimple) {
         this.candleSimples.addAll(candleSimple);
     }
 

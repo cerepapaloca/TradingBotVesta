@@ -5,7 +5,6 @@ import ai.djl.engine.StandardCapabilities;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.index.NDIndex;
-import ai.djl.pytorch.jni.LibUtils;
 import ai.djl.training.Trainer;
 import ai.djl.util.Pair;
 import lombok.experimental.UtilityClass;
@@ -157,10 +156,77 @@ public class EngineUtils {
         return XwithSymbol;
     }
 
+    public static void evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer yNormalizer) {
+        // 1. Obtener predicciones (y_test ya está en el dispositivo correcto)
+        NDList predictions = trainer.evaluate(new NDList(X_test));
+        NDArray yPred = predictions.singletonOrThrow();
+
+        // 2. Traer a CPU para cálculo de métricas y des-normalización
+        float[] yRealNorm = y_test.toFloatArray();
+        float[] yPredNorm = yPred.toFloatArray();
+
+        // 3. Des-normalizar los log-returns
+        float[] yRealRaw = yNormalizer.inverseTransform(yRealNorm);
+        float[] yPredRaw = yNormalizer.inverseTransform(yPredNorm);
+
+        int hits = 0;
+        int total = yRealRaw.length;
+        double totalMae = 0;
+
+        Vesta.info("=== Evaluación de Predicción (Muestra de 10) ===");
+        List<ResultPrediccion> results = new ArrayList<>();
+        for (int i = 0; i < total; i++) {
+            float realReturn = yRealRaw[i];
+            float predReturn = yPredRaw[i];
+
+            // Métrica: Directional Accuracy (Hit Rate)
+            // Verificamos si ambos tienen el mismo signo (ambos suben o ambos bajan)
+            if (Math.signum(realReturn) == Math.signum(predReturn)) {
+                hits++;
+            }
+
+            totalMae += Math.abs(realReturn - predReturn);
+
+            // Mostrar solo los primeros 10 para no saturar la consola
+            if (i < 10) {
+                String dirReal = realReturn >= 0 ? "UP" : "DOWN";
+                String dirPred = predReturn >= 0 ? "UP" : "DOWN";
+                boolean success = dirReal.equals(dirPred);
+
+                Vesta.info("[%d] Real: %.6f (%s) | Pred: %.6f (%s) | ¿Acierto Dir?: %b",
+                        i, realReturn, dirReal, predReturn, dirPred, success);
+            }
+            results.add(new ResultPrediccion(predReturn, realReturn));
+
+        }
+        results.sort(Comparator.comparingDouble(s -> s.pred() - s.real()));
+
+        double hitRate = (double) hits / total * 100;
+        double avgMae = totalMae / total;
+
+        Vesta.info("--------------------------------------------------");
+        Vesta.info("RESULTADOS FINALES:");
+        Vesta.info("MAE Promedio (Log-Returns): %.8f", avgMae);
+        Vesta.info("Directional Accuracy (Hit Rate): %.2f%%", hitRate);
+
+        if (hitRate <= 51.0) {
+            Vesta.waring("OJO: El modelo apenas supera el azar (50%). Considera agregar más features.");
+        } else {
+            Vesta.info("INFO: El modelo muestra capacidad predictiva real (>51%).");
+        }
+        // Gráfica de distribución de errores porcentuales
+        ChartUtils.plot("Resultados De la evaluación", "Resultados",
+                List.of(new ChartUtils.DataPlot("Diferencia", results.stream().map(r -> r.pred() - r.real()).toList()),
+                        new ChartUtils.DataPlot("Predicción", results.stream().map(ResultPrediccion::pred).toList()),
+                        new ChartUtils.DataPlot("Real", results.stream().map(ResultPrediccion::real).toList())
+                ));
+        Vesta.info("--------------------------------------------------");
+    }
+
     /**
      * Evaluar modelo en conjunto de test
      */
-    public static void evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer normalizer) {
+    public static void evaluateModelLegacy(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer normalizer) {
         Vesta.info("  Test samples: " + X_test.getShape().get(0));
 
         // Hacer predicciones
@@ -200,7 +266,7 @@ public class EngineUtils {
             double mape = 0.0;
             int count = 0;
 
-            List<ResultEvaluator> results = new ArrayList<>();
+            List<ResultEvaluatorLegacy> results = new ArrayList<>();
 
             for (int i = 0; i < predPrices.length; i++) {
                 // Validar que los datos sean finitos y reales
@@ -213,13 +279,16 @@ public class EngineUtils {
                     float diff = predPrices[i] - truePrices[i];
 
                     // Variación porcentual (+/-)
-                    double varPct = (diff / truePrices[i]) * 100;
+                    double varPct = 0;
+                    if (Math.abs(truePrices[i]) > 1e-10) {  // Evitar división por cero
+                        varPct = (diff / truePrices[i]) * 100;
+                    }
 
                     maeReal += errorAbs;
                     mape += Math.abs(varPct); // MAPE usa valor absoluto
 
                     // Guardamos en la lista: (pred, real, errorAbsoluto, variacionPorcentual)
-                    results.add(new ResultEvaluator(predPrices[i], truePrices[i], (float)errorAbs, varPct));
+                    results.add(new ResultEvaluatorLegacy(predPrices[i], truePrices[i], (float)errorAbs, varPct));
                     count++;
                 }
             }
@@ -235,14 +304,14 @@ public class EngineUtils {
                 Vesta.info("  Predicciones válidas: " + count + "/" + predPrices.length);
 
                 // Ordenar por el error absoluto más grande para ver los peores casos primero
-                results.sort(Comparator.comparingDouble(ResultEvaluator::varPct).reversed());
+                results.sort(Comparator.comparingDouble(ResultEvaluatorLegacy::varPct).reversed());
 
                 Vesta.info("\n🔍 Ejemplos de predicción (Top errores):");
                 // Mostrar los primeros 15 para no saturar la consola
                 int limit = Math.min(15, results.size());
 
                 for (int i = 0; i < limit; i++) {
-                    ResultEvaluator res = results.get(i);
+                    ResultEvaluatorLegacy res = results.get(i);
                     // El formato %+ (con signo más) forzará a mostrar +2.5% o -1.2%
                     Vesta.info("  Pred: $%.4f | Real: $%.4f | Diff: $%.4f | Var: %+.3f%%",
                             res.pred(),
@@ -301,8 +370,7 @@ public class EngineUtils {
 
     private record ResultPrediccion(float pred, float real) {}
 
-
-    private record ResultEvaluator(float pred, float real, float absError, double varPct) {}
+    private record ResultEvaluatorLegacy(float pred, float real, float absError, double varPct) {}
 
     public static Pair<float[][][], float[]> clearData(float[][][] X, float[] y) {
         final float EPS = 1e-9f;

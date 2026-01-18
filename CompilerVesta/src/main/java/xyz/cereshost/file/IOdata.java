@@ -11,6 +11,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -38,7 +39,7 @@ public class IOdata {
         //System.out.println("Saved " + symbol + " to " + dir);
     }
 
-    public static void saveData() throws Exception {
+    public static synchronized void saveData() throws Exception {
         for (Market market : Vesta.MARKETS.values()){
             market.sortd();
             String symbol = market.getSymbol();
@@ -65,21 +66,19 @@ public class IOdata {
         return Integer.parseInt(name.replace(".json", ""));
     }
 
-    public static Market loadMarket(String symbol) {
+    public static Market loadMarket(String symbol, int hours) {
         Market merged = null;
-
         Path basePath = Path.of("data", symbol);
 
         try {
-            // 1️⃣ Carpetas de fecha ordenadas
+            List<Path> timeline = new ArrayList<>();
+
             List<Path> dateFolders = Files.list(basePath)
                     .filter(Files::isDirectory)
-                    .sorted() // yyyy-MM-dd se ordena perfecto en String
+                    .sorted()
                     .toList();
 
             for (Path dateFolder : dateFolders) {
-
-                // 2️⃣ JSONs ordenados por hora (número)
                 List<Path> jsons = Files.list(dateFolder)
                         .filter(p -> p.toString().endsWith(".json"))
                         .sorted(Comparator.comparingInt(p ->
@@ -89,14 +88,19 @@ public class IOdata {
                         ))
                         .toList();
 
-                for (Path json : jsons) {
-                    Market m = Utils.GSON.fromJson(Files.readString(json), Market.class);
+                timeline.addAll(jsons);
+            }
 
-                    if (merged == null) {
-                        merged = m;
-                    } else {
-                        merged.concat(m);
-                    }
+            int fromIndex = Math.max(0, timeline.size() - hours);
+            List<Path> lastHours = timeline.subList(fromIndex, timeline.size());
+
+            for (Path json : lastHours) {
+                Market m = Utils.GSON.fromJson(Files.readString(json), Market.class);
+
+                if (merged == null) {
+                    merged = m;
+                } else {
+                    merged.concat(m);
                 }
             }
 
@@ -106,4 +110,5 @@ public class IOdata {
 
         return merged;
     }
+
 }

@@ -9,4 +9,5 @@ import xyz.cereshost.common.packet.PacketClient;
 public class RequestMarketClient extends PacketClient {
 
     private final String symbol;
+    private final boolean allMarket;
 }

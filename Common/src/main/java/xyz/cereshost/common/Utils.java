@@ -1,6 +1,7 @@
 package xyz.cereshost.common;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import lombok.Getter;
 import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.Contract;
@@ -15,7 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @UtilityClass
 public class Utils {
 
-    public static final Gson GSON = new Gson();
+    public static final Gson GSON = new GsonBuilder().serializeSpecialFloatingPointValues().create();
 
     public static long getFolderSize(@NotNull File folder) {
         long totalSize = 0;

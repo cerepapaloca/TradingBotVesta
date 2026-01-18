@@ -19,8 +19,13 @@ public class RequestMarketListener extends PacketListener<RequestMarketClient> {
     public void onReceive(RequestMarketClient packet) {
         EXECUTOR_NETWORK.submit(() -> {
             long systemTime = System.currentTimeMillis();
-            Vesta.info("Preparando datos para: " + packet.getSymbol());
-            Market marketLoaded = IOdata.loadMarket(packet.getSymbol());
+            Vesta.info("📂 Preparando datos para: " + packet.getSymbol());
+            Market marketLoaded;
+            if (packet.isAllMarket()){
+                marketLoaded = IOdata.loadMarket(packet.getSymbol(), Integer.MAX_VALUE);
+            }else {
+                marketLoaded = IOdata.loadMarket(packet.getSymbol(), 2);
+            }
             try {
                 Main.updateData(packet.getSymbol());
             } catch (Exception e) {
@@ -28,7 +33,7 @@ public class RequestMarketListener extends PacketListener<RequestMarketClient> {
             }
             marketLoaded.concat(Vesta.MARKETS.get(packet.getSymbol()));
             marketLoaded.sortd();
-            Vesta.info("✅ Datos recopilados de: " + packet.getSymbol() + " (" + ( System.currentTimeMillis() - systemTime) + "ms)" );
+            Vesta.info("📡 Datos recopilados de: " + packet.getSymbol() + " (" + ( System.currentTimeMillis() - systemTime) + "ms) Enviando..." );
             PacketHandler.sendPacketReply(packet, new MarketDataServer(marketLoaded));
         });
 

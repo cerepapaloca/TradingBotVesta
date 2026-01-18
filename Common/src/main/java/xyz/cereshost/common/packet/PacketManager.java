@@ -6,6 +6,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.reflections.Reflections;
 import lombok.experimental.UtilityClass;
+import xyz.cereshost.common.Utils;
+import xyz.cereshost.common.Vesta;
 
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -15,7 +17,6 @@ import java.util.Set;
 @UtilityClass
 public class PacketManager {
 
-    public static final Gson gsonPacket = new GsonBuilder().create();
     private final HashMap<Integer, Class<? extends Packet>> packets = new HashMap<>();
 
     /**
@@ -29,7 +30,7 @@ public class PacketManager {
         JsonObject obj = JsonParser.parseString(dataString).getAsJsonObject();
         int id = obj.get("id").getAsInt();
         // Se usa packets para saber a qué se tiene que decodificar
-        return gsonPacket.fromJson(dataString, packets.get(id));
+        return Utils.GSON.fromJson(dataString, packets.get(id));
     }
 
     /**
@@ -39,7 +40,7 @@ public class PacketManager {
      */
 
     public byte[] encodePacket(Packet packet) {
-        String dataString = gsonPacket.toJson(packet);
+        String dataString = Utils.GSON.toJson(packet);
         return dataString.getBytes(StandardCharsets.UTF_8);
     }
 
