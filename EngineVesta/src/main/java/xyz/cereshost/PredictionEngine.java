@@ -13,8 +13,10 @@ import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.builder.BuilderData;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
+import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
+import xyz.cereshost.common.market.CandleSimple;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.file.IOdata;
 
@@ -22,6 +24,7 @@ import java.io.IOException;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 @Getter
@@ -88,66 +91,41 @@ public class PredictionEngine {
      * Retorna un objeto con detalles para mejor visualización.
      */
     public PredictionDetail predictNextPriceDetail(Market market) {
-        // 1. Obtener velas recientes
-        List<Candle> candles = BuilderData.to1mCandles(market);
+        @NotNull List<Candle> candles = BuilderData.to1mCandles(market);
+        candles.sort(Comparator.comparingLong(Candle::openTime));
 
-        if (candles.size() < lookBack) {
-            throw new RuntimeException("Insuficientes datos para predecir. Se requieren " + lookBack + " velas.");
+        // Necesitamos lookBack + 1 velas para tener la referencia del cierre anterior (relativo)
+        if (candles.size() < lookBack + 1) {
+            throw new RuntimeException("Historial insuficiente para predecir. Se necesitan " + (lookBack + 1) + " velas.");
         }
 
-        // 2. Extraer la última ventana de 'lookBack' velas
-        // Tomamos desde (size - lookback) hasta el final
-        List<Candle> windowCandles = candles.subList(candles.size() - lookBack, candles.size());
+        // Tomar las últimas velas necesarias
+        List<Candle> subList = candles.subList(candles.size() - (lookBack + 1), candles.size());
 
-        // 3. Construir array de features (X) manualmente
-        // No usamos fullBuild aquí para evitar procesar todo el historial
-        float[][] seq = new float[lookBack][];
-        for (int i = 0; i < lookBack; i++) {
-            double[] feats = BuilderData.extractFeatures(windowCandles.get(i));
-            // Convertir double[] a float[]
-            float[] floatFeats = new float[feats.length];
-            for (int k = 0; k < feats.length; k++) floatFeats[k] = (float) feats[k];
-            seq[i] = floatFeats;
+        // El modelo espera [1][lookBack][17]
+        float[][][] X = new float[1][lookBack][17];
+
+        for (int j = 0; j < lookBack; j++) {
+            X[0][j] = BuilderData.extractFeatures(subList.get(j + 1), subList.get(j));
         }
 
-        // 4. Añadir features del símbolo (OneHot) tal como en el entrenamiento
-        // Envolvemos en array 3D [1, lookback, features]
-        float[][][] rawInput = new float[][][]{seq};
+        // Ejecutar la predicción raw (esto ya aplicará el RobustNormalizer de 17 features)
+        float predictedLogReturn = predictRaw(X);
 
-        float[][][] inputWithSymbol = EngineUtils.addSymbolFeature(rawInput, market.getSymbol(), Main.SYMBOLS_TRAINING);
+        // Des-normalizar para obtener el Log Return real
+        float expectedLogReturn = yNormalizer.inverseTransform(new float[]{predictedLogReturn})[0];
 
-        // 5. Obtener predicción (Log Return)
-        float predictedLogReturnNormalized = predictRaw(inputWithSymbol);
+        // CALCULAR PRECIO FINAL: Precio = UltimoCierre * exp(LogReturn)
+        float currentPrice = (float) subList.get(subList.size() - 1).close();
+        float predictedPrice = (float) (currentPrice * Math.exp(expectedLogReturn));
 
-        // 6. Desnormalizar el log return
-        float[] denormalizedArray = yNormalizer.inverseTransform(new float[]{predictedLogReturnNormalized});
-        float predictedLogReturn = denormalizedArray[0];
+        return new PredictionDetail(currentPrice, predictedPrice,0 , expectedLogReturn);
+    }
 
-        // 7. Verificar que el log return sea razonable
-        if (Math.abs(predictedLogReturn) > 0.1) { // Más del 10% en 1 minuto es improbable
-            Vesta.waring("Log return predicho muy grande: " + predictedLogReturn +
-                    ". Limitando a ±0.1");
-            predictedLogReturn = Math.max(-0.1f, Math.min(0.1f, predictedLogReturn));
+    public record PredictionDetail(float currentPrice, float predictedPrice, float percentChange, float logReturn) {
+        public float getAbsChange() {
+            return predictedPrice - currentPrice;
         }
-
-        // 8. Reconstruir precio absoluto
-        double currentPrice = candles.get(candles.size() - 1).close();
-        double predictedPrice = currentPrice * Math.exp(predictedLogReturn);
-
-        // 9. Calcular porcentaje de cambio
-        double percentChange = predictedLogReturn * 100;  // Log return ≈ porcentaje para valores pequeños
-
-        if (Math.abs(percentChange) > 10) {  // Más de 10% en 1 minuto es improbable
-            percentChange = Math.signum(percentChange) * 10;
-            predictedLogReturn = (float) (percentChange / 100);
-        }
-
-        return new PredictionDetail(
-                (float) currentPrice,
-                (float) predictedPrice,
-                (float) percentChange,  // Cambiado: ahora es % no log return
-                predictedLogReturn      // Mantener log return también
-        );
     }
 
     @Contract("_ -> new")
@@ -171,9 +149,7 @@ public class PredictionEngine {
         return new PredictionResult(model, normalizers.getKey(), normalizers.getValue(), lookBack, features, device);
     }
 
-    public record PredictionDetail(float currentPrice, float predictedPrice, float percentChange, float logReturn) {
-        public float getAbsChange() { return predictedPrice - currentPrice; }
-    }
+
 
     @Getter
     public static class PredictionResult {
@@ -203,6 +179,8 @@ public class PredictionEngine {
     // --- Main para probar ---
     public static void makePrediction(String symbol) {
         try {
+            long lastUpdate = IOdata.loadMarkets(false, symbol);
+            Vesta.info("🖥️ Iniciando prediction para " + symbol);
             PredictionEngine.PredictionResult fullSystem = PredictionEngine.loadFullModel("VestaIA");
             // Usamos las features detectadas automáticamente en loadFullModel
             PredictionEngine engine = new PredictionEngine(
@@ -226,6 +204,7 @@ public class PredictionEngine {
                 DecimalFormat df2 = new DecimalFormat("###,##0.00###%");
                 // Mostrar resultados
                 Vesta.info("\n🔮 Análisis de Predicción para " + symbol + ":");
+                Vesta.info("  Delay en la predicción de los datos %s",  new DecimalFormat("###,##0.00s").format((System.currentTimeMillis() - lastUpdate)/1000));
                 Vesta.info("  Precio Actual (Close):   %s", df.format(result.currentPrice()));
                 Vesta.info("  Precio Predicho (t+1):   %s", df.format(result.predictedPrice()));
 

@@ -10,4 +10,5 @@ import xyz.cereshost.common.packet.Packet;
 public class MarketDataServer extends Packet {
 
     private final Market market;
+    private final long lastUpdate;
 }

@@ -26,6 +26,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class IOdata {
 
@@ -42,21 +43,25 @@ public class IOdata {
         );
     }
 
-    public static void loadMarkets(boolean forTraining, List<String> symbols) throws InterruptedException {
+    public static long loadMarkets(boolean forTraining, List<String> symbols) throws InterruptedException {
         CountDownLatch latch = new CountDownLatch(symbols.size());
+        AtomicLong lastUpdate = new AtomicLong();
         for (String s : symbols){
             Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
             PacketHandler.sendPacket(new RequestMarketClient(s, forTraining), MarketDataServer.class).thenAccept(packet -> {
                 Vesta.MARKETS.put(s, packet.getMarket());
                 latch.countDown();
+                lastUpdate.set(packet.getLastUpdate());
                 Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
             });
         }
         latch.await();
+        return lastUpdate.get();
     }
 
-    public static void loadMarkets(boolean forTraining, String... symbols) throws InterruptedException {
-        loadMarkets(forTraining, Arrays.asList(symbols));
+
+    public static long loadMarkets(boolean forTraining, String... symbols) throws InterruptedException {
+        return loadMarkets(forTraining, Arrays.asList(symbols));
     }
 
     static {

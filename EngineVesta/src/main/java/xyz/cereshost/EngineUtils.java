@@ -44,18 +44,18 @@ public class EngineUtils {
     /**
      * Mezcla los datos aleatoriamente
      */
-    public void shuffleData(double[][][] X, double[] y) { // Cambiado
+    public void shuffleData(float[][][] X, float[] y) { // Cambiado
         Random rand = new Random(42); // Semilla para reproducibilidad
         for (int i = X.length - 1; i > 0; i--) {
             int j = rand.nextInt(i + 1);
 
             // Intercambiar X
-            double[][] tempX = X[i];
+            float[][] tempX = X[i];
             X[i] = X[j];
             X[j] = tempX;
 
             // Intercambiar y
-            double tempY = y[i]; // Cambiado
+            float tempY = y[i]; // Cambiado
             y[i] = y[j];
             y[j] = tempY;
         }
@@ -126,7 +126,7 @@ public class EngineUtils {
             }
         }
 
-        // EngineUtils.shuffleData(Xcombined, ycombined);
+        EngineUtils.shuffleData(Xcombined, ycombined);
 
         return new Pair<>(Xcombined, ycombined); // Cambiado
     }
@@ -145,9 +145,7 @@ public class EngineUtils {
         for (int i = 0; i < X.length; i++) {
             for (int j = 0; j < X[0].length; j++) {
                 // Copiar características originales
-                for (int k = 0; k < X[0][0].length; k++) {
-                    XwithSymbol[i][j][k] = X[i][j][k];
-                }
+                System.arraycopy(X[i][j], 0, XwithSymbol[i][j], 0, X[0][0].length);
                 // Añadir características del símbolo
                 XwithSymbol[i][j][X[0][0].length] = symbolOneHot;
                 XwithSymbol[i][j][X[0][0].length + 1] = symbolNorm;
@@ -209,11 +207,6 @@ public class EngineUtils {
         Vesta.info("MAE Promedio (Log-Returns): %.8f", avgMae);
         Vesta.info("Directional Accuracy (Hit Rate): %.2f%%", hitRate);
 
-        if (hitRate <= 51.0) {
-            Vesta.waring("OJO: El modelo apenas supera el azar (50%). Considera agregar más features.");
-        } else {
-            Vesta.info("INFO: El modelo muestra capacidad predictiva real (>51%).");
-        }
         // Gráfica de distribución de errores porcentuales
         ChartUtils.plot("Resultados De la evaluación", "Resultados",
                 List.of(new ChartUtils.DataPlot("Diferencia", results.stream().map(r -> r.pred() - r.real()).toList()),

@@ -36,14 +36,14 @@ import java.util.List;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 35;
-    public static final int EPOCH = 4000;//300
+    public static final int LOOK_BACK = 15;
+    public static final int EPOCH = 1000;//300
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
      */
-    public static void trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException {
-
+    public static void trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException, InterruptedException {
+        IOdata.loadMarkets(true, symbols);
         ai.djl.engine.Engine TensorFlow = ai.djl.engine.Engine.getEngine("PyTorch");
         if (TensorFlow == null) {
             Vesta.error("PyTorch no está disponible. Engines disponibles:");
@@ -221,20 +221,26 @@ public class VestaEngine {
                         .build())
                 .add(ndList -> {
                     NDArray x = ndList.singletonOrThrow();
-                    // batchFirst = true → eje 1 es seqLen
-                    NDArray last = x.get(":, -1, :");
+                     NDArray last = x.get(":, -1, :");
                     return new NDList(last);
                 })
-                .add(Dropout.builder().optRate(0.02f).build())
+                .add(Dropout.builder().optRate(0.08f).build())
                 .add(Linear.builder().setUnits(128).build())
                 .add(Activation.reluBlock())
-                .add(Dropout.builder().optRate(0.02f).build())
+                .add(Dropout.builder().optRate(0.08f).build())
                 .add(Linear.builder().setUnits(64).build())
                 .add(Activation.reluBlock())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Activation.reluBlock())
                 .add(Linear.builder().setUnits(16).build())
                 .add(Activation.reluBlock())
-                .add(Linear.builder().setUnits(1).build());
+                .add(Linear.builder().setUnits(1).build())
+                .add(ndList -> {
+                    NDArray out = ndList.singletonOrThrow();
+                    // Multiplicamos por 2.0 o 3.0 para "descomprimir" la señal
+                    // Esto ayuda a que el modelo no sea tan "tímido"
+                    return new NDList(out.mul(4f));
+                });
+
     }
 }

@@ -3,141 +3,107 @@ package xyz.cereshost.builder;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.tensorflow.op.core.Max;
 import xyz.cereshost.ChartUtils;
 import xyz.cereshost.EngineUtils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 
 import java.util.*;
-import java.util.stream.Stream;
 
 import static xyz.cereshost.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
     public static @NotNull Pair<float[][][], float[]> fullBuild(@NotNull List<String> symbols) {
-        // Combinar datos de todos los símbolos
         List<float[][][]> allX = new ArrayList<>();
-        List<float[]> allY = new ArrayList<>(); // Cambiado: float[][] -> float[]
+        List<float[]> allY = new ArrayList<>();
 
         for (String symbol : symbols) {
             try {
-                Vesta.info("Procesando símbolo: " + symbol);
+                Vesta.info("Procesando símbolo (Relativo): " + symbol);
                 List<Candle> candles = BuilderData.to1mCandles(Vesta.MARKETS.get(symbol));
                 candles.sort(Comparator.comparingLong(Candle::openTime));
-                if (candles.size() <= LOOK_BACK + 1) {
-                    Vesta.error("Símbolo " + symbol + " no tiene suficientes velas: " + candles.size());
+
+                // Necesitamos al menos LOOK_BACK + 2 (uno extra para el cálculo relativo inicial)
+                if (candles.size() <= LOOK_BACK + 2) {
+                    Vesta.error("Símbolo " + symbol + " insuficiente historial.");
                     continue;
                 }
 
-                Pair<float[][][], float[]> pair = BuilderData.build(candles, LOOK_BACK); // Cambiado
+                Pair<float[][][], float[]> pair = BuilderData.build(candles, LOOK_BACK);
                 float[][][] Xraw = pair.getKey();
-                float[] yraw = pair.getValue(); // Cambiado
+                float[] yraw = pair.getValue();
 
                 if (Xraw.length > 0) {
-                    // Añadir símbolo como característica adicional
-                    float[][][] XwithSymbol = EngineUtils.addSymbolFeature(Xraw, symbol, symbols);
-                    allX.add(XwithSymbol);
-                    allY.add(yraw); // Cambiado
-                    Vesta.info("Añadidas " + Xraw.length + " muestras");
+                    allX.add(Xraw);
+                    allY.add(yraw);
                 }
-                ChartUtils.CandleChartUtils.showCandleChart("Datos Originales", candles, symbol);
+
             } catch (Exception e) {
-                Vesta.error("Error procesando símbolo " + symbol + ": " + e.getMessage());
+                Vesta.error("Error construyendo data para " + symbol + ": " + e.getMessage());
+                e.printStackTrace();
             }
         }
 
         if (allX.isEmpty()) {
-            throw new RuntimeException("No hay datos suficientes de ningún símbolo");
+            throw new RuntimeException("No se generó data de entrenamiento válida.");
         }
 
-        return EngineUtils.combineDatasets(allX, allY);
+        // Concatenar todos los símbolos
+        int totalSamples = allX.stream().mapToInt(x -> x.length).sum();
+        int seqLen = allX.get(0)[0].length;
+        int features = allX.get(0)[0][0].length;
+
+        float[][][] X_final = new float[totalSamples][seqLen][features];
+        float[] y_final = new float[totalSamples];
+
+        int currentIdx = 0;
+        for (int i = 0; i < allX.size(); i++) {
+            float[][][] xPart = allX.get(i);
+            float[] yPart = allY.get(i);
+            int len = xPart.length;
+
+            System.arraycopy(xPart, 0, X_final, currentIdx, len);
+            System.arraycopy(yPart, 0, y_final, currentIdx, len);
+            currentIdx += len;
+        }
+
+        return new Pair<>(X_final, y_final);
     }
 
-    public static Pair<float[][][], float[]> build(List<Candle> candles, int lookback) {
-        if (candles == null) {
-            throw new IllegalArgumentException("candles == null");
-        }
+    /**
+     * Construye tensores basados EXCLUSIVAMENTE en cambios relativos (Log Returns)
+     */
+    public static Pair<float[][][], float[]> build(List<Candle> candles, int lookBack) {
+        // Empezamos desde 1 porque necesitamos candle[i-1] para calcular el cambio relativo
         int n = candles.size();
-        if (n <= lookback) {
-            return new Pair<>(new float[0][][], new float[0]);  // Cambiado: float[0][] -> float[0]
-        }
+        int samples = n - lookBack - 1; // -1 extra por el cálculo de retorno futuro
 
-        List<float[][]> X = new ArrayList<>();
-        List<Float> y = new ArrayList<>();  // Cambiado: float[] -> Float
+        if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0]);
 
-        final int NUM_FEATURES = 8;
+        int features = 17;
+        float[][][] X = new float[samples][lookBack][features];
+        float[] y = new float[samples];
 
-        for (int i = lookback; i < n; i++) {
-            // construir ventana: índices [i-lookback, ..., i-1]
-            float[][] seq = new float[lookback][NUM_FEATURES];
-            boolean skip = false;
-
-            for (int j = 0; j < lookback; j++) {
-                Candle c = candles.get(i - lookback + j);
-                double[] f = extractFeatures(c);
-                if (f.length != NUM_FEATURES) {
-                    skip = true;
-                    break;
-                }
-                for (int k = 0; k < NUM_FEATURES; k++) {
-                    double v = f[k];
-                    if (Double.isNaN(v) || Double.isInfinite(v)) {
-                        skip = true;
-                        break;
-                    }
-                    seq[j][k] = (float) v;
-                }
-                if (skip) break;
+        // i representa el inicio de la ventana de predicción
+        // Empezamos en 1 para garantizar que siempre exista una vela anterior 'prev'
+        for (int i = 0; i < samples; i++) {
+            // Construir ventana de LookBack
+            for (int j = 0; j < lookBack; j++) {
+                X[i][j] = extractFeatures(candles.get(i + j + 1), candles.get(i + j));
             }
-            if (skip) continue;
 
-            // Target: Retorno Logarítmico
-            Candle targetC = candles.get(i);
-            Candle prevC = candles.get(i - 1); // La última vela de tu ventana de entrada
+            // TARGET (Y): Log return de la SIGUIENTE vela (t+1)
+            int targetIdx = i + lookBack + 1;
+            Candle targetCandle = candles.get(targetIdx);
+            Candle lastInputCandle = candles.get(i + lookBack);
 
-            double currentClose = targetC.close();
-            double prevClose = prevC.close();
-
-            // Evitar log(0) o división por cero
-            if (prevClose <= 0 || currentClose <= 0) continue;
-
-            // Usamos Log Return porque es simétrico y sumable
-            double logReturn = Math.log(currentClose / prevClose);
-
-            y.add((float) logReturn);
-            X.add(seq);
+            // Predicción: ¿Cuánto cambia el precio logarítmicamente?
+            y[i] = (float) Math.log(targetCandle.close() / lastInputCandle.close());
         }
 
-        float[][][] Xarr = X.toArray(new float[0][][]);
-
-        // Convertir List<Float> a float[]
-        float[] yarr = new float[y.size()];
-        for (int i = 0; i < y.size(); i++) {
-            yarr[i] = y.get(i);
-        }
-
-        return new Pair<>(Xarr, yarr);
-    }
-
-    @Contract("_ -> new")
-    public static double @NotNull [] extractFeatures(@NotNull Candle c) {
-        return new double[]{
-                c.close(),
-                c.quoteVolume(),
-                c.deltaUSDT(),
-                c.buyRatio(),
-                c.bidLiquidity(),
-                c.askLiquidity(),
-                c.depthImbalance(),
-                c.spread()
-        };
-    }
-
-    // Este método ya no es necesario, pero lo dejo por compatibilidad
-    @Contract("_ -> new")
-    public static double @NotNull [] extractTarget(@NotNull Candle next) {
-        return new double[]{next.close()};  // Solo el cierre
+        return new Pair<>(X, y);
     }
 
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
@@ -239,8 +205,45 @@ public class BuilderData {
                     spread
             ));
         }
-
+        ChartUtils.CandleChartUtils.showCandleChart("Mercado", candles, market.getSymbol());
         return candles;
+    }
+
+    public static float[] extractFeatures(Candle curr, Candle prev) {
+        float[] f = new float[17];
+        double prevClose = prev.close() <= 0 ? 1.0 : prev.close();
+
+        // 1-4: Precios relativos (Log Returns)
+        f[0] = (float) Math.log(curr.open() / prevClose);
+        f[1] = (float) Math.log(curr.high() / prevClose);
+        f[2] = (float) Math.log(curr.low() / prevClose);
+        f[3] = (float) Math.log(curr.close() / prevClose);
+
+        // 5-8: Volúmenes (Log1p)
+        f[4] = (float) Math.log1p(curr.volumeBase());
+        f[5] = (float) Math.log1p(curr.quoteVolume());
+        f[6] = (float) Math.log1p(curr.buyQuoteVolume());
+        f[7] = (float) Math.log1p(curr.sellQuoteVolume());
+
+        // 9-10: Delta y Buy Ratio
+        double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
+        f[8] = (totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol);
+        f[9] = (float) curr.buyRatio();
+
+        // 11-12: Placeholders (Para futuros indicadores como RSI o EMA)
+        f[10] = 0;
+        f[11] = 0;
+
+        // 13-14: Liquidez (Log1p)
+        f[12] = (float) Math.log1p(curr.bidLiquidity());
+        f[13] = (float) Math.log1p(curr.askLiquidity());
+
+        // 15-17: Métricas de Orderbook relativas
+        f[14] = (float) curr.depthImbalance();
+        f[15] = (float) ((curr.midPrice() - curr.close()) / curr.close());
+        f[16] = (float) (curr.spread() / curr.close());
+
+        return f;
     }
 
 }
