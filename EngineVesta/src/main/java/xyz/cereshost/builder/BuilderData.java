@@ -4,8 +4,7 @@ import ai.djl.util.Pair;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.tensorflow.op.core.Max;
-import xyz.cereshost.ChartUtils;
-import xyz.cereshost.EngineUtils;
+import xyz.cereshost.*;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 
@@ -14,6 +13,7 @@ import java.util.*;
 import static xyz.cereshost.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
+
 
     public static @NotNull Pair<float[][][], float[]> fullBuild(@NotNull List<String> symbols) {
         List<float[][][]> allX = new ArrayList<>();
@@ -82,7 +82,6 @@ public class BuilderData {
 
         if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0]);
 
-        int features = 17;
         float[][][] X = new float[samples][lookBack][features];
         float[] y = new float[samples];
 
@@ -102,13 +101,13 @@ public class BuilderData {
             // Predicción: ¿Cuánto cambia el precio logarítmicamente?
             y[i] = (float) Math.log(targetCandle.close() / lastInputCandle.close());
         }
-
         return new Pair<>(X, y);
     }
 
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
 
         market.sortd();
+        int idx = 0;
 
         // CandleSimple por minuto
         NavigableMap<Long, CandleSimple> simpleByMinute = new TreeMap<>();
@@ -131,6 +130,22 @@ public class BuilderData {
         long endMinute = simpleByMinute.lastKey();
 
         double lastClose = Double.NaN;
+
+        //RSI
+        List<Double> closes = new ArrayList<>();
+        for (CandleSimple cs : simpleByMinute.values()) {
+            closes.add(cs.close());
+        }
+
+        double[] rsi8Arr = FinancialCalculation.computeRSI(closes, 8);
+        double[] rsi16Arr = FinancialCalculation.computeRSI(closes, 16);
+
+        // MACD
+        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 12, 26, 9);
+        double[] macdArr = macdRes.macd();
+        double[] signalArr = macdRes.signal();
+        double[] histArr = macdRes.histogram();
+
 
         for (long minute = startMinute; minute <= endMinute; minute += 60_000L) {
             // OHLC + VOLUMEN
@@ -185,9 +200,16 @@ public class BuilderData {
                     spread = bestAsk - bestBid;
                 }
             }
+            double depthImbalance = (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
 
-            double depthImbalance =
-                    (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
+            // RSI
+            double rsi8 = idx < rsi8Arr.length ? rsi8Arr[idx] : Double.NaN;
+            double rsi16 = idx < rsi16Arr.length ? rsi16Arr[idx] : Double.NaN;
+
+            // MACD
+            double macdVal = idx < macdArr.length ? macdArr[idx] : Double.NaN;
+            double macdSignal = idx < signalArr.length ? signalArr[idx] : Double.NaN;
+            double macdHist = idx < histArr.length ? histArr[idx] : Double.NaN;
 
             candles.add(new Candle(
                     minute,
@@ -202,48 +224,78 @@ public class BuilderData {
                     askLiq,
                     depthImbalance,
                     mid,
-                    spread
+                    spread,
+                    rsi8,
+                    rsi16,
+                    macdVal,
+                    macdSignal,
+                    macdHist
             ));
+            idx++;
         }
         ChartUtils.CandleChartUtils.showCandleChart("Mercado", candles, market.getSymbol());
         return candles;
     }
 
+    private static int features = 0;
+
     public static float[] extractFeatures(Candle curr, Candle prev) {
-        float[] f = new float[17];
+
         double prevClose = prev.close() <= 0 ? 1.0 : prev.close();
+        List<Float> fList = new ArrayList<>();
 
         // 1-4: Precios relativos (Log Returns)
-        f[0] = (float) Math.log(curr.open() / prevClose);
-        f[1] = (float) Math.log(curr.high() / prevClose);
-        f[2] = (float) Math.log(curr.low() / prevClose);
-        f[3] = (float) Math.log(curr.close() / prevClose);
+        fList.add((float) Math.log(curr.open() / prevClose));
+        fList.add((float) Math.log(curr.high() / prevClose));
+        fList.add((float) Math.log(curr.low() / prevClose));
+        fList.add((float) Math.log(curr.close() / prevClose));
 
         // 5-8: Volúmenes (Log1p)
-        f[4] = (float) Math.log1p(curr.volumeBase());
-        f[5] = (float) Math.log1p(curr.quoteVolume());
-        f[6] = (float) Math.log1p(curr.buyQuoteVolume());
-        f[7] = (float) Math.log1p(curr.sellQuoteVolume());
+        fList.add((float) Math.log(curr.volumeBase() / prevClose));
+        fList.add((float) Math.log(curr.quoteVolume() / prevClose));
+        fList.add((float) Math.log(curr.buyQuoteVolume() / prevClose));
+        fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
 
         // 9-10: Delta y Buy Ratio
         double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
-        f[8] = (totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol);
-        f[9] = (float) curr.buyRatio();
+        fList.add((totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol));
+        fList.add((float) curr.buyRatio());
 
-        // 11-12: Placeholders (Para futuros indicadores como RSI o EMA)
-        f[10] = 0;
-        f[11] = 0;
+        if (Main.TYPE_DATA.equals(TypeData.ALL)){
+            fList.add((float) Math.log1p(curr.bidLiquidity()));
+            fList.add((float) Math.log1p(curr.askLiquidity()));
 
-        // 13-14: Liquidez (Log1p)
-        f[12] = (float) Math.log1p(curr.bidLiquidity());
-        f[13] = (float) Math.log1p(curr.askLiquidity());
+            // 12-14: Métricas de Orderbook relativas
+            fList.add((float) curr.depthImbalance());
+            fList.add((float) ((curr.midPrice() - curr.close()) / curr.close()));
+            fList.add((float) (curr.spread() / curr.close()));
+        }
 
-        // 15-17: Métricas de Orderbook relativas
-        f[14] = (float) curr.depthImbalance();
-        f[15] = (float) ((curr.midPrice() - curr.close()) / curr.close());
-        f[16] = (float) (curr.spread() / curr.close());
+        fList.add((float)  curr.rsi8());
+        fList.add((float)  curr.resi16());
+        fList.add((float)  curr.macdVal());
+        fList.add((float)  curr.macdSignal());
+        fList.add((float)  curr.macdHist());
 
+        float[] f = new float[fList.size()];
+        for (int i = 0; i < fList.size(); i++){
+            f[i] = fList.get(i);
+        }
+        if (features == 0) features = fList.size();
         return f;
+    }
+
+    public static void updateFeatures() {
+        extractFeatures(
+                new Candle(
+                1,1,1,1,1,1,1,1,1,
+                1,1,1,1,1,1,1,1,1,
+                1,1,1),
+                new Candle(
+                1,1,1,1,1,1,1,1,1,
+                1,1,1,1,1,1,1,1,1,
+                1,1,1)
+        );
     }
 
 }

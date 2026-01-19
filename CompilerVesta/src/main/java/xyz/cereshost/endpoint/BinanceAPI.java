@@ -6,28 +6,23 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 import lombok.Getter;
 import lombok.experimental.UtilityClass;
+import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.market.CandleSimple;
 import xyz.cereshost.common.market.Depth;
 import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.common.market.Volumen;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 
 @UtilityClass
-public class BinanceClient {
+public class BinanceAPI {
 
-    public static final String BASE_URL = "https://api.binance.com/api/v3/";
     public static final int LIMIT_DEPTH = 40;
 
     public synchronized Depth getDepth(String symbol) {
-        String raw = getRequest(BASE_URL + "depth" + "?symbol=" + symbol + "&limit=" + LIMIT_DEPTH);
+        String raw = Utils.getRequest(Utils.BASE_URL_API + "depth" + "?symbol=" + symbol + "&limit=" + LIMIT_DEPTH);
         Gson gson = new Gson();
         OrderBookRaw orderBookRaw = gson.fromJson(raw, OrderBookRaw.class);
         return new Depth(System.currentTimeMillis(),
@@ -46,7 +41,7 @@ public class BinanceClient {
     }
 
     public synchronized List<CandleSimple> getCandleAndVolumen(String symbol) {
-        String raw = getRequest(BASE_URL + "klines" + "?symbol=" + symbol + "&interval=1m&limit=" + 300);
+        String raw = Utils.getRequest(Utils.BASE_URL_API + "klines" + "?symbol=" + symbol + "&interval=1m&limit=" + 300);
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
         try {
@@ -78,7 +73,7 @@ public class BinanceClient {
     }
 
     public synchronized Deque<Trade> getTrades(String symbol) {
-        String raw = getRequest(BASE_URL + "trades" + "?symbol=" + symbol + "&limit=" + 400);
+        String raw = Utils.getRequest(Utils.BASE_URL_API + "trades" + "?symbol=" + symbol + "&limit=" + 400);
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
         try {
@@ -98,18 +93,5 @@ public class BinanceClient {
         return trades;
     }
 
-    private String getRequest(String url) {
-        try {
-            return HttpClient.newHttpClient()
-                    .send(
-                            HttpRequest.newBuilder()
-                                    .uri(URI.create(url))
-                                    .GET()
-                                    .build(),
-                            HttpResponse.BodyHandlers.ofString()
-                    ).body();
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
-        }
-    }
+
 }

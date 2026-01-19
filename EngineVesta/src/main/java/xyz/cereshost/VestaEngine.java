@@ -2,6 +2,7 @@ package xyz.cereshost;
 
 import ai.djl.Device;
 import ai.djl.Model;
+import ai.djl.ndarray.BaseNDManager;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -11,7 +12,11 @@ import ai.djl.nn.Blocks;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.Dropout;
+import ai.djl.nn.recurrent.GRU;
 import ai.djl.nn.recurrent.LSTM;
+import ai.djl.nn.recurrent.RNN;
+import ai.djl.pytorch.engine.PtModel;
+import ai.djl.pytorch.engine.PtNDManager;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
 import ai.djl.training.Trainer;
@@ -60,10 +65,11 @@ public class VestaEngine {
         Pair<float[][][], float[]> combined = BuilderData.fullBuild(symbols);
 
 
-        Pair<float[][][], float[]> deduped = EngineUtils.clearData(combined.getKey(), combined.getValue());
-        float[][][] xCombined = deduped.getKey();
-        float[] yCombined = deduped.getValue();
+        //Pair<float[][][], float[]> deduped = EngineUtils.clearData(combined.getKey(), combined.getValue());
+        float[][][] xCombined = combined.getKey();
+        float[] yCombined = combined.getValue();
 
+        EngineUtils.shuffleData(xCombined, yCombined);
 
         ChartUtils.CandleChartUtils.showDataDistribution("Datos Combinados", xCombined, yCombined, "Todos");
 
@@ -127,8 +133,8 @@ public class VestaEngine {
         EngineUtils.cleanNaNValues(X_val_norm);
         EngineUtils.cleanNaNValues(X_test_norm);
 
-        try (NDManager manager = NDManager.newBaseManager(device)) {
-
+        try (PtModel model = (PtModel) Model.newInstance(Main.NAME_MODEL, device, "PyTorch")) {
+            NDManager manager = model.getNDManager();
             // Aplanar 3D -> 1D para crear NDArray con Shape(samples, lookback, features)
             float[] XtrainFlat = EngineUtils.flatten3DArray(X_train_norm);
             float[] XvalFlat   = EngineUtils.flatten3DArray(X_val_norm);
@@ -150,9 +156,8 @@ public class VestaEngine {
             Vesta.info("  X_test shape: " + X_test.getShape());
 
             // Construir modelo (usa tu método existente)
-            Model model = Model.newInstance(Main.NAME_MODEL, device, "PyTorch");
-            model.setBlock(getSequentialBlock());
 
+            model.setBlock(getSequentialBlock());
             // Configuración de entrenamiento (igual a tu código)
             MetricsListener metrics = new MetricsListener();
             TrainingConfig config = new DefaultTrainingConfig(Loss.l2Loss())
@@ -171,7 +176,7 @@ public class VestaEngine {
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 128;
+            int batchSize = 32;// 128;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -182,12 +187,13 @@ public class VestaEngine {
                     .optLabels(y_val)
                     .setSampling(batchSize, false)
                     .build();
-
+            trainDataset.prepare();
+            valDataset.prepare();
             Trainer trainer = model.newTrainer(config);
-            trainer.initialize(new Shape(1, LOOK_BACK, features));
+            trainer.initialize(new Shape(symbols.size(), LOOK_BACK, features));
 
             // Entrenar
-            Vesta.info("\nIniciando entrenamiento con " + EPOCH + " epochs...");
+            Vesta.info("Iniciando entrenamiento con " + EPOCH + " epochs...");
             EasyTrain.fit(trainer, EPOCH, trainDataset, valDataset);
 
             // Gráficas
@@ -206,7 +212,6 @@ public class VestaEngine {
 
             // Cerrar trainer y modelo si es necesario
             trainer.close();
-            model.close();
         }
     }
 
@@ -224,6 +229,8 @@ public class VestaEngine {
                      NDArray last = x.get(":, -1, :");
                     return new NDList(last);
                 })
+                .add(Linear.builder().setUnits(256).build())
+                .add(Activation.reluBlock())
                 .add(Dropout.builder().optRate(0.08f).build())
                 .add(Linear.builder().setUnits(128).build())
                 .add(Activation.reluBlock())
@@ -235,12 +242,11 @@ public class VestaEngine {
                 .add(Linear.builder().setUnits(16).build())
                 .add(Activation.reluBlock())
                 .add(Linear.builder().setUnits(1).build())
-                .add(ndList -> {
-                    NDArray out = ndList.singletonOrThrow();
-                    // Multiplicamos por 2.0 o 3.0 para "descomprimir" la señal
-                    // Esto ayuda a que el modelo no sea tan "tímido"
-                    return new NDList(out.mul(4f));
-                });
+//                .add(ndList -> {
+//                    NDArray out = ndList.singletonOrThrow();
+//                    return new NDList(out.mul(4f));
+//                })
+                ;
 
     }
 }

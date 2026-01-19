@@ -3,13 +3,20 @@ package xyz.cereshost.file;
 import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.util.Pair;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.Main;
+import xyz.cereshost.TypeData;
 import xyz.cereshost.VestaEngine;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.common.market.CandleSimple;
+import xyz.cereshost.common.market.Market;
+import xyz.cereshost.common.market.Volumen;
 import xyz.cereshost.common.packet.client.RequestMarketClient;
 import xyz.cereshost.common.packet.server.MarketDataServer;
 import xyz.cereshost.packet.PacketHandler;
@@ -18,10 +25,12 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
@@ -47,13 +56,53 @@ public class IOdata {
         CountDownLatch latch = new CountDownLatch(symbols.size());
         AtomicLong lastUpdate = new AtomicLong();
         for (String s : symbols){
-            Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
-            PacketHandler.sendPacket(new RequestMarketClient(s, forTraining), MarketDataServer.class).thenAccept(packet -> {
-                Vesta.MARKETS.put(s, packet.getMarket());
+            if (Main.TYPE_DATA == TypeData.ALL){
+                Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
+                PacketHandler.sendPacket(new RequestMarketClient(s, forTraining), MarketDataServer.class).thenAccept(packet -> {
+                    Vesta.MARKETS.put(s, packet.getMarket());
+                    latch.countDown();
+                    lastUpdate.set(packet.getLastUpdate());
+                    Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
+                });
+            }else {
+                // dos semanas en minutos 20160
+                String url = Utils.BASE_URL_API + "klines" + "?symbol=" + s + "&interval=1m&limit=" + "20160";
+                long time = System.currentTimeMillis();
+                Vesta.info("📡 Solicitud de dato a binance del mercado: " + s + " (" + url + ")");
+                String raw = Utils.getRequest(url);
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode root;
+                try {
+                    root = mapper.readTree(raw);
+                } catch (JsonProcessingException e) {
+                    throw new RuntimeException(e);
+                }
+                ArrayDeque<CandleSimple> deque = new ArrayDeque<>();
+                Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + ")" );
+                for (int i = 0; i < 20160; i++) {
+                    JsonNode kline = root.get(i);
+
+                    double baseVolume = kline.get(5).asDouble();
+                    double quoteVolume = kline.get(7).asDouble();  // USDT
+                    double takerBuyQuoteVolume = kline.get(10).asDouble(); // USDT agresivo
+
+                    double sellQuoteVolume = quoteVolume - takerBuyQuoteVolume;
+                    double deltaUSDT = takerBuyQuoteVolume - sellQuoteVolume;
+                    double buyRatio = takerBuyQuoteVolume / quoteVolume;
+                    deque.add(new CandleSimple(
+                            kline.get(0).asLong(),
+                            kline.get(1).asDouble(), // open
+                            kline.get(2).asDouble(), // high
+                            kline.get(3).asDouble(), // low
+                            kline.get(4).asDouble(), // close
+                            new Volumen(quoteVolume, baseVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
+                }
+                Market market = new Market(s);
+                market.addCandles(deque);
+                Vesta.MARKETS.put(s, market);
+                Vesta.info("✅ Datos procesado de binance del mercado: %s (%.2fs)", s, (System.currentTimeMillis() - time)/1000);
                 latch.countDown();
-                lastUpdate.set(packet.getLastUpdate());
-                Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
-            });
+            }
         }
         latch.await();
         return lastUpdate.get();

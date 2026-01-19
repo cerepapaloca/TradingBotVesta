@@ -2,6 +2,9 @@ package xyz.cereshost;
 
 import ai.djl.translate.TranslateException;
 import lombok.Getter;
+import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.builder.BuilderData;
+import xyz.cereshost.common.Vesta;
 import xyz.cereshost.packet.PacketHandler;
 
 import java.io.IOException;
@@ -11,13 +14,16 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of("SOLUSDT");
+    public static final List<String> SYMBOLS_TRAINING = List.of("BNBUSDT"/*, "XRPUSDT" "BNBUSDT"*/);
+    @NotNull
+    public static final TypeData TYPE_DATA = TypeData.ONLY_KLINES;
 
     @Getter
     private static Main instance;
 
     public static void main(String[] args) throws IOException, TranslateException, InterruptedException {
         instance = new Main();
+        BuilderData.updateFeatures();
         new PacketHandler();
         if (args.length > 0 && args[0].equals("tr")) {
             //List.of("BTCUSDT");// Vesta.MARKETS_NAMES;

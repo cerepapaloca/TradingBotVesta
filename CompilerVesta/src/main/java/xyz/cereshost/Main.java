@@ -4,7 +4,7 @@ import lombok.Getter;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
-import xyz.cereshost.endpoint.BinanceClient;
+import xyz.cereshost.endpoint.BinanceAPI;
 import xyz.cereshost.file.IOdata;
 import xyz.cereshost.packet.PacketHandler;
 import xyz.cereshost.packet.RequestMarketListener;
@@ -43,13 +43,13 @@ public class Main {
         }
 
         EXECUTOR.scheduleAtFixedRate(() -> {
-            for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addCandles(BinanceClient.getCandleAndVolumen(symbol));
+            for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addCandles(BinanceAPI.getCandleAndVolumen(symbol));
         }, 0, 60, TimeUnit.SECONDS);
         EXECUTOR.scheduleAtFixedRate(() -> {
-            for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addDepth(BinanceClient.getDepth(symbol));
+            for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addDepth(BinanceAPI.getDepth(symbol));
         }, 0, 5, TimeUnit.SECONDS);
         EXECUTOR.scheduleAtFixedRate(() -> {
-            for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addTrade(BinanceClient.getTrades(symbol));
+            for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addTrade(BinanceAPI.getTrades(symbol));
         }, 0, 30, TimeUnit.SECONDS);
 
         EXECUTOR.scheduleAtFixedRate(() -> {
@@ -75,21 +75,21 @@ public class Main {
         Market market = Vesta.MARKETS.computeIfAbsent(symbol, Market::new);
         executor.submit(() -> {
             try {
-                market.addTrade(BinanceClient.getTrades(symbol));
+                market.addTrade(BinanceAPI.getTrades(symbol));
             } finally {
                 latch.countDown();
             }
         });
         executor.submit(() -> {
             try {
-                market.addDepth(BinanceClient.getDepth(symbol));
+                market.addDepth(BinanceAPI.getDepth(symbol));
             } finally {
                 latch.countDown();
             }
         });
         executor.submit(() -> {
             try {
-                market.addCandles(BinanceClient.getCandleAndVolumen(symbol));
+                market.addCandles(BinanceAPI.getCandleAndVolumen(symbol));
             } finally {
                 latch.countDown();
             }

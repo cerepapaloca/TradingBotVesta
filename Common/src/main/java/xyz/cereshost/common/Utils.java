@@ -8,6 +8,11 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -16,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @UtilityClass
 public class Utils {
 
+    public static final String BASE_URL_API = "https://api.binance.com/api/v3/";
     public static final Gson GSON = new GsonBuilder().serializeSpecialFloatingPointValues().create();
 
     public static long getFolderSize(@NotNull File folder) {
@@ -37,5 +43,20 @@ public class Utils {
         }
 
         return totalSize; // Retornar el tamaño total en bytes
+    }
+
+    public static String getRequest(String url) {
+        try {
+            return HttpClient.newHttpClient()
+                    .send(
+                            HttpRequest.newBuilder()
+                                    .uri(URI.create(url))
+                                    .GET()
+                                    .build(),
+                            HttpResponse.BodyHandlers.ofString()
+                    ).body();
+        } catch (IOException | InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

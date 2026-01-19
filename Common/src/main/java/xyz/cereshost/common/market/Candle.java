@@ -19,5 +19,11 @@ public record Candle(
         double askLiquidity,
         double depthImbalance,
         double midPrice,
-        double spread
+        double spread,
+
+        double rsi8,
+        double resi16,
+        double macdVal,
+        double macdSignal,
+        double macdHist
 ) {}

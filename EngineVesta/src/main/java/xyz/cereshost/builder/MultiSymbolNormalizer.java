@@ -1,6 +1,7 @@
 package xyz.cereshost.builder;
 
 import lombok.Getter;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -31,7 +32,7 @@ public class MultiSymbolNormalizer {
         priceMAD = mad(logReturns, priceMedian);
     }
 
-    public float[] transform(float[] y) {
+    public float[] transform(float @NotNull [] y) {
         float[] normalized = new float[y.length];
 
         for (int i = 0; i < y.length; i++) {
@@ -39,7 +40,7 @@ public class MultiSymbolNormalizer {
             normalized[i] = (y[i] - priceMedian) / (priceMAD + EPSILON);
 
             // Clamping para valores extremos
-            normalized[i] = clamp(normalized[i], -3, 3);
+            //normalized[i] = clamp(normalized[i], -4, 4);
         }
 
         return normalized;

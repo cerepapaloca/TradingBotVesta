@@ -44,7 +44,7 @@ public class EngineUtils {
     /**
      * Mezcla los datos aleatoriamente
      */
-    public void shuffleData(float[][][] X, float[] y) { // Cambiado
+    public void shuffleData(float[][] @NotNull [] X, float[] y) { // Cambiado
         Random rand = new Random(42); // Semilla para reproducibilidad
         for (int i = X.length - 1; i > 0; i--) {
             int j = rand.nextInt(i + 1);
@@ -126,8 +126,6 @@ public class EngineUtils {
             }
         }
 
-        EngineUtils.shuffleData(Xcombined, ycombined);
-
         return new Pair<>(Xcombined, ycombined); // Cambiado
     }
 
@@ -170,6 +168,7 @@ public class EngineUtils {
         int hits = 0;
         int total = yRealRaw.length;
         double totalMae = 0;
+        int TotalMargenError = 0;
 
         Vesta.info("=== Evaluación de Predicción (Muestra de 10) ===");
         List<ResultPrediccion> results = new ArrayList<>();
@@ -183,7 +182,11 @@ public class EngineUtils {
                 hits++;
             }
 
-            totalMae += Math.abs(realReturn - predReturn);
+            float diff = Math.abs(realReturn - predReturn);
+            totalMae += diff;
+            if (diff < 0.5) {
+                TotalMargenError++;
+            }
 
             // Mostrar solo los primeros 10 para no saturar la consola
             if (i < 10) {
@@ -201,11 +204,13 @@ public class EngineUtils {
 
         double hitRate = (double) hits / total * 100;
         double avgMae = totalMae / total;
+        double margenRate = (double) TotalMargenError / total *100;
 
         Vesta.info("--------------------------------------------------");
         Vesta.info("RESULTADOS FINALES:");
         Vesta.info("MAE Promedio (Log-Returns): %.8f", avgMae);
-        Vesta.info("Directional Accuracy (Hit Rate): %.2f%%", hitRate);
+        Vesta.info("Predicción de la tendencia (Hit Rate): %.2f%%", hitRate);
+        Vesta.info("Margen del error acetable (Hit Rate): %.2f%%", margenRate);
 
         // Gráfica de distribución de errores porcentuales
         ChartUtils.plot("Resultados De la evaluación", "Resultados",

@@ -62,7 +62,7 @@ public class RobustNormalizer {
                     normalized[i][j][k] = (X[i][j][k] - featureMedians[k]) / featureIQRs[k];
 
                     // Clamping para evitar valores extremos
-                    normalized[i][j][k] = Math.max(-10, Math.min(10, normalized[i][j][k]));
+                    //normalized[i][j][k] = Math.max(-10, Math.min(10, ));
                 }
             }
         }

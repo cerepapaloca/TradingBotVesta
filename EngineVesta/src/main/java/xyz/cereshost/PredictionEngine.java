@@ -13,17 +13,13 @@ import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.builder.BuilderData;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
-import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
-import xyz.cereshost.common.market.CandleSimple;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.file.IOdata;
 
 import java.io.IOException;
 import java.text.DecimalFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
@@ -149,32 +145,12 @@ public class PredictionEngine {
         return new PredictionResult(model, normalizers.getKey(), normalizers.getValue(), lookBack, features, device);
     }
 
-
-
-    @Getter
-    public static class PredictionResult {
-        public final Model model;
-        public final RobustNormalizer xNormalizer;
-        public final MultiSymbolNormalizer yNormalizer;
-        public final int lookBack;
-        public final int features;
-        public final Device device;
-
-        public PredictionResult(Model model, RobustNormalizer xNormalizer,
-                                MultiSymbolNormalizer yNormalizer, int lookBack,
-                                int features, Device device) {
-            this.model = model;
-            this.xNormalizer = xNormalizer;
-            this.yNormalizer = yNormalizer;
-            this.lookBack = lookBack;
-            this.features = features;
-            this.device = device;
-        }
+    public record PredictionResult(Model model, RobustNormalizer xNormalizer, MultiSymbolNormalizer yNormalizer, int lookBack, int features, Device device) {
 
         public void close() {
-            if (model != null) model.close();
+                if (model != null) model.close();
+            }
         }
-    }
 
     // --- Main para probar ---
     public static void makePrediction(String symbol) {
