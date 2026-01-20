@@ -7,6 +7,8 @@ public record Candle(
         double low,
         double close,
 
+        double amountTrades,
+
         double volumeBase,
         double quoteVolume,
         double buyQuoteVolume,
@@ -25,5 +27,6 @@ public record Candle(
         double resi16,
         double macdVal,
         double macdSignal,
-        double macdHist
+        double macdHist,
+        double nvi
 ) {}

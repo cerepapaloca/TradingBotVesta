@@ -51,4 +51,28 @@ public class Market {
         depths = depths.stream().sorted(Comparator.comparingLong(Depth::getDate)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
         candleSimples = candleSimples.stream().sorted(Comparator.comparingLong(CandleSimple::openTime)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
     }
+
+    @Getter
+    private transient NavigableMap<Long, List<Trade>> tradesByMinuteCache;
+
+    public List<Trade> getTradesInWindow(long startTime, long endTime) {
+        if (tradesByMinuteCache == null) {
+            buildTradeCache();
+        }
+        // Devuelve todos los trades que ocurrieron en ese minuto
+        // subMap devuelve una vista, values() la colección, y flatMap las une
+        return tradesByMinuteCache.subMap(startTime, true, endTime, false)
+                .values().stream()
+                .flatMap(List::stream)
+                .sorted(Comparator.comparingLong(Trade::time)) // Asegurar orden cronológico
+                .toList();
+    }
+
+    public synchronized void buildTradeCache() {
+        tradesByMinuteCache = new TreeMap<>();
+        for (Trade t : trades) {
+            long minute = (t.time() / 60_000) * 60_000;
+            tradesByMinuteCache.computeIfAbsent(minute, k -> new ArrayList<>()).add(t);
+        }
+    }
 }

@@ -9,7 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.Main;
 import xyz.cereshost.TypeData;
-import xyz.cereshost.VestaEngine;
+import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
 import xyz.cereshost.common.Utils;
@@ -78,8 +78,8 @@ public class IOdata {
                     throw new RuntimeException(e);
                 }
                 ArrayDeque<CandleSimple> deque = new ArrayDeque<>();
-                Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + ")" );
-                for (int i = 0; i < 20160; i++) {
+                Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + "mb)" );
+                for (int i = 0; i < 1000; i++) {
                     JsonNode kline = root.get(i);
 
                     double baseVolume = kline.get(5).asDouble();
@@ -100,7 +100,7 @@ public class IOdata {
                 Market market = new Market(s);
                 market.addCandles(deque);
                 Vesta.MARKETS.put(s, market);
-                Vesta.info("✅ Datos procesado de binance del mercado: %s (%.2fs)", s, (System.currentTimeMillis() - time)/1000);
+                Vesta.info("✅ Datos procesado de binance del mercado: %s ( %.2f s)", s, (float) (System.currentTimeMillis() - time)/1000);
                 latch.countDown();
             }
         }

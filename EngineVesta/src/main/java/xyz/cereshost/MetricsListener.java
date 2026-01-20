@@ -3,6 +3,7 @@ package xyz.cereshost;
 import ai.djl.training.Trainer;
 import ai.djl.training.listener.TrainingListenerAdapter;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.engine.VestaEngine;
 
 import java.util.ArrayList;
 import java.util.List;

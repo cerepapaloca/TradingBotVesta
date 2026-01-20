@@ -154,4 +154,41 @@ public class FinancialCalculation {
 
     public record MACDResult(double[] macd, double[] signal, double[] histogram) {}
 
+    public static double[] computeNVI(
+            List<Double> closes,
+            List<Double> volumes,
+            double initialValue
+    ) {
+        int n = closes.size();
+        double[] nvi = new double[n];
+        Arrays.fill(nvi, Double.NaN);
+
+        if (n == 0 || volumes.size() != n) return nvi;
+
+        nvi[0] = initialValue; // típico: 1000
+
+        for (int i = 1; i < n; i++) {
+            double prevNvi = nvi[i - 1];
+            double prevClose = closes.get(i - 1);
+            double currClose = closes.get(i);
+            double prevVol = volumes.get(i - 1);
+            double currVol = volumes.get(i);
+
+            if (prevClose == 0 || prevVol == 0) {
+                nvi[i] = prevNvi;
+                continue;
+            }
+
+            if (currVol < prevVol) {
+                double priceChange = (currClose - prevClose) / prevClose;
+                nvi[i] = prevNvi + priceChange * prevNvi;
+            } else {
+                nvi[i] = prevNvi;
+            }
+        }
+
+        return nvi;
+    }
+
+
 }

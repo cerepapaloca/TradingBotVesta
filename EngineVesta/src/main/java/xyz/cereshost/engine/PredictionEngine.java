@@ -1,4 +1,4 @@
-package xyz.cereshost;
+package xyz.cereshost.engine;
 
 import ai.djl.Device;
 import ai.djl.Model;
@@ -86,8 +86,8 @@ public class PredictionEngine {
      * Predice el precio absoluto del siguiente intervalo.
      * Retorna un objeto con detalles para mejor visualización.
      */
-    public PredictionDetail predictNextPriceDetail(Market market) {
-        @NotNull List<Candle> candles = BuilderData.to1mCandles(market);
+    public PredictionResultSimple predictNextPriceDetail(List<Candle> candles) {
+
         candles.sort(Comparator.comparingLong(Candle::openTime));
 
         // Necesitamos lookBack + 1 velas para tener la referencia del cierre anterior (relativo)
@@ -115,10 +115,10 @@ public class PredictionEngine {
         float currentPrice = (float) subList.get(subList.size() - 1).close();
         float predictedPrice = (float) (currentPrice * Math.exp(expectedLogReturn));
 
-        return new PredictionDetail(currentPrice, predictedPrice,0 , expectedLogReturn);
+        return new PredictionResultSimple(currentPrice, predictedPrice,0 , expectedLogReturn);
     }
 
-    public record PredictionDetail(float currentPrice, float predictedPrice, float percentChange, float logReturn) {
+    public record PredictionResultSimple(float currentPrice, float predictedPrice, float percentChange, float logReturn) {
         public float getAbsChange() {
             return predictedPrice - currentPrice;
         }
@@ -175,7 +175,7 @@ public class PredictionEngine {
                 }
 
                 // Realizar predicción detallada
-                PredictionDetail result = engine.predictNextPriceDetail(market);
+                PredictionResultSimple result = engine.predictNextPriceDetail(BuilderData.to1mCandles(market));
                 DecimalFormat df = new DecimalFormat("###,##0.00###$");
                 DecimalFormat df2 = new DecimalFormat("###,##0.00###%");
                 // Mostrar resultados

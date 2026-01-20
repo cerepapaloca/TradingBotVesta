@@ -73,7 +73,7 @@ public class BinanceAPI {
     }
 
     public synchronized Deque<Trade> getTrades(String symbol) {
-        String raw = Utils.getRequest(Utils.BASE_URL_API + "trades" + "?symbol=" + symbol + "&limit=" + 400);
+        String raw = Utils.getRequest(Utils.BASE_URL_API + "trades" + "?symbol=" + symbol + "&limit=" + 800);
         ObjectMapper mapper = new ObjectMapper();
         JsonNode root;
         try {

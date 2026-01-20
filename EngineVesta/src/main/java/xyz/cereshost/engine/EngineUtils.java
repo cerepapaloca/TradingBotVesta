@@ -1,17 +1,21 @@
-package xyz.cereshost;
+package xyz.cereshost.engine;
 
 import ai.djl.Device;
 import ai.djl.engine.StandardCapabilities;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
-import ai.djl.ndarray.index.NDIndex;
 import ai.djl.training.Trainer;
 import ai.djl.util.Pair;
 import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.ChartUtils;
+import xyz.cereshost.builder.BuilderData;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.common.market.Candle;
+import xyz.cereshost.common.market.Market;
+import xyz.cereshost.common.market.Trade;
 
 import java.util.*;
 
@@ -152,7 +156,7 @@ public class EngineUtils {
         return XwithSymbol;
     }
 
-    public static void evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer yNormalizer) {
+    public static ResultsEvaluate evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer yNormalizer) {
         // 1. Obtener predicciones (y_test ya está en el dispositivo correcto)
         NDList predictions = trainer.evaluate(new NDList(X_test));
         NDArray yPred = predictions.singletonOrThrow();
@@ -184,7 +188,7 @@ public class EngineUtils {
 
             float diff = Math.abs(realReturn - predReturn);
             totalMae += diff;
-            if (diff < 0.5) {
+            if (diff < 0.000_05) {
                 TotalMargenError++;
             }
 
@@ -194,10 +198,10 @@ public class EngineUtils {
                 String dirPred = predReturn >= 0 ? "UP" : "DOWN";
                 boolean success = dirReal.equals(dirPred);
 
-                Vesta.info("[%d] Real: %.6f (%s) | Pred: %.6f (%s) | ¿Acierto Dir?: %b",
-                        i, realReturn, dirReal, predReturn, dirPred, success);
+                Vesta.info("[%d] Real: %.6f (%s) | Pred: %.6f (%s) | DiffAbs: %.6f | ¿Acierto Dir?: %b",
+                        i, realReturn, dirReal, predReturn, dirPred, diff, success);
             }
-            results.add(new ResultPrediccion(predReturn, realReturn));
+            results.add(new ResultPrediccion(predReturn, realReturn, 1));
 
         }
         results.sort(Comparator.comparingDouble(s -> s.pred() - s.real()));
@@ -206,169 +210,25 @@ public class EngineUtils {
         double avgMae = totalMae / total;
         double margenRate = (double) TotalMargenError / total *100;
 
-        Vesta.info("--------------------------------------------------");
-        Vesta.info("RESULTADOS FINALES:");
-        Vesta.info("MAE Promedio (Log-Returns): %.8f", avgMae);
-        Vesta.info("Predicción de la tendencia (Hit Rate): %.2f%%", hitRate);
-        Vesta.info("Margen del error acetable (Hit Rate): %.2f%%", margenRate);
 
-        // Gráfica de distribución de errores porcentuales
-        ChartUtils.plot("Resultados De la evaluación", "Resultados",
-                List.of(new ChartUtils.DataPlot("Diferencia", results.stream().map(r -> r.pred() - r.real()).toList()),
-                        new ChartUtils.DataPlot("Predicción", results.stream().map(ResultPrediccion::pred).toList()),
-                        new ChartUtils.DataPlot("Real", results.stream().map(ResultPrediccion::real).toList())
-                ));
-        Vesta.info("--------------------------------------------------");
+        return new EngineUtils.ResultsEvaluate(
+                "VestaLSTM",
+                avgMae,
+                hitRate,
+                margenRate,
+                results
+        );
     }
 
-    /**
-     * Evaluar modelo en conjunto de test
-     */
-    public static void evaluateModelLegacy(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer normalizer) {
-        Vesta.info("  Test samples: " + X_test.getShape().get(0));
+    public record ResultsEvaluate(
+            String modelName,
+            double avgMae,
+            double hitRate,
+            double margenRate,
+            List<ResultPrediccion> resultPrediccions
+    ) {}
 
-        // Hacer predicciones
-        try {
-            var block = trainer.getModel().getBlock();
-            var manager = trainer.getManager();
-
-            // --- Procesamiento por lotes (Sin cambios) ---
-            int batchSize = 32;
-            int totalSamples = (int) X_test.getShape().get(0);
-            List<NDArray> batchPredictions = new ArrayList<>();
-
-            for (int i = 0; i < totalSamples; i += batchSize) {
-                int end = Math.min(i + batchSize, totalSamples);
-                NDArray batchX = X_test.get(new NDIndex(i + ":" + end));
-                var parameterStore = new ai.djl.training.ParameterStore(manager, false);
-                NDList output = block.forward(parameterStore, new NDList(batchX), false);
-                batchPredictions.add(output.singletonOrThrow());
-            }
-
-            NDArray allPredictions = batchPredictions.get(0);
-            for (int i = 1; i < batchPredictions.size(); i++) {
-                allPredictions = allPredictions.concat(batchPredictions.get(i), 0);
-            }
-
-            // --- Cálculos de Métricas ---
-            NDArray error = allPredictions.sub(y_test).abs();
-            float maeNormalized = error.mean().getFloat();
-
-            float[] predArray = allPredictions.toFloatArray();
-            float[] trueArray = y_test.toFloatArray();
-
-            float[] predPrices = normalizer.inverseTransform(predArray);
-            float[] truePrices = normalizer.inverseTransform(trueArray);
-
-            double maeReal = 0.0;
-            double mape = 0.0;
-            int count = 0;
-
-            List<ResultEvaluatorLegacy> results = new ArrayList<>();
-
-            for (int i = 0; i < predPrices.length; i++) {
-                // Validar que los datos sean finitos y reales
-                if (Float.isFinite(predPrices[i]) && Float.isFinite(truePrices[i]) && truePrices[i] != 0) {
-
-                    // Diferencia absoluta para métricas generales
-                    double errorAbs = Math.abs(predPrices[i] - truePrices[i]);
-
-                    // Diferencia con signo para saber si sobre/sub estima
-                    float diff = predPrices[i] - truePrices[i];
-
-                    // Variación porcentual (+/-)
-                    double varPct = 0;
-                    if (Math.abs(truePrices[i]) > 1e-10) {  // Evitar división por cero
-                        varPct = (diff / truePrices[i]) * 100;
-                    }
-
-                    maeReal += errorAbs;
-                    mape += Math.abs(varPct); // MAPE usa valor absoluto
-
-                    // Guardamos en la lista: (pred, real, errorAbsoluto, variacionPorcentual)
-                    results.add(new ResultEvaluatorLegacy(predPrices[i], truePrices[i], (float)errorAbs, varPct));
-                    count++;
-                }
-            }
-
-            if (count > 0) {
-                maeReal /= count;
-                mape /= count;
-
-                Vesta.info("\n📊 Resultados de evaluación:");
-                Vesta.info("  MAE (normalizado): " + String.format("%.6f", maeNormalized));
-                Vesta.info("  MAE (precio real): $" + String.format("%.4f", maeReal));
-                Vesta.info("  MAPE (error promedio): " + String.format("%.2f", mape));
-                Vesta.info("  Predicciones válidas: " + count + "/" + predPrices.length);
-
-                // Ordenar por el error absoluto más grande para ver los peores casos primero
-                results.sort(Comparator.comparingDouble(ResultEvaluatorLegacy::varPct).reversed());
-
-                Vesta.info("\n🔍 Ejemplos de predicción (Top errores):");
-                // Mostrar los primeros 15 para no saturar la consola
-                int limit = Math.min(15, results.size());
-
-                for (int i = 0; i < limit; i++) {
-                    ResultEvaluatorLegacy res = results.get(i);
-                    // El formato %+ (con signo más) forzará a mostrar +2.5% o -1.2%
-                    Vesta.info("  Pred: $%.4f | Real: $%.4f | Diff: $%.4f | Var: %+.3f%%",
-                            res.pred(),
-                            res.real(),
-                            (res.pred() - res.real()), // Diferencia neta en $
-                            res.varPct()               // Variación %
-                    );
-                }
-
-                // Gráfica de distribución de errores porcentuales
-                ChartUtils.plot("Distribución Variación %", "Resultados",
-                        List.of(new ChartUtils.DataPlot("Var%", results.stream().map(r -> (float) r.varPct()).toList())));
-            }
-
-            // También podemos usar el evaluador configurado para obtener métricas
-            // usando el método updateAccumulator si queremos métricas por lote
-            try {
-                var evaluator = trainer.getEvaluators().get(0);
-                evaluator.addAccumulator("test");
-                evaluator.resetAccumulator("test");
-
-                // Evaluar por lotes
-                for (int i = 0; i < totalSamples; i += batchSize) {
-                    int end = Math.min(i + batchSize, totalSamples);
-                    NDArray batchX = X_test.get(new NDIndex(i + ":" + end));
-                    NDArray batchY = y_test.get(new NDIndex(i + ":" + end));
-
-                    // Obtener predicción para este lote
-                    var parameterStore = new ai.djl.training.ParameterStore(manager, false);
-                    NDList output = block.forward(parameterStore, new NDList(batchX), false);
-
-                    evaluator.updateAccumulator("test", new NDList(batchY), output);
-                }
-
-                float testMae = evaluator.getAccumulator("test");
-                Vesta.info("  MAE (usando evaluador): " + testMae);
-
-
-                List<ResultPrediccion> predList = new ArrayList<>();
-
-                for (int i = 0; i < Math.min(50, predPrices.length); i++) {
-                    predList.add(new ResultPrediccion(predPrices[i], truePrices[i]));
-                }
-                predList.sort(Comparator.comparingDouble(r -> r.pred() - r.real()));
-
-                ChartUtils.CandleChartUtils.showPriceComparison("Predicciones vs Real", predList.stream().map(ResultPrediccion::pred).toList(), predList.stream().map(ResultPrediccion::real).toList());
-            } catch (Exception e) {
-                Vesta.waring("No se pudo calcular métricas usando evaluador: " + e.getMessage());
-            }
-
-        } catch (Exception e) {
-            Vesta.error("Error durante la evaluación: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    private record ResultPrediccion(float pred, float real) {}
-
-    private record ResultEvaluatorLegacy(float pred, float real, float absError, double varPct) {}
+    public record ResultPrediccion(float pred, float real, long timestamp) {}
 
     public static Pair<float[][][], float[]> clearData(float[][][] X, float[] y) {
         final float EPS = 1e-9f;
@@ -427,4 +287,6 @@ public class EngineUtils {
 
         return new Pair<>(Xunique, yunique);
     }
+
+
 }

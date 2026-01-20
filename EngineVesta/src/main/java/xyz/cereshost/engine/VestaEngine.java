@@ -1,20 +1,16 @@
-package xyz.cereshost;
+package xyz.cereshost.engine;
 
 import ai.djl.Device;
 import ai.djl.Model;
-import ai.djl.ndarray.BaseNDManager;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
-import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
-import ai.djl.nn.Blocks;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.Dropout;
 import ai.djl.nn.recurrent.GRU;
 import ai.djl.nn.recurrent.LSTM;
-import ai.djl.nn.recurrent.RNN;
 import ai.djl.pytorch.engine.PtModel;
 import ai.djl.pytorch.engine.PtNDManager;
 import ai.djl.training.DefaultTrainingConfig;
@@ -30,10 +26,15 @@ import ai.djl.training.tracker.Tracker;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.ChartUtils;
+import xyz.cereshost.MAEEvaluator;
+import xyz.cereshost.Main;
+import xyz.cereshost.MetricsListener;
 import xyz.cereshost.builder.BuilderData;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.common.market.Market;
 import xyz.cereshost.file.IOdata;
 
 import java.io.IOException;
@@ -41,16 +42,16 @@ import java.util.List;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 15;
-    public static final int EPOCH = 1000;//300
+    public static final int LOOK_BACK = 20;
+    public static final int EPOCH = 500;//300
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
      */
-    public static void trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException, InterruptedException {
+    public static TrainingTestsResults trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException, InterruptedException {
         IOdata.loadMarkets(true, symbols);
-        ai.djl.engine.Engine TensorFlow = ai.djl.engine.Engine.getEngine("PyTorch");
-        if (TensorFlow == null) {
+        ai.djl.engine.Engine torch = ai.djl.engine.Engine.getEngine("PyTorch");
+        if (torch == null) {
             Vesta.error("PyTorch no está disponible. Engines disponibles:");
             for (String engine : ai.djl.engine.Engine.getAllEngines()) {
                 Vesta.error("  - " + engine);
@@ -69,7 +70,7 @@ public class VestaEngine {
         float[][][] xCombined = combined.getKey();
         float[] yCombined = combined.getValue();
 
-        EngineUtils.shuffleData(xCombined, yCombined);
+        //EngineUtils.shuffleData(xCombined, yCombined);
 
         ChartUtils.CandleChartUtils.showDataDistribution("Datos Combinados", xCombined, yCombined, "Todos");
 
@@ -134,7 +135,7 @@ public class VestaEngine {
         EngineUtils.cleanNaNValues(X_test_norm);
 
         try (PtModel model = (PtModel) Model.newInstance(Main.NAME_MODEL, device, "PyTorch")) {
-            NDManager manager = model.getNDManager();
+            PtNDManager manager = (PtNDManager) model.getNDManager();
             // Aplanar 3D -> 1D para crear NDArray con Shape(samples, lookback, features)
             float[] XtrainFlat = EngineUtils.flatten3DArray(X_train_norm);
             float[] XvalFlat   = EngineUtils.flatten3DArray(X_val_norm);
@@ -197,7 +198,7 @@ public class VestaEngine {
             EasyTrain.fit(trainer, EPOCH, trainDataset, valDataset);
 
             // Gráficas
-            ChartUtils.plot("Training Loss/MAE", "epochs",  List.of(new ChartUtils.DataPlot("Loss", metrics.getLoss()), new ChartUtils.DataPlot("MAE", metrics.getMae())));
+            ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",  List.of(new ChartUtils.DataPlot("Loss", metrics.getLoss()), new ChartUtils.DataPlot("MAE", metrics.getMae())));
 
             // Guardar modelo (igual que antes)
             IOdata.saveModel(model);
@@ -206,35 +207,69 @@ public class VestaEngine {
 
             // Evaluar en conjunto de test si hay muestras
             if (testSize > 0) {
-                Vesta.info("\nEvaluando en conjunto de test...");
-                EngineUtils.evaluateModel(trainer, X_test, y_test, yNormalizer);
-            }
+                Vesta.info("\nEvaluando modelo con Backtest Walk-Forward (15% data)...");
 
-            // Cerrar trainer y modelo si es necesario
-            trainer.close();
+                // 1. Crear instancia temporal de PredictionEngine con los datos recién entrenados
+                // Nota: Necesitamos un PredictionEngine para usar el método 'predictForBacktest'
+                // Como el modelo (PtModel) ya está en memoria, podemos pasarlo directamente.
+
+                // Necesitamos pasar un Model 'genérico', PtModel hereda de Model
+                PredictionEngine predEngine = new PredictionEngine(
+                        xNormalizer,
+                        yNormalizer,
+                        model,
+                        LOOK_BACK,
+                        features
+                );
+
+                // 2. Ejecutar Backtest para cada símbolo (o solo el primero si combinaste)
+                // Como entrenaste combinando símbolos, lo ideal es probar en uno representativo o iterar.
+                // Aquí probamos con el primer símbolo de la lista para obtener el ROI
+                String testSymbol = symbols.get(0);
+                Market market = Vesta.MARKETS.get(testSymbol);
+
+                BackTestEngine.BackTestResult simResult;
+
+                if (market != null) {
+                    simResult = BackTestEngine.runRealisticBacktest(market, predEngine);
+                } else {
+                    Vesta.error("No se encontró mercado para backtest: " + testSymbol);
+                    simResult = new BackTestEngine.BackTestResult(0,0,0,0,0,0,0,0, List.of());
+                }
+                EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, yNormalizer);
+                return new TrainingTestsResults(evaluate, simResult);
+            }else {
+                return null;
+            }
         }
     }
 
+    public record TrainingTestsResults(EngineUtils.ResultsEvaluate evaluate, BackTestEngine.BackTestResult backtest) {}
+
     public static SequentialBlock getSequentialBlock() {
         return new SequentialBlock()
-                .add(LSTM.builder()
+                .add(GRU.builder()
                         .setStateSize(256)
                         .setNumLayers(2)
                         .optReturnState(false)
                         .optBatchFirst(true)
                         .optDropRate(0.2f)
                         .build())
-                .add(ndList -> {
-                    NDArray x = ndList.singletonOrThrow();
-                     NDArray last = x.get(":, -1, :");
-                    return new NDList(last);
-                })
+                .add(LSTM.builder()
+                        .setStateSize(32)
+                        .setNumLayers(1)
+                        .optReturnState(false)
+                        .optBatchFirst(true)
+                        .optDropRate(0.2f)
+                        .build())
+
+                .add(Dropout.builder().optRate(0.04f).build())
                 .add(Linear.builder().setUnits(256).build())
                 .add(Activation.reluBlock())
-                .add(Dropout.builder().optRate(0.08f).build())
+                .add(Dropout.builder().optRate(0.04f).build())
                 .add(Linear.builder().setUnits(128).build())
                 .add(Activation.reluBlock())
-                .add(Dropout.builder().optRate(0.08f).build())
+                .add(Dropout.builder().optRate(0.04f).build())
                 .add(Linear.builder().setUnits(64).build())
                 .add(Activation.reluBlock())
                 .add(Linear.builder().setUnits(32).build())
@@ -242,6 +277,12 @@ public class VestaEngine {
                 .add(Linear.builder().setUnits(16).build())
                 .add(Activation.reluBlock())
                 .add(Linear.builder().setUnits(1).build())
+
+                .add(ndList -> {
+                    NDArray x = ndList.singletonOrThrow();
+                    NDArray last = x.get(":, -1, :");
+                    return new NDList(last);
+                })
 //                .add(ndList -> {
 //                    NDArray out = ndList.singletonOrThrow();
 //                    return new NDList(out.mul(4f));

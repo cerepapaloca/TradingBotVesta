@@ -3,14 +3,14 @@ package xyz.cereshost.builder;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
-import org.tensorflow.op.core.Max;
-import xyz.cereshost.*;
+import xyz.cereshost.ChartUtils;
+import xyz.cereshost.FinancialCalculation;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 
 import java.util.*;
 
-import static xyz.cereshost.VestaEngine.LOOK_BACK;
+import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
@@ -75,7 +75,8 @@ public class BuilderData {
     /**
      * Construye tensores basados EXCLUSIVAMENTE en cambios relativos (Log Returns)
      */
-    public static Pair<float[][][], float[]> build(List<Candle> candles, int lookBack) {
+    @Contract("_, _ -> new")
+    public static @NotNull Pair<float[][][], float[]> build(@NotNull List<Candle> candles, int lookBack) {
         // Empezamos desde 1 porque necesitamos candle[i-1] para calcular el cambio relativo
         int n = candles.size();
         int samples = n - lookBack - 1; // -1 extra por el cálculo de retorno futuro
@@ -123,6 +124,9 @@ public class BuilderData {
             depthByMinute.put(minute, d);
         }
 
+        market.buildTradeCache();
+        NavigableMap<Long, List<Trade>> tradesByMinute = market.getTradesByMinuteCache();
+
         List<Candle> candles = new ArrayList<>();
         if (simpleByMinute.isEmpty()) return candles;
 
@@ -146,6 +150,7 @@ public class BuilderData {
         double[] signalArr = macdRes.signal();
         double[] histArr = macdRes.histogram();
 
+        double[] nviArr = FinancialCalculation.computeNVI(closes, simpleByMinute.values().stream().map(c -> c.volumen().quoteVolume()).toList(), 1000.0);
 
         for (long minute = startMinute; minute <= endMinute; minute += 60_000L) {
             // OHLC + VOLUMEN
@@ -158,6 +163,7 @@ public class BuilderData {
             double sellQV = 0;
             double deltaUSDT = 0;
             double buyRatio = 0;
+            int tradeCount = 0;
 
             if (cs != null) {
                 open = cs.open();
@@ -176,6 +182,14 @@ public class BuilderData {
                 open = high = low = close = lastClose;
             } else {
                 open = high = low = close = 0.0;
+            }
+
+            // Contar trades en este minuto
+            if (tradesByMinute != null) {
+                List<Trade> minuteTrades = tradesByMinute.get(minute);
+                if (minuteTrades != null) {
+                    tradeCount = minuteTrades.size();
+                }
             }
 
             // DEPTH
@@ -211,9 +225,13 @@ public class BuilderData {
             double macdSignal = idx < signalArr.length ? signalArr[idx] : Double.NaN;
             double macdHist = idx < histArr.length ? histArr[idx] : Double.NaN;
 
+            // NVI
+            double nvi = idx < nviArr.length ? nviArr[idx] : Double.NaN;
+
             candles.add(new Candle(
                     minute,
                     open, high, low, close,
+                    tradeCount,
                     volumeBase,
                     quoteVolume,
                     buyQV,
@@ -229,7 +247,8 @@ public class BuilderData {
                     rsi16,
                     macdVal,
                     macdSignal,
-                    macdHist
+                    macdHist,
+                    nvi
             ));
             idx++;
         }
@@ -239,7 +258,7 @@ public class BuilderData {
 
     private static int features = 0;
 
-    public static float[] extractFeatures(Candle curr, Candle prev) {
+    public static float @NotNull [] extractFeatures(@NotNull Candle curr, @NotNull Candle prev) {
 
         double prevClose = prev.close() <= 0 ? 1.0 : prev.close();
         List<Float> fList = new ArrayList<>();
@@ -250,52 +269,57 @@ public class BuilderData {
         fList.add((float) Math.log(curr.low() / prevClose));
         fList.add((float) Math.log(curr.close() / prevClose));
 
-        // 5-8: Volúmenes (Log1p)
+        fList.add((float) Math.log(curr.amountTrades()));
+
+        // Volúmenes relativos
         fList.add((float) Math.log(curr.volumeBase() / prevClose));
-        fList.add((float) Math.log(curr.quoteVolume() / prevClose));
-        fList.add((float) Math.log(curr.buyQuoteVolume() / prevClose));
-        fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
+//        fList.add((float) Math.log(curr.quoteVolume() / prevClose));
+//        fList.add((float) Math.log(curr.buyQuoteVolume() / prevClose));
+//        fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
 
-        // 9-10: Delta y Buy Ratio
-        double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
-        fList.add((totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol));
-        fList.add((float) curr.buyRatio());
+        // Delta y Buy Ratio
+//        double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
+//        fList.add((totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol));
+//        fList.add((float) curr.buyRatio());
 
-        if (Main.TYPE_DATA.equals(TypeData.ALL)){
-            fList.add((float) Math.log1p(curr.bidLiquidity()));
-            fList.add((float) Math.log1p(curr.askLiquidity()));
+//        fList.add((float) Math.log(curr.bidLiquidity() / prevClose));
+//        fList.add((float) Math.log(curr.askLiquidity() / prevClose));
+//
+//        // 12-14: Métricas de Orderbook relativas
+//        fList.add((float) curr.depthImbalance());
+//        fList.add((float) ((curr.midPrice() - curr.close()) / curr.close()));
+//        fList.add((float) (curr.spread() / curr.close()));
 
-            // 12-14: Métricas de Orderbook relativas
-            fList.add((float) curr.depthImbalance());
-            fList.add((float) ((curr.midPrice() - curr.close()) / curr.close()));
-            fList.add((float) (curr.spread() / curr.close()));
-        }
-
+        // RSI
         fList.add((float)  curr.rsi8());
         fList.add((float)  curr.resi16());
+
+        // MACD
         fList.add((float)  curr.macdVal());
         fList.add((float)  curr.macdSignal());
         fList.add((float)  curr.macdHist());
+
+        // NVI
+        fList.add((float)  curr.nvi());
 
         float[] f = new float[fList.size()];
         for (int i = 0; i < fList.size(); i++){
             f[i] = fList.get(i);
         }
-        if (features == 0) features = fList.size();
         return f;
     }
 
-    public static void updateFeatures() {
-        extractFeatures(
+    static {
+        features = extractFeatures(
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1),
+                1,1,1, 1, 1),
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1)
-        );
+                1,1,1, 1, 1)
+        ).length;
     }
 
 }

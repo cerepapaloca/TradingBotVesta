@@ -4,6 +4,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jfree.chart.*;
 import org.jfree.chart.axis.DateAxis;
 import org.jfree.chart.axis.NumberAxis;
+import org.jfree.chart.plot.CategoryPlot;
 import org.jfree.chart.plot.PlotOrientation;
 import org.jfree.chart.plot.XYPlot;
 import org.jfree.data.category.DefaultCategoryDataset;
@@ -12,13 +13,12 @@ import org.jfree.data.xy.OHLCDataset;
 import org.jfree.data.xy.XYSeriesCollection;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
+import xyz.cereshost.engine.EngineUtils;
 
 import javax.swing.*;
 import java.awt.*;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
+import java.util.*;
 import java.util.List;
 
 public class ChartUtils {
@@ -30,12 +30,14 @@ public class ChartUtils {
     ) {
         DefaultCategoryDataset dataset = new DefaultCategoryDataset();
 
+        List<Float> l = new ArrayList<>();
         for (DataPlot plot : plots) {
             List<Float> values = plot.values();
             String seriesName = plot.yLabel();
 
             for (int i = 0; i < values.size(); i++) {
                 dataset.addValue(values.get(i), seriesName, String.valueOf(i + 1));
+                l.add(values.get(i));
             }
         }
 
@@ -270,6 +272,58 @@ public class ChartUtils {
                 e.printStackTrace();
             }
         }
+    }
+
+    public static void plotPrecisionByMagnitude(String title, List<EngineUtils.ResultPrediccion> results) {
+        if (results == null || results.isEmpty()) return;
+
+        // 1. Ordenar los resultados por la magnitud (valor absoluto) del movimiento REAL
+        List<EngineUtils.ResultPrediccion> sorted = new ArrayList<>(results);
+        sorted.sort(Comparator.comparingDouble(r -> Math.abs(r.real())));
+
+        int numBins = 10;
+        int binSize = sorted.size() / numBins;
+
+        DefaultCategoryDataset dataset = new DefaultCategoryDataset();
+
+        for (int i = 0; i < numBins; i++) {
+            int start = i * binSize;
+            int end = (i == numBins - 1) ? sorted.size() : (i + 1) * binSize;
+            List<EngineUtils.ResultPrediccion> subList = sorted.subList(start, end);
+
+            // Calcular Hit Rate: ¿Predicción y Real tienen el mismo signo?
+            long hits = subList.stream()
+                    .filter(r -> Math.signum(r.pred()) == Math.signum(r.real()))
+                    .count();
+
+            double hitRate = (double) hits / subList.size() * 100.0;
+
+            // Magnitud promedio en este bin para la etiqueta
+            double avgMagnitude = subList.stream()
+                    .mapToDouble(r -> Math.abs(r.real()))
+                    .average().orElse(0);
+
+            String binLabel = String.format("%.2f%%", avgMagnitude * 100);
+            dataset.addValue(hitRate, "Hit Rate (%)", binLabel);
+        }
+
+        JFreeChart chart = ChartFactory.createLineChart(
+                title,
+                "Magnitud del Movimiento Real (Volatility)",
+                "Precisión (%)",
+                dataset,
+                PlotOrientation.VERTICAL,
+                true, true, false
+        );
+
+        // Ajustes de escala (Precisión siempre de 0 a 100)
+        CategoryPlot plot = (CategoryPlot) chart.getPlot();
+        NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
+        rangeAxis.setRange(0.0, 100.0);
+
+        ChartFrame frame = new ChartFrame(title, chart);
+        frame.pack();
+        frame.setVisible(true);
     }
 }
 
