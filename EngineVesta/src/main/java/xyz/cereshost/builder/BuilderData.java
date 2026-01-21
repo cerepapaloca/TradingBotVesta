@@ -32,7 +32,7 @@ public class BuilderData {
                 }
 
                 Pair<float[][][], float[]> pair = BuilderData.build(candles, LOOK_BACK);
-                float[][][] Xraw = pair.getKey();
+                float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                 float[] yraw = pair.getValue();
 
                 if (Xraw.length > 0) {
@@ -68,6 +68,7 @@ public class BuilderData {
             System.arraycopy(yPart, 0, y_final, currentIdx, len);
             currentIdx += len;
         }
+
 
         return new Pair<>(X_final, y_final);
     }
@@ -141,8 +142,10 @@ public class BuilderData {
             closes.add(cs.close());
         }
 
+        double[] rsi4Arr = FinancialCalculation.computeRSI(closes, 4);
         double[] rsi8Arr = FinancialCalculation.computeRSI(closes, 8);
         double[] rsi16Arr = FinancialCalculation.computeRSI(closes, 16);
+
 
         // MACD
         FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 12, 26, 9);
@@ -217,6 +220,7 @@ public class BuilderData {
             double depthImbalance = (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
 
             // RSI
+            double rsi4 = idx < rsi4Arr.length ? rsi8Arr[idx] : Double.NaN;
             double rsi8 = idx < rsi8Arr.length ? rsi8Arr[idx] : Double.NaN;
             double rsi16 = idx < rsi16Arr.length ? rsi16Arr[idx] : Double.NaN;
 
@@ -243,6 +247,7 @@ public class BuilderData {
                     depthImbalance,
                     mid,
                     spread,
+                    rsi4,
                     rsi8,
                     rsi16,
                     macdVal,
@@ -278,12 +283,12 @@ public class BuilderData {
 //        fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
 
         // Delta y Buy Ratio
-//        double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
-//        fList.add((totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol));
-//        fList.add((float) curr.buyRatio());
+        double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
+        fList.add((totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol));
+        fList.add((float) curr.buyRatio());
 
-//        fList.add((float) Math.log(curr.bidLiquidity() / prevClose));
-//        fList.add((float) Math.log(curr.askLiquidity() / prevClose));
+        fList.add((float) Math.log(curr.bidLiquidity() / prevClose));
+        fList.add((float) Math.log(curr.askLiquidity() / prevClose));
 //
 //        // 12-14: Métricas de Orderbook relativas
 //        fList.add((float) curr.depthImbalance());
@@ -291,8 +296,9 @@ public class BuilderData {
 //        fList.add((float) (curr.spread() / curr.close()));
 
         // RSI
+        fList.add((float)  curr.rsi4());
         fList.add((float)  curr.rsi8());
-        fList.add((float)  curr.resi16());
+        fList.add((float)  curr.rsi16());
 
         // MACD
         fList.add((float)  curr.macdVal());
@@ -309,17 +315,43 @@ public class BuilderData {
         return f;
     }
 
+    /**
+     * Añade características 2
+     * 1 el mercado que esta los datos
+     * 2 cuantos mercados puede haber
+     */
+    public static float[][][] addSymbolFeature(float[][][] X, String symbol) {
+        float[][][] XwithSymbol = new float[X.length][X[0].length][X[0][0].length + 2];
+
+        // Codificación one-hot simplificada del símbolo
+        int symbolIndex = Vesta.MARKETS_NAMES.indexOf(symbol);
+        float symbolOneHot = symbolIndex / (float) Vesta.MARKETS_NAMES.size();
+        float symbolNorm = (float) Math.log(symbolIndex + 1) / (float) Math.log(Vesta.MARKETS_NAMES.size() + 1);
+
+        for (int i = 0; i < X.length; i++) {
+            for (int j = 0; j < X[0].length; j++) {
+                // Copiar características originales
+                System.arraycopy(X[i][j], 0, XwithSymbol[i][j], 0, X[0][0].length);
+                // Añadir características del símbolo
+                XwithSymbol[i][j][X[0][0].length] = symbolOneHot;
+                XwithSymbol[i][j][X[0][0].length + 1] = symbolNorm;
+            }
+        }
+        return XwithSymbol;
+    }
+
+
     static {
         features = extractFeatures(
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1),
+                1,1,1, 1, 1, 1),
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1)
-        ).length;
+                1,1,1, 1, 1, 1)
+        ).length + 2; // más 2 por que tiene sumar el feature del símbolo en el que esta y todos los símbolos que puede estar
     }
 
 }

@@ -27,12 +27,22 @@ public class Main {
 
     public static void main(String[] args) throws IOException, TranslateException, InterruptedException {
         instance = new Main();
+        String datasetLimit = System.getenv("DATASET_LIMIT");
+        if (datasetLimit != null) {
+            System.setProperty("DATASET_LIMIT", datasetLimit);
+        }
+
+        System.setProperty("org.slf4j.simpleLogger.showThreadName", "false");
+        System.setProperty("org.slf4j.simpleLogger.showLogName", "false");
+        System.setProperty("org.slf4j.simpleLogger.log.ai.djl.pytorch", "WARN");
+        System.setProperty("org.slf4j.simpleLogger.log.ai.djl.mxnet", "WARN");
+        System.setProperty("org.slf4j.simpleLogger.log.ai.djl.tensorflow", "WARN");
         new PacketHandler();
         if (args.length > 0 && args[0].equals("tr")) {
             //List.of("BTCUSDT");// Vesta.MARKETS_NAMES;
             //checkEngines();
             HashMap<List<String>, VestaEngine.TrainingTestsResults> results = new HashMap<>();
-            for (String symbol : List.of("BNBUSDT")) {
+            for (String symbol : List.of("SOLUSDT")) {
                 results.put(Arrays.stream(symbol.split(",")).toList(), VestaEngine.trainingModel(Arrays.stream(symbol.split(",")).toList()));
             }
 
@@ -46,6 +56,7 @@ public class Main {
                 Vesta.info("RESULTADOS FINALES DE " + fullNameSymbol.toUpperCase(Locale.ROOT) + ":");
                 Vesta.info("  MAE Promedio:           %.8f", evaluateResult.avgMae());
                 Vesta.info("  Acierto de Tendencia:   %.2f%%", evaluateResult.hitRate());
+                Vesta.info("  Margen de Error:        %.2f%%", evaluateResult.margenRate());
                 Vesta.info("--------------------------------------------------");
                 Vesta.info("💰 SIMULACIÓN DE TRADING (Capital: $%.0f)", backtestResult.initialBalance());
                 Vesta.info("  PNL Neto:               %s$%.2f%s", backtestResult.netPnL() >= 0 ? "\u001B[32m" : "\u001B[31m", backtestResult.netPnL(), "\u001B[0m");

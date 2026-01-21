@@ -133,29 +133,6 @@ public class EngineUtils {
         return new Pair<>(Xcombined, ycombined); // Cambiado
     }
 
-    /**
-     * Añade características del símbolo a los datos
-     */
-    public static float[][][] addSymbolFeature(float[][][] X, String symbol, List<String> allSymbols) {
-        float[][][] XwithSymbol = new float[X.length][X[0].length][X[0][0].length + 2];
-
-        // Codificación one-hot simplificada del símbolo
-        int symbolIndex = allSymbols.indexOf(symbol);
-        float symbolOneHot = symbolIndex / (float) allSymbols.size();
-        float symbolNorm = (float) Math.log(symbolIndex + 1) / (float) Math.log(allSymbols.size() + 1);
-
-        for (int i = 0; i < X.length; i++) {
-            for (int j = 0; j < X[0].length; j++) {
-                // Copiar características originales
-                System.arraycopy(X[i][j], 0, XwithSymbol[i][j], 0, X[0][0].length);
-                // Añadir características del símbolo
-                XwithSymbol[i][j][X[0][0].length] = symbolOneHot;
-                XwithSymbol[i][j][X[0][0].length + 1] = symbolNorm;
-            }
-        }
-        return XwithSymbol;
-    }
-
     public static ResultsEvaluate evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer yNormalizer) {
         // 1. Obtener predicciones (y_test ya está en el dispositivo correcto)
         NDList predictions = trainer.evaluate(new NDList(X_test));

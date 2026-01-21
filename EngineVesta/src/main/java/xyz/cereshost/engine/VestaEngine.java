@@ -6,6 +6,7 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
+import ai.djl.nn.Block;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.Dropout;
@@ -43,7 +44,7 @@ import java.util.List;
 public class VestaEngine {
 
     public static final int LOOK_BACK = 20;
-    public static final int EPOCH = 500;//300
+    public static final int EPOCH = 300;//300
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
@@ -144,11 +145,22 @@ public class VestaEngine {
             NDArray X_train = manager.create(XtrainFlat, new Shape(trainSize, lookback, features));
             NDArray X_val   = manager.create(XvalFlat,   new Shape(valSize,   lookback, features));
             NDArray X_test  = manager.create(XtestFlat,  new Shape(testSize,  lookback, features));
+            System.out.println(X_train.getDevice() + " eres?");
+            System.out.println(X_val.getDevice() + " eres?");
+            System.out.println(X_test.getDevice() + " eres?");
+            X_train.toDevice(device, false);
+            X_val.toDevice(device, false);
+            X_test.toDevice(device, false);
 
             // y -> shape (N, 1)
             NDArray y_train = manager.create(y_train_norm, new Shape(trainSize, 1));
             NDArray y_val   = manager.create(y_val_norm,   new Shape(valSize,   1));
             NDArray y_test  = manager.create(y_test_norm,  new Shape(testSize,  1));
+            System.out.println(y_train.getDevice() + " eres?");
+            System.out.println(y_val.getDevice() + " eres?");
+            System.out.println(y_test.getDevice() + " eres?");
+            y_val.toDevice(device, false);
+            y_test.toDevice(device, false);
 
             Vesta.info("\nDatos finales preparados:");
             Vesta.info("  X_train shape: " + X_train.getShape());
@@ -168,16 +180,15 @@ public class VestaEngine {
                                     .optFinalValue(0.00001f)
                                     .setMaxUpdates(EPOCH)
                                     .build())
-                            .optWeightDecays(0.001f)
+                            .optWeightDecays(0.0f)
                             .optClipGrad(2.8f)
                             .build())
                     .addEvaluator(new MAEEvaluator())
-                    .optDevices(new Device[]{device})
                     .addTrainingListeners(TrainingListener.Defaults.logging())
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 32;// 128;
+            int batchSize = 32;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -255,14 +266,14 @@ public class VestaEngine {
                         .optBatchFirst(true)
                         .optDropRate(0.2f)
                         .build())
-                .add(LSTM.builder()
-                        .setStateSize(32)
-                        .setNumLayers(1)
-                        .optReturnState(false)
-                        .optBatchFirst(true)
-                        .optDropRate(0.2f)
-                        .build())
-
+//                .add(LSTM.builder()
+//                        .setStateSize(32)
+//                        .setNumLayers(1)
+//                        .optReturnState(false)
+//                        .optBatchFirst(true)
+//                        .optDropRate(0.2f)
+//                        .build())
+//                .add(Activation.reluBlock())
                 .add(Dropout.builder().optRate(0.04f).build())
                 .add(Linear.builder().setUnits(256).build())
                 .add(Activation.reluBlock())

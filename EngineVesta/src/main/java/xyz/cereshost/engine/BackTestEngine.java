@@ -94,7 +94,7 @@ public class BackTestEngine {
         double balance = 1000.0; // Capital inicial
         double initialBalance = balance;
         double fee = 0.0004; // 0.04% comisión
-        double minThreshold = 0.0006; // Umbral mínimo de predicción para entrar (0.06%)
+        double minThreshold = 0; // Umbral mínimo de predicción para entrar (0.06%)0.0006
 
         int wins = 0, losses = 0, totalTrades = 0;
         double maxBalance = balance;
@@ -115,7 +115,7 @@ public class BackTestEngine {
             List<Candle> window = allCandles.subList(startWindow, i + 1);
 
             // B. Predecir (Sin ver el futuro)
-            PredictionEngine.PredictionResultSimple predictionResultSimple = engine.predictNextPriceDetail(window);
+            PredictionEngine.PredictionResultSimple predictionResultSimple = engine.predictNextPriceDetail(window, market.getSymbol());
             float predictedLogReturn = predictionResultSimple.predictedPrice();
 
             // C. Decisión de Trading
@@ -129,7 +129,7 @@ public class BackTestEngine {
 
             // Definir TP / SL (Ratio 2:1)
             double targetAbs = Math.abs(predictedLogReturn);
-            double tpPercent = targetAbs * 2.0;
+            double tpPercent = targetAbs * 3.0;
             double slPercent = targetAbs * 1.0;
 
             double tpPrice = isLong ? entryPrice * (1 + tpPercent) : entryPrice * (1 - tpPercent);

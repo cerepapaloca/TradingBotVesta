@@ -86,7 +86,7 @@ public class PredictionEngine {
      * Predice el precio absoluto del siguiente intervalo.
      * Retorna un objeto con detalles para mejor visualización.
      */
-    public PredictionResultSimple predictNextPriceDetail(List<Candle> candles) {
+    public PredictionResultSimple predictNextPriceDetail(List<Candle> candles, String symbol) {
 
         candles.sort(Comparator.comparingLong(Candle::openTime));
 
@@ -105,8 +105,8 @@ public class PredictionEngine {
             X[0][j] = BuilderData.extractFeatures(subList.get(j + 1), subList.get(j));
         }
 
-        // Ejecutar la predicción raw (esto ya aplicará el RobustNormalizer de 17 features)
-        float predictedLogReturn = predictRaw(X);
+        // Ejecutar la predicción raw
+        float predictedLogReturn = predictRaw(BuilderData.addSymbolFeature(X, symbol));
 
         // Des-normalizar para obtener el Log Return real
         float expectedLogReturn = yNormalizer.inverseTransform(new float[]{predictedLogReturn})[0];
@@ -175,7 +175,7 @@ public class PredictionEngine {
                 }
 
                 // Realizar predicción detallada
-                PredictionResultSimple result = engine.predictNextPriceDetail(BuilderData.to1mCandles(market));
+                PredictionResultSimple result = engine.predictNextPriceDetail(BuilderData.to1mCandles(market), market.getSymbol());
                 DecimalFormat df = new DecimalFormat("###,##0.00###$");
                 DecimalFormat df2 = new DecimalFormat("###,##0.00###%");
                 // Mostrar resultados

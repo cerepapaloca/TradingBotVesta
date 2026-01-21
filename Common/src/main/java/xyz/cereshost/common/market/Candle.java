@@ -23,8 +23,9 @@ public record Candle(
         double midPrice,
         double spread,
 
+        double rsi4,
         double rsi8,
-        double resi16,
+        double rsi16,
         double macdVal,
         double macdSignal,
         double macdHist,

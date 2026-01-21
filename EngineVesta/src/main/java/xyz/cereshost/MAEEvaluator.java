@@ -4,6 +4,7 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.training.evaluator.Evaluator;
 import ai.djl.util.Pair;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,7 +22,7 @@ public class MAEEvaluator extends Evaluator {
     }
 
     @Override
-    public NDArray evaluate(NDList labels, NDList predictions) {
+    public NDArray evaluate(@NotNull NDList labels, @NotNull NDList predictions) {
         NDArray label = labels.singletonOrThrow();
         NDArray pred = predictions.singletonOrThrow();
 
