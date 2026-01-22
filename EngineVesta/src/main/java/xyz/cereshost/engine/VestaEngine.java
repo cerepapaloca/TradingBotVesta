@@ -6,7 +6,6 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
-import ai.djl.nn.Block;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.Dropout;
@@ -27,10 +26,7 @@ import ai.djl.training.tracker.Tracker;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.ChartUtils;
-import xyz.cereshost.MAEEvaluator;
-import xyz.cereshost.Main;
-import xyz.cereshost.MetricsListener;
+import xyz.cereshost.*;
 import xyz.cereshost.builder.BuilderData;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
@@ -44,13 +40,13 @@ import java.util.List;
 public class VestaEngine {
 
     public static final int LOOK_BACK = 20;
-    public static final int EPOCH = 300;//300
+    public static final int EPOCH = 1000;
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
      */
     public static TrainingTestsResults trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException, InterruptedException {
-        IOdata.loadMarkets(true, symbols);
+        IOdata.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbols);
         ai.djl.engine.Engine torch = ai.djl.engine.Engine.getEngine("PyTorch");
         if (torch == null) {
             Vesta.error("PyTorch no está disponible. Engines disponibles:");
@@ -64,19 +60,19 @@ public class VestaEngine {
         Vesta.info("Usando dispositivo: " + device);
         Vesta.info("Entrenando con " + symbols.size() + " símbolos: " + symbols);
 
-        Pair<float[][][], float[]> combined = BuilderData.fullBuild(symbols);
+        Pair<float[][][], float[][]> combined = BuilderData.fullBuild(symbols);
 
 
         //Pair<float[][][], float[]> deduped = EngineUtils.clearData(combined.getKey(), combined.getValue());
         float[][][] xCombined = combined.getKey();
-        float[] yCombined = combined.getValue();
+        float[][] yCombined = combined.getValue();
 
         //EngineUtils.shuffleData(xCombined, yCombined);
 
-        ChartUtils.CandleChartUtils.showDataDistribution("Datos Combinados", xCombined, yCombined, "Todos");
+        ChartUtils.CandleChartUtils.showDataDistribution("Datos Combinados", yCombined, "Todos");
 
 
-        Vesta.info("\nDatos combinados:");
+        Vesta.info("Datos combinados:");
         Vesta.info("  Total de muestras: " + xCombined.length);
         Vesta.info("  Lookback: " + xCombined[0].length);
         Vesta.info("  Características: " + xCombined[0][0].length);
@@ -110,9 +106,9 @@ public class VestaEngine {
         float[][][] X_val_arr   = slice3D.apply(new int[]{trainSize, trainSize + valSize}, null);
         float[][][] X_test_arr  = slice3D.apply(new int[]{trainSize + valSize, samples}, null);
 
-        float[] y_train_arr = java.util.Arrays.copyOfRange(yCombined, 0, trainSize);
-        float[] y_val_arr   = java.util.Arrays.copyOfRange(yCombined, trainSize, trainSize + valSize);
-        float[] y_test_arr  = java.util.Arrays.copyOfRange(yCombined, trainSize + valSize, samples);
+        float[][] y_train_arr = java.util.Arrays.copyOfRange(yCombined, 0, trainSize);
+        float[][] y_val_arr   = java.util.Arrays.copyOfRange(yCombined, trainSize, trainSize + valSize);
+        float[][] y_test_arr  = java.util.Arrays.copyOfRange(yCombined, trainSize + valSize, samples);
 
         // Normalizadores: FIT sólo con TRAIN
         RobustNormalizer xNormalizer = new RobustNormalizer();
@@ -126,9 +122,9 @@ public class VestaEngine {
         float[][][] X_val_norm   = xNormalizer.transform(X_val_arr);
         float[][][] X_test_norm  = xNormalizer.transform(X_test_arr);
 
-        float[] y_train_norm = yNormalizer.transform(y_train_arr);
-        float[] y_val_norm   = yNormalizer.transform(y_val_arr);
-        float[] y_test_norm  = yNormalizer.transform(y_test_arr);
+        float[][] y_train_norm = yNormalizer.transform(y_train_arr);
+        float[][] y_val_norm   = yNormalizer.transform(y_val_arr);
+        float[][] y_test_norm  = yNormalizer.transform(y_test_arr);
 
         // Verificar NaN sólo en arrays normalizados (por si acaso)
         EngineUtils.cleanNaNValues(X_train_norm);
@@ -145,22 +141,11 @@ public class VestaEngine {
             NDArray X_train = manager.create(XtrainFlat, new Shape(trainSize, lookback, features));
             NDArray X_val   = manager.create(XvalFlat,   new Shape(valSize,   lookback, features));
             NDArray X_test  = manager.create(XtestFlat,  new Shape(testSize,  lookback, features));
-            System.out.println(X_train.getDevice() + " eres?");
-            System.out.println(X_val.getDevice() + " eres?");
-            System.out.println(X_test.getDevice() + " eres?");
-            X_train.toDevice(device, false);
-            X_val.toDevice(device, false);
-            X_test.toDevice(device, false);
 
             // y -> shape (N, 1)
-            NDArray y_train = manager.create(y_train_norm, new Shape(trainSize, 1));
-            NDArray y_val   = manager.create(y_val_norm,   new Shape(valSize,   1));
-            NDArray y_test  = manager.create(y_test_norm,  new Shape(testSize,  1));
-            System.out.println(y_train.getDevice() + " eres?");
-            System.out.println(y_val.getDevice() + " eres?");
-            System.out.println(y_test.getDevice() + " eres?");
-            y_val.toDevice(device, false);
-            y_test.toDevice(device, false);
+            NDArray y_train = manager.create(y_train_norm);
+            NDArray y_val   = manager.create(y_val_norm);
+            NDArray y_test  = manager.create(y_test_norm);
 
             Vesta.info("\nDatos finales preparados:");
             Vesta.info("  X_train shape: " + X_train.getShape());
@@ -188,7 +173,7 @@ public class VestaEngine {
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 32;
+            int batchSize = 32*4*4*4;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -237,17 +222,19 @@ public class VestaEngine {
                 // Como entrenaste combinando símbolos, lo ideal es probar en uno representativo o iterar.
                 // Aquí probamos con el primer símbolo de la lista para obtener el ROI
                 String testSymbol = symbols.get(0);
+                EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, yNormalizer);
+                Vesta.MARKETS.clear();
+                IOdata.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols);
                 Market market = Vesta.MARKETS.get(testSymbol);
 
                 BackTestEngine.BackTestResult simResult;
 
                 if (market != null) {
-                    simResult = BackTestEngine.runRealisticBacktest(market, predEngine);
+                    simResult = BackTestEngine.runBacktest(market, predEngine);
                 } else {
                     Vesta.error("No se encontró mercado para backtest: " + testSymbol);
                     simResult = new BackTestEngine.BackTestResult(0,0,0,0,0,0,0,0, List.of());
                 }
-                EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, yNormalizer);
                 return new TrainingTestsResults(evaluate, simResult);
             }else {
                 return null;
@@ -266,34 +253,23 @@ public class VestaEngine {
                         .optBatchFirst(true)
                         .optDropRate(0.2f)
                         .build())
-//                .add(LSTM.builder()
-//                        .setStateSize(32)
-//                        .setNumLayers(1)
-//                        .optReturnState(false)
-//                        .optBatchFirst(true)
-//                        .optDropRate(0.2f)
-//                        .build())
-//                .add(Activation.reluBlock())
-                .add(Dropout.builder().optRate(0.04f).build())
-                .add(Linear.builder().setUnits(256).build())
-                .add(Activation.reluBlock())
-                .add(Dropout.builder().optRate(0.04f).build())
+                .add(LSTM.builder()
+                        .setStateSize(32)
+                        .setNumLayers(1)
+                        .optReturnState(false)
+                        .optBatchFirst(true)
+                        .optDropRate(0.2f)
+                        .build())
+                .add(ndList -> new NDList(ndList.singletonOrThrow().get(":, -1, :")))
+//                .add(Dropout.builder().optRate(0.1f).build())
+//                .add(Linear.builder().setUnits(256).build())
+                .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(128).build())
-                .add(Activation.reluBlock())
-                .add(Dropout.builder().optRate(0.04f).build())
+                .add(Dropout.builder().optRate(0.1f).build())
                 .add(Linear.builder().setUnits(64).build())
-                .add(Activation.reluBlock())
                 .add(Linear.builder().setUnits(32).build())
-                .add(Activation.reluBlock())
                 .add(Linear.builder().setUnits(16).build())
-                .add(Activation.reluBlock())
-                .add(Linear.builder().setUnits(1).build())
-
-                .add(ndList -> {
-                    NDArray x = ndList.singletonOrThrow();
-                    NDArray last = x.get(":, -1, :");
-                    return new NDList(last);
-                })
+                .add(Linear.builder().setUnits(2).build())
 //                .add(ndList -> {
 //                    NDArray out = ndList.singletonOrThrow();
 //                    return new NDList(out.mul(4f));
@@ -301,4 +277,6 @@ public class VestaEngine {
                 ;
 
     }
+
+
 }

@@ -8,7 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.Main;
-import xyz.cereshost.TypeData;
+import xyz.cereshost.DataSource;
+import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
@@ -21,21 +22,16 @@ import xyz.cereshost.common.packet.client.RequestMarketClient;
 import xyz.cereshost.common.packet.server.MarketDataServer;
 import xyz.cereshost.packet.PacketHandler;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.OutputStream;
+import java.io.*;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Properties;
+import java.nio.file.*;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class IOdata {
 
@@ -52,65 +48,245 @@ public class IOdata {
         );
     }
 
-    public static long loadMarkets(boolean forTraining, List<String> symbols) throws InterruptedException {
+    public static long loadMarkets(DataSource data, List<String> symbols) throws InterruptedException, IOException {
         CountDownLatch latch = new CountDownLatch(symbols.size());
         AtomicLong lastUpdate = new AtomicLong();
+        int targetYear = 2025;
+        int targetMonth = 12;
+        String baseDir = "data";
         for (String s : symbols){
-            if (Main.TYPE_DATA == TypeData.ALL){
-                Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
-                PacketHandler.sendPacket(new RequestMarketClient(s, forTraining), MarketDataServer.class).thenAccept(packet -> {
-                    Vesta.MARKETS.put(s, packet.getMarket());
+            switch (data) {
+                case LOCAL_NETWORK -> {
+                    Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
+                    PacketHandler.sendPacket(new RequestMarketClient(s, true), MarketDataServer.class).thenAccept(packet -> {
+                        Vesta.MARKETS.put(s, packet.getMarket());
+                        latch.countDown();
+                        lastUpdate.set(packet.getLastUpdate());
+                        Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
+                    });
+                }
+                case BINANCE -> {
+                    long timeTotal = System.currentTimeMillis();
+                    Vesta.info("📡 Solicitud de dato a binance del mercado: " + s);
+                    String raw = Utils.getRequest(Utils.BASE_URL_API + "klines" + "?symbol=" + s + "&interval=1m&limit=" + "1000");
+                    ObjectMapper mapper1 = new ObjectMapper();
+                    JsonNode root1;
+                    try {
+                        root1 = mapper1.readTree(raw);
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException(e);
+                    }
+                    ArrayDeque<CandleSimple> deque = new ArrayDeque<>();
+                    Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + "mb)");
+                    for (int i = 0; i < 1000; i++) {
+                        JsonNode kline = root1.get(i);
+
+                        double baseVolume = kline.get(5).asDouble();
+                        double quoteVolume = kline.get(7).asDouble();  // USDT
+                        double takerBuyQuoteVolume = kline.get(10).asDouble(); // USDT agresivo
+
+                        double sellQuoteVolume = quoteVolume - takerBuyQuoteVolume;
+                        double deltaUSDT = takerBuyQuoteVolume - sellQuoteVolume;
+                        double buyRatio = takerBuyQuoteVolume / quoteVolume;
+                        deque.add(new CandleSimple(
+                                kline.get(0).asLong(),
+                                kline.get(1).asDouble(), // open
+                                kline.get(2).asDouble(), // high
+                                kline.get(3).asDouble(), // low
+                                kline.get(4).asDouble(), // close
+                                new Volumen(quoteVolume, baseVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
+                    }
+                    ObjectMapper mapper2 = new ObjectMapper();
+                    JsonNode root2;
+                    try {
+                        root2 = mapper2.readTree(Utils.getRequest(Utils.BASE_URL_API + "trades" + "?symbol=" + s + "&limit=" + 800));
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException(e);
+                    }
+                    Deque<Trade> trades = new ArrayDeque<>();
+                    for (JsonNode trade : root2) {
+                        double quoteQty = trade.get("quoteQty").asDouble();
+                        double price = trade.get("price").asDouble();
+                        boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
+                        long id = trade.get("id").asLong();
+                        long time = trade.get("time").asLong();
+                        trades.add(new Trade(id, time, price, quoteQty, isBuyerMaker));
+                    }
+
+                    Market market = new Market(s);
+                    market.addCandles(deque);
+                    market.addTrade(trades);
+                    Vesta.MARKETS.put(s, market);
+                    Vesta.info("✅ Datos procesado de binance del mercado: %s ( %.2f s)", s, (float) (System.currentTimeMillis() - timeTotal) / 1000);
                     latch.countDown();
-                    lastUpdate.set(packet.getLastUpdate());
-                    Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
-                });
-            }else {
-                // dos semanas en minutos 20160
-                String url = Utils.BASE_URL_API + "klines" + "?symbol=" + s + "&interval=1m&limit=" + "20160";
-                long time = System.currentTimeMillis();
-                Vesta.info("📡 Solicitud de dato a binance del mercado: " + s + " (" + url + ")");
-                String raw = Utils.getRequest(url);
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode root;
-                try {
-                    root = mapper.readTree(raw);
-                } catch (JsonProcessingException e) {
-                    throw new RuntimeException(e);
                 }
-                ArrayDeque<CandleSimple> deque = new ArrayDeque<>();
-                Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + "mb)" );
-                for (int i = 0; i < 1000; i++) {
-                    JsonNode kline = root.get(i);
+                case CSV -> {
+                    long timeTotal = System.currentTimeMillis();
+                    Vesta.info("📂 Verificando caché local para: " + s);
 
-                    double baseVolume = kline.get(5).asDouble();
-                    double quoteVolume = kline.get(7).asDouble();  // USDT
-                    double takerBuyQuoteVolume = kline.get(10).asDouble(); // USDT agresivo
+                    // 1. Gestionar Klines (Descargar si no existe -> Cargar del disco)
+                    File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, targetMonth);
+                    List<CandleSimple> candles = parseKlinesFromFile(klineFile);
 
-                    double sellQuoteVolume = quoteVolume - takerBuyQuoteVolume;
-                    double deltaUSDT = takerBuyQuoteVolume - sellQuoteVolume;
-                    double buyRatio = takerBuyQuoteVolume / quoteVolume;
-                    deque.add(new CandleSimple(
-                            kline.get(0).asLong(),
-                            kline.get(1).asDouble(), // open
-                            kline.get(2).asDouble(), // high
-                            kline.get(3).asDouble(), // low
-                            kline.get(4).asDouble(), // close
-                            new Volumen(quoteVolume, baseVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
+                    // 2. Gestionar Trades (Descargar si no existe -> Cargar del disco)
+                    File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, targetMonth);
+                    List<Trade> trades = parseTradesFromFile(tradeFile);
+
+                    if (candles.isEmpty() || trades.isEmpty()) {
+                        Vesta.info("⚠️ Datos incompletos o corruptos para " + s);
+                        latch.countDown();
+                        return lastUpdate.get();
+                    }
+
+                    // 3. Lógica de CORTE (Sincronización de tiempos)
+                    long minTimeCandles = candles.get(0).openTime();
+                    long maxTimeCandles = candles.get(candles.size() - 1).openTime();
+
+                    trades.sort(Comparator.comparingLong(Trade::time));
+                    long minTimeTrades = trades.get(0).time();
+                    long maxTimeTrades = trades.get(trades.size() - 1).time();
+
+                    long commonStart = Math.max(minTimeCandles, minTimeTrades);
+                    long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
+
+                    Vesta.info("✂️ Ajustando " + s + " a ventana común: " + commonStart + " - " + commonEnd);
+
+                    Deque<CandleSimple> finalCandles = candles.stream()
+                            .filter(c -> c.openTime() >= commonStart && c.openTime() <= commonEnd)
+                            .collect(Collectors.toCollection(ArrayDeque::new));
+
+                    Deque<Trade> finalTrades = trades.stream()
+                            .filter(t -> t.time() >= commonStart && t.time() <= commonEnd)
+                            .collect(Collectors.toCollection(ArrayDeque::new));
+
+                    Market market = new Market(s);
+                    market.addCandles(finalCandles);
+                    market.addTrade(finalTrades);
+                    market.sortd();
+
+                    Vesta.MARKETS.put(s, market);
+                    lastUpdate.set(System.currentTimeMillis());
+
+                    Vesta.info("✅ Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
+                            s, finalCandles.size(), finalTrades.size(), (float) (System.currentTimeMillis() - timeTotal) / 1000);
+
+                    latch.countDown();
                 }
-                Market market = new Market(s);
-                market.addCandles(deque);
-                Vesta.MARKETS.put(s, market);
-                Vesta.info("✅ Datos procesado de binance del mercado: %s ( %.2f s)", s, (float) (System.currentTimeMillis() - time)/1000);
-                latch.countDown();
             }
         }
         latch.await();
         return lastUpdate.get();
     }
 
+    private static File ensureFileCached(String baseDir, String symbol, String type, int year, int month) throws IOException {
+        String monthStr = String.format("%02d", month);
+        // Nombre del archivo según convención de Binance
+        String fileName = String.format("%s-%s-%d-%s.zip", symbol, (type.equals("klines") ? "1m" : "trades"), year, monthStr);
 
-    public static long loadMarkets(boolean forTraining, String... symbols) throws InterruptedException {
-        return loadMarkets(forTraining, Arrays.asList(symbols));
+        // Estructura: ./data/ETHUSDT/klines/ETHUSDT-1m-2025-12.zip
+        File dir = new File(baseDir + File.separator + symbol + File.separator + type);
+        if (!dir.exists()) {
+            dir.mkdirs(); // Crea la estructura de carpetas si no existe
+        }
+
+        File targetFile = new File(dir, fileName);
+
+        if (targetFile.exists() && targetFile.length() > 0) {
+            // Vesta.info("   -> Usando caché local: " + targetFile.getPath());
+            return targetFile;
+        }
+
+        // Construir URL de descarga
+        String urlTypePath = type.equals("klines") ? "klines" : "trades"; // URL path segment
+        String urlInterval = type.equals("klines") ? "/1m" : ""; // Trades no tienen intervalo en la URL
+
+        String urlString = String.format("https://data.binance.vision/data/futures/um/monthly/%s/%s%s/%s",
+                urlTypePath, symbol, urlInterval, fileName);
+
+        Vesta.info("⬇️ Descargando nuevo archivo: " + fileName + " (" + urlString + ")");
+
+        try (InputStream in = new URL(urlString).openStream()) {
+            Files.copy(in, targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            // Si falla la descarga, borramos el archivo vacío/corrupto para no romper ejecuciones futuras
+            if(targetFile.exists()) targetFile.delete();
+            throw new IOException("Fallo al descargar " + urlString, e);
+        }
+
+        return targetFile;
+    }
+
+    private static List<CandleSimple> parseKlinesFromFile(File file) {
+        List<CandleSimple> list = new ArrayList<>();
+        if (!file.exists()) return list;
+
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(file))) { // CAMBIO: FileInputStream
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (!entry.isDirectory() && entry.getName().endsWith(".csv")) {
+                    BufferedReader br = new BufferedReader(new InputStreamReader(zis));
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        if(Character.isLetter(line.charAt(0))) continue; // Skip Header
+
+                        String[] p = line.split(",");
+                        // Parsing idéntico al anterior...
+                        double quoteVolume = Double.parseDouble(p[7]);
+                        double takerBuyQuoteVolume = Double.parseDouble(p[10]);
+
+                        list.add(new CandleSimple(
+                                Long.parseLong(p[0]), // Open time
+                                Double.parseDouble(p[1]), // Open
+                                Double.parseDouble(p[2]), // High
+                                Double.parseDouble(p[3]), // Low
+                                Double.parseDouble(p[4]), // Close
+                                new Volumen(quoteVolume, Double.parseDouble(p[5]), takerBuyQuoteVolume,
+                                        quoteVolume - takerBuyQuoteVolume,
+                                        takerBuyQuoteVolume - (quoteVolume - takerBuyQuoteVolume),
+                                        (quoteVolume == 0) ? 0 : takerBuyQuoteVolume / quoteVolume)
+                        ));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Vesta.info("Error leyendo Klines locales: " + e.getMessage());
+        }
+        return list;
+    }
+
+    private static List<Trade> parseTradesFromFile(File file) {
+        List<Trade> list = new ArrayList<>();
+        if (!file.exists()) return list;
+
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(file))) { // CAMBIO: FileInputStream
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (!entry.isDirectory() && entry.getName().endsWith(".csv")) {
+                    BufferedReader br = new BufferedReader(new InputStreamReader(zis));
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        if(line.isEmpty() || Character.isLetter(line.charAt(0))) continue; // Skip Header
+
+                        String[] p = line.split(",");
+                        list.add(new Trade(
+                                Long.parseLong(p[0]), // id
+                                Long.parseLong(p[4]), // time
+                                Double.parseDouble(p[1]), // price
+                                Double.parseDouble(p[2]), // qty
+                                Boolean.parseBoolean(p[5]) // isBuyerMaker
+                        ));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Vesta.info("Error leyendo Trades locales: " + e.getMessage());
+        }
+        return list;
+    }
+
+
+    public static long loadMarkets(DataSource data, String... symbols) throws InterruptedException, IOException {
+        return loadMarkets(data, Arrays.asList(symbols));
     }
 
     static {

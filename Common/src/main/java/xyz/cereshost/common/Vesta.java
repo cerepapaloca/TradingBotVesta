@@ -20,8 +20,17 @@ public class Vesta {
         LOGGER.info(message);
     }
 
+    public static void waring(String message, Object... o) {
+        LOGGER.warn(String.format(message, o));
+    }
+
+
     public static void waring(String message) {
         LOGGER.warn(message);
+    }
+
+    public static void error(String message, Object... o) {
+        LOGGER.error(String.format(message, o));
     }
 
     public static void error(String message) {

@@ -1,6 +1,7 @@
 package xyz.cereshost.builder;
 
 import ai.djl.util.Pair;
+import lombok.Getter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.ChartUtils;
@@ -15,14 +16,16 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 public class BuilderData {
 
 
-    public static @NotNull Pair<float[][][], float[]> fullBuild(@NotNull List<String> symbols) {
+    public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols) {
         List<float[][][]> allX = new ArrayList<>();
-        List<float[]> allY = new ArrayList<>();
+        List<float[][]> allY = new ArrayList<>();
 
         for (String symbol : symbols) {
             try {
                 Vesta.info("Procesando símbolo (Relativo): " + symbol);
                 List<Candle> candles = BuilderData.to1mCandles(Vesta.MARKETS.get(symbol));
+                ChartUtils.CandleChartUtils.showCandleChart("Mercado", candles, symbol);
+
                 candles.sort(Comparator.comparingLong(Candle::openTime));
 
                 // Necesitamos al menos LOOK_BACK + 2 (uno extra para el cálculo relativo inicial)
@@ -31,9 +34,9 @@ public class BuilderData {
                     continue;
                 }
 
-                Pair<float[][][], float[]> pair = BuilderData.build(candles, LOOK_BACK);
+                Pair<float[][][], float[][]> pair = BuilderData.build(candles, LOOK_BACK);
                 float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
-                float[] yraw = pair.getValue();
+                float[][] yraw = pair.getValue();
 
                 if (Xraw.length > 0) {
                     allX.add(Xraw);
@@ -56,12 +59,12 @@ public class BuilderData {
         int features = allX.get(0)[0][0].length;
 
         float[][][] X_final = new float[totalSamples][seqLen][features];
-        float[] y_final = new float[totalSamples];
+        float[][] y_final = new float[totalSamples][2];
 
         int currentIdx = 0;
         for (int i = 0; i < allX.size(); i++) {
             float[][][] xPart = allX.get(i);
-            float[] yPart = allY.get(i);
+            float[][] yPart = allY.get(i);
             int len = xPart.length;
 
             System.arraycopy(xPart, 0, X_final, currentIdx, len);
@@ -77,15 +80,16 @@ public class BuilderData {
      * Construye tensores basados EXCLUSIVAMENTE en cambios relativos (Log Returns)
      */
     @Contract("_, _ -> new")
-    public static @NotNull Pair<float[][][], float[]> build(@NotNull List<Candle> candles, int lookBack) {
+    public static @NotNull Pair<float[][][], float[][]> build(@NotNull List<Candle> candles, int lookBack) {
         // Empezamos desde 1 porque necesitamos candle[i-1] para calcular el cambio relativo
         int n = candles.size();
         int samples = n - lookBack - 1; // -1 extra por el cálculo de retorno futuro
 
-        if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0]);
+        if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0][0]);
+        int dynamicFeatures = extractFeatures(candles.get(1), candles.get(0)).length;
 
         float[][][] X = new float[samples][lookBack][features];
-        float[] y = new float[samples];
+        float[][] y = new float[samples][2];
 
         // i representa el inicio de la ventana de predicción
         // Empezamos en 1 para garantizar que siempre exista una vela anterior 'prev'
@@ -95,13 +99,65 @@ public class BuilderData {
                 X[i][j] = extractFeatures(candles.get(i + j + 1), candles.get(i + j));
             }
 
-            // TARGET (Y): Log return de la SIGUIENTE vela (t+1)
+            for (int j = 0; j < lookBack; j++) {
+                X[i][j] = extractFeatures(candles.get(i + j + 1), candles.get(i + j));
+            }
+
+            // TARGETS: TP y SL para la SIGUIENTE vela (t+1)
             int targetIdx = i + lookBack + 1;
             Candle targetCandle = candles.get(targetIdx);
             Candle lastInputCandle = candles.get(i + lookBack);
 
-            // Predicción: ¿Cuánto cambia el precio logarítmicamente?
-            y[i] = (float) Math.log(targetCandle.close() / lastInputCandle.close());
+            double prevClose = lastInputCandle.close();
+
+            double currentOpen = targetCandle.open();
+            double currentHigh = targetCandle.high();
+            double currentLow = targetCandle.low();
+            double currentClose = targetCandle.close();
+
+            // Para LONG:
+            // - TP: máximo movimiento positivo (high vs entrada)
+            // - SL: máximo movimiento negativo (low vs entrada)
+            // Para SHORT:
+            // - TP: máximo movimiento negativo (low vs entrada)
+            // - SL: máximo movimiento positivo (high vs entrada)
+
+            // Calculamos ambos movimientos absolutos
+            double longTP = Math.log(currentClose / prevClose);  // Positivo
+            double longSL = Math.log(currentLow / prevClose);   // Negativo (convertir a positivo)
+            double shortTP = Math.log(currentClose / prevClose);  // Negativo (convertir a positivo)
+            double shortSL = Math.log(currentHigh / prevClose); // Positivo
+
+            // Determinamos si la vela es alcista o bajista
+            boolean isBullish = currentClose > currentOpen;
+
+            if (isBullish) {
+                // Vela alcista: LONG es más probable
+                // TP = movimiento positivo máximo (high - entrada)
+                // SL = movimiento negativo máximo (entrada - low)
+                y[i][0] = (float) Math.max(0, longTP);      // TP (positivo)
+                y[i][1] = (float) Math.abs(Math.min(0, longSL)); // SL (valor absoluto del negativo)
+            } else {
+                // Vela bajista: SHORT es más probable
+                // TP = movimiento negativo máximo (entrada - low)
+                // SL = movimiento positivo máximo (high - entrada)
+                y[i][0] = (float) Math.abs(Math.min(0, shortTP)); // TP (valor absoluto del negativo)
+                y[i][1] = (float) Math.max(0, shortSL);      // SL (positivo)
+            }
+
+            // Si los valores son NaN o infinitos, usar valores por defecto seguros
+            if (Float.isNaN(y[i][0]) || Float.isInfinite(y[i][0])) {
+                y[i][0] = 0.001f; // 0.1% por defecto
+            }
+            if (Float.isNaN(y[i][1]) || Float.isInfinite(y[i][1])) {
+                y[i][1] = 0.001f; // 0.1% por defecto
+            }
+
+//            // Asegurar que TP sea al menos el doble que SL (ratio 2:1)
+//            // Esto incentiva al modelo a aprender ratios más rentables
+//            if (y[i][0] < y[i][1] * 2) {
+//                y[i][0] = y[i][1] * 2;
+//            }
         }
         return new Pair<>(X, y);
     }
@@ -257,11 +313,11 @@ public class BuilderData {
             ));
             idx++;
         }
-        ChartUtils.CandleChartUtils.showCandleChart("Mercado", candles, market.getSymbol());
         return candles;
     }
 
-    private static int features = 0;
+    @Getter
+    private static int features;
 
     public static float @NotNull [] extractFeatures(@NotNull Candle curr, @NotNull Candle prev) {
 
@@ -274,7 +330,7 @@ public class BuilderData {
         fList.add((float) Math.log(curr.low() / prevClose));
         fList.add((float) Math.log(curr.close() / prevClose));
 
-        fList.add((float) Math.log(curr.amountTrades()));
+//        fList.add((float) Math.log(curr.amountTrades()));
 
         // Volúmenes relativos
         fList.add((float) Math.log(curr.volumeBase() / prevClose));
@@ -287,8 +343,8 @@ public class BuilderData {
         fList.add((totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol));
         fList.add((float) curr.buyRatio());
 
-        fList.add((float) Math.log(curr.bidLiquidity() / prevClose));
-        fList.add((float) Math.log(curr.askLiquidity() / prevClose));
+//        fList.add((float) Math.log(curr.bidLiquidity() / prevClose));
+//        fList.add((float) Math.log(curr.askLiquidity() / prevClose));
 //
 //        // 12-14: Métricas de Orderbook relativas
 //        fList.add((float) curr.depthImbalance());
