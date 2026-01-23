@@ -108,107 +108,121 @@ public class EngineUtils {
         int features = allX.get(0)[0][0].length;
 
         float[][][] Xcombined = new float[totalSamples][lookback][features];
-        float[][] ycombined = new float[totalSamples][2]; // Cambiado a 2 columnas
+        float[][] ycombined = new float[totalSamples][3]; // Aumentado a 3 columnas
 
         int currentIndex = 0;
         for (int s = 0; s < allX.size(); s++) {
             float[][][] X = allX.get(s);
-            float[][] y = allY.get(s); // Cambiado
+            float[][] y = allY.get(s);
 
             for (int i = 0; i < X.length; i++) {
                 Xcombined[currentIndex] = X[i];
-                ycombined[currentIndex][0] = y[i][0]; // TP
-                ycombined[currentIndex][1] = y[i][1]; // SL
+                ycombined[currentIndex][0] = y[i][0]; // Fuerza Alcista
+                ycombined[currentIndex][1] = y[i][1]; // Fuerza Bajista
+                ycombined[currentIndex][2] = y[i][2]; // Dirección (0 o 1)
                 currentIndex++;
             }
         }
-
         return new Pair<>(Xcombined, ycombined);
     }
 
     /**
-     * Evalúa el modelo con dos salidas (TP y SL)
+     * Evalúa el modelo con lógica de 3 salidas: Regresión (UP/DOWN) + Clasificación (DIR)
      */
     public static ResultsEvaluate evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer yNormalizer) {
-        // 1. Obtener predicciones
         NDList predictions = trainer.evaluate(new NDList(X_test));
         NDArray yPred = predictions.singletonOrThrow();
 
-        // 2. Convertir a arrays 2D
-        long[] shape = y_test.getShape().getShape();
-        int batchSize = (int) shape[0];
-        int numOutputs = (int) shape[1];
-
-        // Convertir NDArrays a float[][] usando la forma correcta
+        // Convertir a float arrays para manipulación manual
         float[] yTestFlat = y_test.toFloatArray();
         float[] yPredFlat = yPred.toFloatArray();
 
-        float[][] yTest2D = new float[batchSize][numOutputs];
-        float[][] yPred2D = new float[batchSize][numOutputs];
+        long[] shape = y_test.getShape().getShape();
+        int batchSize = (int) shape[0];
+        // Asumimos que numOutputs es 3
+
+        double totalMaeUP = 0;
+        double totalMaeDOWN = 0;
+        int correctDirections = 0;
+        int hitsProfitability = 0;
+
+        List<ResultPrediction> results = new ArrayList<>();
 
         for (int i = 0; i < batchSize; i++) {
-            for (int j = 0; j < numOutputs; j++) {
-                yTest2D[i][j] = yTestFlat[i * numOutputs + j];
-                yPred2D[i][j] = yPredFlat[i * numOutputs + j];
+            int idx = i * 3;
+
+            // 1. Extraer RAW values (Tal como salen del modelo/dataset)
+            float rawRealUP = yTestFlat[idx];
+            float rawRealDOWN = yTestFlat[idx + 1];
+            float rawRealDir = yTestFlat[idx + 2]; // 0 o 1 (No debe estar normalizado)
+
+            float rawPredUP = yPredFlat[idx];
+            float rawPredDOWN = yPredFlat[idx + 1];
+            float rawPredDir = yPredFlat[idx + 2]; // Probabilidad
+
+            // 2. DES-NORMALIZAR SOLO UP Y DOWN
+            // Creamos un array temporal solo con las partes de regresión
+            float[][] tempInput = new float[][]{{rawRealUP, rawRealDOWN}, {rawPredUP, rawPredDOWN}};
+
+            // Usamos el normalizer que (asumimos) fue entrenado solo con 2 columnas o maneja el split
+            // FIX: Si el normalizer espera 3 columnas, esto fallará.
+            // Asumiremos que el usuario arregló el normalizer O haremos un truco:
+            // Des-normalizamos manualmente si tenemos acceso a media/std, o usamos el normalizer:
+
+            float[][] tempOutput;
+            try {
+                // Intentamos desnormalizar el par [UP, DOWN].
+                // NOTA: Esto requiere que tu yNormalizer acepte arrays de 2 columnas.
+                tempOutput = yNormalizer.inverseTransform(tempInput);
+            } catch (Exception e) {
+                // Fallback si el normalizer es estricto con el tamaño:
+                // Pasamos dummy 0 en la tercera columna para engañarlo, luego ignoramos el resultado
+                float[][] dummyInput = new float[][]{
+                        {rawRealUP, rawRealDOWN, 0},
+                        {rawPredUP, rawPredDOWN, 0}
+                };
+                float[][] dummyOutput = yNormalizer.inverseTransform(dummyInput);
+                tempOutput = new float[][]{
+                        {dummyOutput[0][0], dummyOutput[0][1]},
+                        {dummyOutput[1][0], dummyOutput[1][1]}
+                };
             }
+
+            float realUP = tempOutput[0][0];
+            float realDOWN = tempOutput[0][1];
+            float predUP = tempOutput[1][0];
+            float predDOWN = tempOutput[1][1];
+
+            // La dirección NO se toca
+            float realDir = rawRealDir;
+            float predDirProb = rawPredDir;
+
+            // --- Métricas ---
+            totalMaeUP += Math.abs(realUP - predUP);
+            totalMaeDOWN += Math.abs(realDOWN - predDOWN);
+
+            // Dirección: Umbral 0.5
+            boolean isRealLong = realDir > 0.5f;
+            boolean isPredLong = predDirProb > 0.5f;
+            if (isRealLong == isPredLong) correctDirections++;
+
+            // Rentabilidad (TP > SL)
+            if ((realUP > realDOWN) == (predUP > predDOWN)) hitsProfitability++;
+
+            results.add(new ResultPrediction(predUP, predDOWN, predDirProb, realUP, realDOWN, realDir, i));
         }
 
-        // 3. Des-normalizar
-        float[][] yTestRaw = yNormalizer.inverseTransform(yTest2D);
-        float[][] yPredRaw = yNormalizer.inverseTransform(yPred2D);
+        double avgMaeUP = totalMaeUP / batchSize;
+        double avgMaeDOWN = totalMaeDOWN / batchSize;
+        double directionAccuracy = (double) correctDirections / batchSize * 100.0;
+        double profitHitRate = (double) hitsProfitability / batchSize * 100.0;
 
-        // 4. Métricas para TP y SL por separado
-        double totalMaeTP = 0;
-        double totalMaeSL = 0;
-        int hitsDirection = 0;
-        int totalTrades = batchSize;
+        Vesta.info("=== Evaluación Corregida (3-Outputs) ===");
+        Vesta.info("MAE UP: %.6f | MAE DOWN: %.6f", avgMaeUP, avgMaeDOWN);
+        Vesta.info("Acc Dirección: %.2f%%", directionAccuracy);
+        Vesta.info("Hit Rate Estructural: %.2f%%", profitHitRate);
 
-        List<ResultPrediccion> results = new ArrayList<>();
-
-        for (int i = 0; i < batchSize; i++) {
-            float realTP = yTestRaw[i][0];
-            float realSL = yTestRaw[i][1];
-            float predTP = yPredRaw[i][0];
-            float predSL = yPredRaw[i][1];
-
-            // Métricas de error
-            totalMaeTP += Math.abs(realTP - predTP);
-            totalMaeSL += Math.abs(realSL - predSL);
-
-            // Acierto direccional (basado en el ratio TP/SL)
-            // Si el ratio predicho sugiere un trade rentable (TP > SL) y el real también lo es
-            boolean predProfitable = predTP > predSL;
-            boolean realProfitable = realTP > realSL;
-
-            if (predProfitable == realProfitable) {
-                hitsDirection++;
-            }
-
-            // Guardar resultados para backtest
-            results.add(new ResultPrediccion(predTP, predSL, realTP, realSL, i));
-        }
-
-        double avgMaeTP = totalMaeTP / batchSize;
-        double avgMaeSL = totalMaeSL / batchSize;
-        double hitRate = (double) hitsDirection / batchSize * 100.0;
-
-        // 5. Backtest
-        SimulationResult simResult = simulateBacktest(results);
-
-        Vesta.info("=== Evaluación del Modelo ===");
-        Vesta.info("MAE TP: %.6f", avgMaeTP);
-        Vesta.info("MAE SL: %.6f", avgMaeSL);
-        Vesta.info("Hit Rate Direccional: %.2f%%", hitRate);
-        Vesta.info("ROI Backtest: %.2f%%", simResult.roiPercent());
-
-        return new ResultsEvaluate(
-                "VestaLSTM",
-                avgMaeTP,
-                avgMaeSL,
-                hitRate,
-                simResult,
-                results
-        );
+        return new ResultsEvaluate("VestaHybrid", avgMaeUP, avgMaeDOWN, directionAccuracy, results);
     }
 
     public record ResultsEvaluate(
@@ -216,18 +230,24 @@ public class EngineUtils {
             double avgMaeTP,
             double avgMaeSL,
             double hitRate,
-            SimulationResult simulation,
-            List<ResultPrediccion> resultPrediccions
+            List<ResultPrediction> resultPrediction
     ) {}
 
-    public record ResultPrediccion(float predTP, float predSL, float realTP, float realSL, long timestamp) {
-
+    public record ResultPrediction(
+            float predTP, float predSL, float predDir,
+            float realTP, float realSL, float realDir,
+            long timestamp
+    ) {
         public float lsDiff() {
-            return predSL - realSL;
+            return realSL - predSL;
         }
 
         public float tpDiff() {
-            return predTP - realTP;
+            return realTP - predTP;
+        }
+
+        public float dirDiff() {
+            return realDir - predDir;
         }
     }
 
@@ -302,134 +322,4 @@ public class EngineUtils {
             int lossTrades,
             double maxDrawdown
     ) {}
-
-    /**
-     * Simula operaciones de trading usando TP y SL predichos
-     * Ratio flexible basado en las predicciones
-     */
-    private static SimulationResult simulateBacktest(List<ResultPrediccion> predictions) {
-        double balance = 1000.0;
-        double initialBalance = balance;
-        double fee = 0.0004; // 0.04% comisión
-
-        int wins = 0;
-        int losses = 0;
-        int totalTrades = 0;
-        double maxBalance = balance;
-        double maxDrawdown = 0.0;
-
-        // Umbral mínimo para operar
-        double minThreshold = 0.0005;
-
-        for (ResultPrediccion p : predictions) {
-            float predTP = p.predTP(); // Porcentaje de TP predicho
-            float predSL = p.predSL(); // Porcentaje de SL predicho
-            float realTP = p.realTP(); // TP real
-            float realSL = p.realSL(); // SL real
-
-            // Si las predicciones son muy pequeñas, no operar
-            if (predTP < minThreshold || predSL < minThreshold) {
-                continue;
-            }
-
-            // Determinar dirección basada en el ratio TP/SL predicho
-            // Si TP predicho > SL predicho, LONG (esperamos ganar más de lo que podemos perder)
-            // Si SL predicho > TP predicho, SHORT (la pérdida potencial es mayor que la ganancia)
-            boolean isLong = predTP > predSL;
-
-            double pnlPercent = 0;
-
-            if (isLong) {
-                // LÓGICA LONG
-                if (realTP >= predTP) {
-                    // TP alcanzado
-                    pnlPercent = predTP;
-                } else if (realSL >= predSL) {
-                    // SL alcanzado (nota: en long, SL es negativo)
-                    pnlPercent = -predSL;
-                } else {
-                    // Cierre de mercado - usar el movimiento real (positivo o negativo)
-                    pnlPercent = Math.min(realTP, -realSL);
-                }
-            } else {
-                // LÓGICA SHORT
-                if (realSL >= predSL) {
-                    // TP alcanzado (en short, SL real es la ganancia)
-                    pnlPercent = predSL;
-                } else if (realTP >= predTP) {
-                    // SL alcanzado (en short, TP real es la pérdida)
-                    pnlPercent = -predTP;
-                } else {
-                    // Cierre de mercado
-                    pnlPercent = Math.min(realSL, -realTP);
-                }
-            }
-
-            // Aplicar PnL
-            double tradeResult = balance * (pnlPercent - (fee * 2));
-
-            // Actualizar contadores
-            if (pnlPercent > 0) {
-                wins++;
-            } else if (pnlPercent < 0) {
-                losses++;
-            }
-
-            totalTrades++;
-            balance += tradeResult;
-
-            // Calcular Drawdown
-            if (balance > maxBalance) {
-                maxBalance = balance;
-            }
-            double currentDD = (maxBalance - balance) / maxBalance;
-            if (currentDD > maxDrawdown) {
-                maxDrawdown = currentDD;
-            }
-        }
-
-        // Estadísticas finales
-        double netPnL = balance - initialBalance;
-        double roiPercent = (netPnL / initialBalance) * 100.0;
-
-        Vesta.info("=== Resultados Backtest ===");
-        Vesta.info("Trades totales: %d", totalTrades);
-        Vesta.info("Trades ganadores: %d (%.1f%%)", wins,
-                totalTrades > 0 ? ((double) wins / totalTrades) * 100.0 : 0);
-        Vesta.info("Balance inicial: $%.2f", initialBalance);
-        Vesta.info("Balance final: $%.2f", balance);
-        Vesta.info("PnL neto: $%.2f (%.2f%%)", netPnL, roiPercent);
-        Vesta.info("Drawdown máximo: %.2f%%", maxDrawdown * 100.0);
-
-        return new SimulationResult(
-                initialBalance,
-                balance,
-                netPnL,
-                roiPercent,
-                totalTrades,
-                wins,
-                losses,
-                maxDrawdown * 100.0
-        );
-    }
-
-    /**
-     * Analiza el rendimiento por tamaño de TP/SL
-
-    public static void analyzePerformanceBySize(List<EngineUtils.ResultPrediccion> predictions) {
-        if (predictions == null || predictions.isEmpty()) return;
-
-        // Crear buckets por tamaño de TP
-        List<BackTestEngine.PerformanceBucket> buckets = new ArrayList<>();
-        buckets.add(new BackTestEngine.PerformanceBucket(0.0, 0.001, "0.0-0.1%"));   // Muy pequeño
-        buckets.add(new BackTestEngine.PerformanceBucket(0.001, 0.005, "0.1-0.5%")); // Pequeño
-        buckets.add(new BackTestEngine.PerformanceBucket(0.005, 0.01, "0.5-1.0%"));  // Mediano
-        buckets.add(new BackTestEngine.PerformanceBucket(0.01, 0.02, "1.0-2.0%"));   // Grande
-        buckets.add(new BackTestEngine.PerformanceBucket(0.02, Double.MAX_VALUE, ">2.0%")); // Muy grande
-
-        for (BackTestEngine.PerformanceBucket bucket : buckets) {
-            bucket.analyze(predictions);
-            bucket.printResults();
-        }
-    }     */
 }

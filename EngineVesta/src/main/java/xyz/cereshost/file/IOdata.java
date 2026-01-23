@@ -51,8 +51,7 @@ public class IOdata {
     public static long loadMarkets(DataSource data, List<String> symbols) throws InterruptedException, IOException {
         CountDownLatch latch = new CountDownLatch(symbols.size());
         AtomicLong lastUpdate = new AtomicLong();
-        int targetYear = 2025;
-        int targetMonth = 12;
+
         String baseDir = "data";
         for (String s : symbols){
             switch (data) {
@@ -121,16 +120,19 @@ public class IOdata {
                     latch.countDown();
                 }
                 case CSV -> {
+                    int targetYear = 2025;
+                    int endtMonth = 12;
+                    int startMonth = 11;
                     long timeTotal = System.currentTimeMillis();
                     Vesta.info("📂 Verificando caché local para: " + s);
-
-                    // 1. Gestionar Klines (Descargar si no existe -> Cargar del disco)
-                    File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, targetMonth);
-                    List<CandleSimple> candles = parseKlinesFromFile(klineFile);
-
-                    // 2. Gestionar Trades (Descargar si no existe -> Cargar del disco)
-                    File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, targetMonth);
-                    List<Trade> trades = parseTradesFromFile(tradeFile);
+                    Deque<CandleSimple> candles = new ArrayDeque<>();
+                    Deque<Trade> trades = new ArrayDeque<>();
+                    for (int i = startMonth; i <= endtMonth; i++) {
+                        File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, startMonth);
+                        candles.addAll(parseKlinesFromFile(klineFile));
+                        File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, startMonth);
+                        trades.addAll(parseTradesFromFile(tradeFile));
+                    }
 
                     if (candles.isEmpty() || trades.isEmpty()) {
                         Vesta.info("⚠️ Datos incompletos o corruptos para " + s);
@@ -139,12 +141,11 @@ public class IOdata {
                     }
 
                     // 3. Lógica de CORTE (Sincronización de tiempos)
-                    long minTimeCandles = candles.get(0).openTime();
-                    long maxTimeCandles = candles.get(candles.size() - 1).openTime();
+                    long minTimeCandles = candles.getFirst().openTime();
+                    long maxTimeCandles = candles.getLast().openTime();
 
-                    trades.sort(Comparator.comparingLong(Trade::time));
-                    long minTimeTrades = trades.get(0).time();
-                    long maxTimeTrades = trades.get(trades.size() - 1).time();
+                    long minTimeTrades = trades.getFirst().time();
+                    long maxTimeTrades = trades.getLast().time();
 
                     long commonStart = Math.max(minTimeCandles, minTimeTrades);
                     long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
@@ -154,11 +155,11 @@ public class IOdata {
                     Deque<CandleSimple> finalCandles = candles.stream()
                             .filter(c -> c.openTime() >= commonStart && c.openTime() <= commonEnd)
                             .collect(Collectors.toCollection(ArrayDeque::new));
-
+                    candles.clear();
                     Deque<Trade> finalTrades = trades.stream()
                             .filter(t -> t.time() >= commonStart && t.time() <= commonEnd)
                             .collect(Collectors.toCollection(ArrayDeque::new));
-
+                    trades.clear(); // Esto puede pesar más 20GB de RAM
                     Market market = new Market(s);
                     market.addCandles(finalCandles);
                     market.addTrade(finalTrades);

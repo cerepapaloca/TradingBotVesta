@@ -114,24 +114,22 @@ public class PredictionEngine {
             var parameterStore = new ai.djl.training.ParameterStore(manager, false);
             NDList output = block.forward(parameterStore, new NDList(inputArray), false);
 
-            // 4. Obtener resultado (ahora con 2 salidas)
             NDArray prediction = output.singletonOrThrow();
-            // El modelo debe tener salida [batch_size, 2]
             float[] normalizedOutput = prediction.toFloatArray();
 
             // Verificar la forma de la salida
             long[] shape = prediction.getShape().getShape();
-            if (shape[shape.length - 1] != 2) {
-                throw new RuntimeException("El modelo debe tener 2 salidas (TP y SL). Forma actual: " + prediction.getShape());
+            if (shape[shape.length - 1] != 3) {
+                throw new RuntimeException("El modelo debe tener 3 salidas (TP, SL, Dirección). Forma actual: " + prediction.getShape());
             }
 
             // Reorganizar el array plano en [batch_size, 2]
             int batch = (int) shape[0];
-            float[][] output2D = new float[batch][2];
+            float[][] output2D = new float[batch][3];
 
             for (int i = 0; i < batch; i++) {
-                for (int j = 0; j < 2; j++) {
-                    output2D[i][j] = normalizedOutput[i * 2 + j];
+                for (int j = 0; j < 3; j++) {
+                    output2D[i][j] = normalizedOutput[i * 3 + j];
                 }
             }
 
@@ -142,7 +140,7 @@ public class PredictionEngine {
         } catch (Exception e) {
             Vesta.error("Error en predictRaw: " + e.getMessage());
             e.printStackTrace();
-            return new float[]{0f, 0f};
+            return new float[]{0f, 0f, 0f};
         }
     }
 
@@ -163,71 +161,61 @@ public class PredictionEngine {
         float[][][] XWithSymbol = BuilderData.addSymbolFeature(X, symbol);
 
         // Inferencia
-        float[] predictions = predictRaw(XWithSymbol);
+        float[] rawPredictions = predictRaw(XWithSymbol); // Output del modelo
 
-        // INTERPRETACIÓN CORREGIDA:
-        // predictions[0] = Fuerza Alcista (log return positivo para LONG, negativo para SHORT)
-        // predictions[1] = Fuerza Bajista (log return positivo para SL en LONG, negativo para TP en SHORT)
+        // 2. Des-normalización SELECTIVA
+        // Extraemos solo TP(0) y SL(1) para el normalizador
+        float[][] tempInput = new float[][]{{rawPredictions[0], rawPredictions[1], 0.0f}};
+        // Nota: Agregamos 0.0f dummy al final por si el normalizer exige input de tamaño 3.
 
-        // Pero el modelo solo fue entrenado con valores positivos, así que ambos son positivos
-        // Necesitamos determinar la dirección de otra manera
+        float[][] denormalized = yNormalizer.inverseTransform(tempInput);
 
-        // Obtener precio actual
+        float upForce = denormalized[0][0];   // TP real
+        float downForce = denormalized[0][1]; // SL real
+        float directionProb = rawPredictions[2]; // Probabilidad RAW (0 a 1) - NO TOCAR
+
+        // 3. Lógica de Negocio
         float currentPrice = (float) subList.get(subList.size() - 1).close();
-
-        // ESTRATEGIA 1: Usar la tendencia reciente para decidir dirección
-        // Calcular tendencia de las últimas N velas
-        int trendPeriod = Math.min(10, subList.size() - 1);
-        double trend = 0.0;
-        for (int i = subList.size() - trendPeriod - 1; i < subList.size() - 1; i++) {
-            trend += Math.log(subList.get(i + 1).close() / subList.get(i).close());
-        }
-
-        Operation direction;
+        DireccionOperation direction;
         float tpLogReturn, slLogReturn;
-        float tpPrice, slPrice;
 
-        if (trend > 0) {
-            // Tendencia alcista -> LONG
-            direction = Operation.LONG;
+        // Filtro Híbrido: Fuerza + Probabilidad
+        // Solo operamos si la fuerza acompaña a la probabilidad
+        boolean signalLong = directionProb > 0.03f; // 55% confianza
+        boolean signalShort = directionProb < -0.03f;
 
-            // Para LONG: predictions[0] es TP (alcista), predictions[1] es SL (bajista)
-            tpLogReturn = predictions[0];  // Log return positivo
-            slLogReturn = predictions[1];  // Log return positivo (pero se usará negativo)
-
-            tpPrice = (float) (currentPrice * Math.exp(tpLogReturn));
-            slPrice = (float) (currentPrice * Math.exp(-slLogReturn)); // SL por debajo
+        if (signalLong) {
+            direction = DireccionOperation.LONG;
+            tpLogReturn = upForce;
+            slLogReturn = downForce;
+        } else if (signalShort) {
+            direction = DireccionOperation.SHORT;
+            tpLogReturn = downForce;
+            slLogReturn = upForce;
         } else {
-            // Tendencia bajista -> SHORT
-            direction = Operation.SHORT;
-
-            // Para SHORT: predictions[0] es SL (alcista), predictions[1] es TP (bajista)
-            // Intercambiamos porque en SHORT el TP está abajo y el SL arriba
-            slLogReturn = predictions[0];  // SL por encima (positivo)
-            tpLogReturn = predictions[1];  // TP por debajo (positivo, pero se usará negativo)
-
-            tpPrice = (float) (currentPrice * Math.exp(-tpLogReturn)); // TP por debajo
-            slPrice = (float) (currentPrice * Math.exp(slLogReturn));  // SL por encima
+            direction = DireccionOperation.NEUTRAL;
+            tpLogReturn = 0;
+            slLogReturn = 0;
         }
 
-        // Ratio: Cuánto espero ganar (TP) vs cuánto espero perder (SL)
+        // Cálculos de precios finales
+        float tpPrice = (float) (currentPrice * Math.exp(direction.equals(DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
+        float slPrice = (float) (currentPrice * Math.exp(direction.equals(DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
+
+        // Fix visual para Neutral
+        //if(direction.equals(DireccionOperation.NEUTRAL)) { tpPrice = currentPrice; slPrice = currentPrice; }
+
         float ratio = slLogReturn > 0 ? tpLogReturn / slLogReturn : 0;
 
         return new PredictionResultTP_SL(
-                currentPrice,
-                tpPrice,
-                slPrice,
-                tpLogReturn,
-                slLogReturn,
-                direction,
-                ratio
+                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, direction, ratio
         );
     }
 
-    public enum Operation{
+    public enum DireccionOperation {
         SHORT,
         LONG,
-        DOJI
+        NEUTRAL
     }
 
     public record PredictionResultTP_SL(
@@ -236,7 +224,7 @@ public class PredictionEngine {
             float slPrice,       // Precio de Stop Loss
             float tpLogReturn,   // Log return para TP (positivo)
             float slLogReturn,   // Log return para SL (positivo)
-            Operation direction,    // "LONG" o "SHORT"
+            DireccionOperation direction,    // "LONG" o "SHORT"
             float tpSlRatio      // Ratio TP/SL (idealmente > 2)
     ) {
         public float getTpDistance() {
@@ -255,8 +243,12 @@ public class PredictionEngine {
             return (float) ((Math.exp(slLogReturn) - 1.0) * 100.0);
         }
 
+        public float percentToPrice(float p) {
+            return currentPrice * p;
+        }
+
         public boolean isProfitableSetup() {
-            return tpSlRatio >= 1.0f;
+            return tpSlRatio <= 0.5f;
         }
     }
 

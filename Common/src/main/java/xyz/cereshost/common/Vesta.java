@@ -11,7 +11,11 @@ public class Vesta {
 
     public static final ConcurrentHashMap<String, Market> MARKETS = new ConcurrentHashMap<>();
     private static final Logger LOGGER = LogManager.getLogger(Vesta.class);
-    public static final List<String> MARKETS_NAMES = List.of("BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT");
+    public static final List<String> MARKETS_NAMES = List.of(
+            "BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT", "DOGEUSDT",
+            "BTCUSDC", "ETHUSDC", "XRPUSDC", "BNBUSDC", "SOLUSDC", "DOGEUSDC"
+
+    );
 
     public static void info(String message, Object... o) {
         LOGGER.info(String.format(message, o));

@@ -44,10 +44,10 @@ public class Main {
 
         EXECUTOR.scheduleAtFixedRate(() -> {
             for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addCandles(BinanceAPI.getCandleAndVolumen(symbol));
-        }, 0, 60, TimeUnit.SECONDS);
+        }, 0, 5, TimeUnit.MINUTES);
         EXECUTOR.scheduleAtFixedRate(() -> {
             for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addDepth(BinanceAPI.getDepth(symbol));
-        }, 0, 5, TimeUnit.SECONDS);
+        }, 0, 10, TimeUnit.SECONDS);
         EXECUTOR.scheduleAtFixedRate(() -> {
             for (String symbol : Vesta.MARKETS_NAMES) Vesta.MARKETS.computeIfAbsent(symbol, Market::new).addTrade(BinanceAPI.getTrades(symbol));
         }, 0, 30, TimeUnit.SECONDS);

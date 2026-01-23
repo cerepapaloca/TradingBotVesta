@@ -13,7 +13,6 @@ import org.jfree.data.xy.OHLCDataset;
 import org.jfree.data.xy.XYSeriesCollection;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
-import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.engine.EngineUtils;
 
 import javax.swing.*;
@@ -254,7 +253,7 @@ public class ChartUtils {
 
                 for (int i = 0; i < tpValues.size(); i++) {
                     tpSeries.add(i, tpValues.get(i) * 10000);
-                    slSeries.add(i, slValues.get(i)* 10000);
+                    slSeries.add(i, slValues.get(i) * 10000);
                     if (i < ratioValues.size()) {
                         ratioSeries.add(i, ratioValues.get(i));
                     }
@@ -306,7 +305,7 @@ public class ChartUtils {
          */
         public static void showPredictionComparison(
                 String title,
-                List<EngineUtils.ResultPrediccion> results
+                List<EngineUtils.ResultPrediction> results
         ) {
             if (results == null || results.isEmpty()) {
                 Vesta.error("No hay resultados para mostrar");
@@ -321,14 +320,14 @@ public class ChartUtils {
                 List<Float> predictedSL = new ArrayList<>();
                 List<Float> tpError = new ArrayList<>();
                 List<Float> slError = new ArrayList<>();
-                results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediccion::tpDiff));
-                for (EngineUtils.ResultPrediccion r : results) {
+                results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::tpDiff));
+                for (EngineUtils.ResultPrediction r : results) {
                     actualTP.add(r.realTP());
                     predictedTP.add(r.predTP());
                     tpError.add(Math.abs(r.realTP() - r.predTP()));
                 }
-                results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediccion::lsDiff));
-                for (EngineUtils.ResultPrediccion r : results) {
+                results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::lsDiff));
+                for (EngineUtils.ResultPrediction r : results) {
                     actualSL.add(r.realSL());
                     predictedSL.add(r.predSL());
                     slError.add(Math.abs(r.realSL() - r.predSL()));
@@ -405,7 +404,7 @@ public class ChartUtils {
                 org.jfree.data.xy.XYSeries actualRatioSeries = new org.jfree.data.xy.XYSeries("Ratio Real");
                 org.jfree.data.xy.XYSeries predictedRatioSeries = new org.jfree.data.xy.XYSeries("Ratio Predicho");
                 for (int i = 0; i < results.size(); i++) {
-                    EngineUtils.ResultPrediccion r = results.get(i);
+                    EngineUtils.ResultPrediction r = results.get(i);
                     float actualRatio = r.realSL() != 0 ? r.realTP() / r.realSL() : 0;
                     float predictedRatio = r.predSL() != 0 ? r.predTP() / r.predSL() : 0;
                     actualRatioSeries.add(i, actualRatio);
@@ -445,11 +444,11 @@ public class ChartUtils {
     /**
      * Muestra la precisión del modelo por magnitud del movimiento
      */
-    public static void plotPrecisionByMagnitude(String title, List<EngineUtils.ResultPrediccion> results) {
+    public static void plotPrecisionByMagnitude(String title, List<EngineUtils.ResultPrediction> results) {
         if (results == null || results.isEmpty()) return;
 
         // Ordenar por magnitud del TP real
-        List<EngineUtils.ResultPrediccion> sorted = new ArrayList<>(results);
+        List<EngineUtils.ResultPrediction> sorted = new ArrayList<>(results);
         sorted.sort(Comparator.comparingDouble(r -> Math.abs(r.realTP())));
 
         int numBins = 10;
@@ -464,7 +463,7 @@ public class ChartUtils {
 
             if (start >= end) continue;
 
-            List<EngineUtils.ResultPrediccion> subList = sorted.subList(start, end);
+            List<EngineUtils.ResultPrediction> subList = sorted.subList(start, end);
 
             // Calcular métricas
             long directionalHits = subList.stream()
@@ -481,7 +480,7 @@ public class ChartUtils {
 
             // Magnitud promedio del TP real en este bin
             double avgMagnitude = subList.stream()
-                    .mapToDouble(EngineUtils.ResultPrediccion::realTP)
+                    .mapToDouble(EngineUtils.ResultPrediction::realTP)
                     .average().orElse(0);
 
             // Calcular porcentajes
@@ -542,14 +541,14 @@ public class ChartUtils {
     /**
      * Muestra la distribución de ratios TP/SL
      */
-    public static void plotRatioDistribution(String title, List<EngineUtils.ResultPrediccion> results) {
+    public static void plotRatioDistribution(String title, List<EngineUtils.ResultPrediction> results) {
         if (results == null || results.isEmpty()) return;
 
         // Calcular ratios
         List<Float> realRatios = new ArrayList<>();
         List<Float> predRatios = new ArrayList<>();
 
-        for (EngineUtils.ResultPrediccion r : results) {
+        for (EngineUtils.ResultPrediction r : results) {
             if (r.realSL() != 0) {
                 realRatios.add(r.realTP() / r.realSL());
             }else {

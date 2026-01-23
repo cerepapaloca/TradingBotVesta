@@ -39,7 +39,7 @@ import java.util.List;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 20;
+    public static final int LOOK_BACK = 40;
     public static final int EPOCH = 250;
 
     /**
@@ -61,7 +61,6 @@ public class VestaEngine {
         Vesta.info("Entrenando con " + symbols.size() + " símbolos: " + symbols);
 
         Pair<float[][][], float[][]> combined = BuilderData.fullBuild(symbols);
-
 
         //Pair<float[][][], float[]> deduped = EngineUtils.clearData(combined.getKey(), combined.getValue());
         float[][][] xCombined = combined.getKey();
@@ -165,6 +164,7 @@ public class VestaEngine {
                                     .optFinalValue(0.00001f)
                                     .setMaxUpdates(EPOCH)
                                     .build())
+                            .optLearningRateTracker(Tracker.fixed(0.0005f))
                             .optWeightDecays(0.0f)
                             .optClipGrad(2.8f)
                             .build())
@@ -254,7 +254,7 @@ public class VestaEngine {
                         .optDropRate(0.2f)
                         .build())
                 .add(LSTM.builder()
-                        .setStateSize(32)
+                        .setStateSize(128)
                         .setNumLayers(1)
                         .optReturnState(false)
                         .optBatchFirst(true)
@@ -267,15 +267,13 @@ public class VestaEngine {
                 .add(Linear.builder().setUnits(128).build())
                 .add(Dropout.builder().optRate(0.1f).build())
                 .add(Linear.builder().setUnits(64).build())
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(16).build())
-                .add(Linear.builder().setUnits(2).build())
-//                .add(ndList -> {
-//                    NDArray out = ndList.singletonOrThrow();
-//                    return new NDList(out.mul(4f));
-//                })
-                ;
-
+                .add(Linear.builder().setUnits(3).build())
+                .add(ndList -> {
+                    NDArray out = ndList.singletonOrThrow();
+                    NDArray tpSl = Activation.relu(out.get(":, 0:2"));
+                    NDArray dir = Activation.tanh(out.get(":, 2:3"));
+                    return new NDList(tpSl.concat(dir, 1));
+                });
     }
 
 

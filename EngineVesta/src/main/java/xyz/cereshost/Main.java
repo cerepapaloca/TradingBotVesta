@@ -43,48 +43,44 @@ public class Main {
         new PacketHandler();
         switch (args[0]) {
             case "training" -> {
-                //List.of("BTCUSDT");// Vesta.MARKETS_NAMES;
+                List<String> symbols = SYMBOLS_TRAINING;// Vesta.MARKETS_NAMES;
                 //checkEngines();
-                HashMap<List<String>, VestaEngine.TrainingTestsResults> results = new HashMap<>();
-                for (String symbol : List.of("BNBUSDT")) {
-                    results.put(Arrays.stream(symbol.split(",")).toList(), VestaEngine.trainingModel(Arrays.stream(symbol.split(",")).toList()));
-                }
 
-                for (Map.Entry<List<String>, VestaEngine.TrainingTestsResults> entry : results.entrySet()) {
-                    VestaEngine.TrainingTestsResults result = entry.getValue();
-                    EngineUtils.ResultsEvaluate evaluateResult = result.evaluate();
-                    BackTestEngine.BackTestResult backtestResult = result.backtest();
 
-                    Vesta.info("--------------------------------------------------");
-                    String fullNameSymbol = String.join(" ", entry.getKey());
-                    Vesta.info("RESULTADOS FINALES DE " + fullNameSymbol.toUpperCase(Locale.ROOT) + ":");
-                    Vesta.info("  MAE Promedio TP:           %.8f", evaluateResult.avgMaeTP());
-                    Vesta.info("  MAE Promedio SL:           %.8f", evaluateResult.avgMaeSL());
-                    Vesta.info("  Acierto de Tendencia:   %.2f%%", evaluateResult.hitRate());
-                    showDataBackTest(backtestResult);
-                    // Gráfica de distribución de errores porcentuales
-                    evaluateResult.resultPrediccions().sort(Comparator.comparingDouble(EngineUtils.ResultPrediccion::tpDiff));
-                    ChartUtils.plot("Desviación del SL de " + fullNameSymbol, "Resultados De la evaluación",
-                            List.of(new ChartUtils.DataPlot("Diferencia", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::tpDiff).toList()),
-                                    new ChartUtils.DataPlot("Predicción", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::predSL).toList()),
-                                    new ChartUtils.DataPlot("Real", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::realSL).toList())
-                            ));
-                    evaluateResult.resultPrediccions().sort(Comparator.comparingDouble(EngineUtils.ResultPrediccion::lsDiff));
-                    ChartUtils.plot("Desviación del TP de " + fullNameSymbol, "Resultados De la evaluación",
-                            List.of(new ChartUtils.DataPlot("Diferencia", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::lsDiff).toList()),
-                                    new ChartUtils.DataPlot("Predicción", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::predTP).toList()),
-                                    new ChartUtils.DataPlot("Real", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::realTP).toList())
-                            ));
-//                    EngineUtils.analyzePerformanceBySize(evaluateResult.resultPrediccions());
-                    if (!backtestResult.auxiliaryResults().isEmpty()) {
-                        ChartUtils.plot("BackTest Balance (Walk-Forward)", "Trades", List.of(
-                                new ChartUtils.DataPlot("Balance", backtestResult.auxiliaryResults().stream().map(BackTestEngine.AuxiliaryBackTestResult::balance).toList())
+                VestaEngine.TrainingTestsResults result = VestaEngine.trainingModel(symbols);
+                EngineUtils.ResultsEvaluate evaluateResult = result.evaluate();
+                BackTestEngine.BackTestResult backtestResult = result.backtest();
+
+                Vesta.info("--------------------------------------------------");
+                String fullNameSymbol = String.join(" ", symbols);
+                Vesta.info("RESULTADOS FINALES DE " + fullNameSymbol.toUpperCase(Locale.ROOT) + ":");
+                Vesta.info("  MAE Promedio TP:           %.8f", evaluateResult.avgMaeTP());
+                Vesta.info("  MAE Promedio SL:           %.8f", evaluateResult.avgMaeSL());
+                Vesta.info("  Acierto de Tendencia:   %.2f%%", evaluateResult.hitRate());
+                ChartUtils.CandleChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultPrediction());
+                ChartUtils.plotRatioDistribution("Ratios " + String.join(" ", symbols), evaluateResult.resultPrediction());
+                showDataBackTest(backtestResult);
+                // Gráfica de distribución de errores porcentuales
+                List<EngineUtils.ResultPrediction> resultPrediction = evaluateResult.resultPrediction();
+
+                resultPrediction.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::tpDiff));
+                ChartUtils.plot("Desviación del SL de " + fullNameSymbol, "Resultados De la evaluación",
+                        List.of(new ChartUtils.DataPlot("Diferencia", resultPrediction.stream().map(EngineUtils.ResultPrediction::tpDiff).toList()),
+                                new ChartUtils.DataPlot("Predicción", resultPrediction.stream().map(EngineUtils.ResultPrediction::predSL).toList()),
+                                new ChartUtils.DataPlot("Real", resultPrediction.stream().map(EngineUtils.ResultPrediction::realSL).toList())
                         ));
-                        ChartUtils.plot("BackTest ROI (Walk-Forward)", "Trades", List.of(
-                                new ChartUtils.DataPlot("ROI%", backtestResult.auxiliaryResults().stream().map(BackTestEngine.AuxiliaryBackTestResult::pnlPercent).toList())
+                resultPrediction.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::lsDiff));
+                ChartUtils.plot("Desviación del TP de " + fullNameSymbol, "Resultados De la evaluación",
+                        List.of(new ChartUtils.DataPlot("Diferencia", resultPrediction.stream().map(EngineUtils.ResultPrediction::lsDiff).toList()),
+                                new ChartUtils.DataPlot("Predicción", resultPrediction.stream().map(EngineUtils.ResultPrediction::predTP).toList()),
+                                new ChartUtils.DataPlot("Real", resultPrediction.stream().map(EngineUtils.ResultPrediction::realTP).toList())
                         ));
-                    }
-                }
+                resultPrediction.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::dirDiff));
+                ChartUtils.plot("Desviación dela Dirección de " + fullNameSymbol, "Resultados De la evaluación",
+                        List.of(new ChartUtils.DataPlot("Diferencia", resultPrediction.stream().map(EngineUtils.ResultPrediction::dirDiff).toList()),
+                                new ChartUtils.DataPlot("Predicción", resultPrediction.stream().map(EngineUtils.ResultPrediction::predDir).toList()),
+                                new ChartUtils.DataPlot("Real", resultPrediction.stream().map(EngineUtils.ResultPrediction::realDir).toList())
+                        ));
             }
             case "predict" -> {
                 String symbol = "BNBUSDT";
@@ -99,8 +95,27 @@ public class Main {
     }
 
     private static void showDataBackTest(BackTestEngine.BackTestResult backtestResult) {
+        var stats = backtestResult.stats();
+        ChartUtils.plot("BackTest Balance (Walk-Forward)", "Trades", List.of(
+                new ChartUtils.DataPlot("Balance", stats.getExtraDataPlot().stream().map(BackTestEngine.ExtraDataPlot::balance).toList())
+        ));
+        ChartUtils.plot("BackTest ROI (Walk-Forward)", "Trades", List.of(
+                new ChartUtils.DataPlot("ROI%", stats.getExtraDataPlot().stream().map(BackTestEngine.ExtraDataPlot::pnlPercent).toList())
+        ));
+
+        double winRate = stats.getTotalTrades() > 0 ? (double) stats.getWins() / stats.getTotalTrades() * 100 : 0;
+        double avgHoldMinutes = stats.getTotalTrades() > 0 ? (stats.getTotalHoldTimeMillis() / 1000.0 / 60.0) / stats.getTotalTrades() : 0;
+
         Vesta.info("--------------------------------------------------");
         Vesta.info("💰 SIMULACIÓN DE TRADING (Capital: $%.0f)", backtestResult.initialBalance());
+        Vesta.info(" Trades Totales:          %d",  stats.getTotalTrades());
+        Vesta.info("  Win Rate:               %.2f%% (%d W / %d L)", winRate, stats.getWins(), stats.getLosses());
+        Vesta.info("  Timeouts:               %d (Salida por tiempo) ROI %.2f%% ", stats.getTimeouts(), stats.getRoiTimeOut());
+        Vesta.info("  TP/SL:                  %d TP / %s SL", stats.getTakeProfit(), stats.getStopLoss());
+        Vesta.info("  ROI Total:              %.2f%%", stats.getRoi());
+        Vesta.info("  Max Drawdown:           %.2f%%", stats.getCurrentDrawdown() * 100);
+        Vesta.info("  DireRate:               %.2f%% (%d L, %d S, %d N)", (float) stats.getLongs()/(stats.getLongs() + stats.getShorts()), stats.getLongs(), stats.getShorts(), stats.getNothing());
+        Vesta.info("  Avg Hold Time:          %.1f min", avgHoldMinutes);
         Vesta.info("  PNL Neto:               %s$%.2f%s", backtestResult.netPnL() >= 0 ? "\u001B[32m" : "\u001B[31m", backtestResult.netPnL(), "\u001B[0m");
         Vesta.info("  ROI Total:              %s%.2f%%%s", backtestResult.roiPercent() >= 0 ? "\u001B[32m" : "\u001B[31m", backtestResult.roiPercent(), "\u001B[0m");
         Vesta.info("  Trades (Win/Loss):      %d (%d/%d)", backtestResult.totalTrades(), backtestResult.winTrades(), backtestResult.lossTrades());

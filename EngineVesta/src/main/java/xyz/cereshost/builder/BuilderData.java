@@ -15,6 +15,27 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
+    public static Pair<float[][][], float[][]> combineDatasets(@NotNull List<float[][][]> allX, List<float[][]> allY) {
+        // ... código estándar de combinación ...
+        // Asegúrate de copiar las 3 columnas de Y
+        int totalSamples = allX.stream().mapToInt(x -> x.length).sum();
+        float[][][] Xcombined = new float[totalSamples][allX.get(0)[0].length][allX.get(0)[0][0].length];
+        float[][] ycombined = new float[totalSamples][3]; // <--- IMPORTANTE: 3 Columnas
+
+        int idx = 0;
+        for(int k=0; k<allX.size(); k++){
+            float[][] y = allY.get(k);
+            float[][][] X = allX.get(k);
+            for(int i=0; i<X.length; i++){
+                Xcombined[idx] = X[i];
+                ycombined[idx][0] = y[i][0];
+                ycombined[idx][1] = y[i][1];
+                ycombined[idx][2] = y[i][2]; // Copiar dirección sin tocar
+                idx++;
+            }
+        }
+        return new Pair<>(Xcombined, ycombined);
+    }
 
     public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols) {
         List<float[][][]> allX = new ArrayList<>();
@@ -34,7 +55,7 @@ public class BuilderData {
                     continue;
                 }
 
-                Pair<float[][][], float[][]> pair = BuilderData.build(candles, LOOK_BACK);
+                Pair<float[][][], float[][]> pair = BuilderData.build(candles, LOOK_BACK, 5);
                 float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                 float[][] yraw = pair.getValue();
 
@@ -79,85 +100,68 @@ public class BuilderData {
     /**
      * Construye tensores basados EXCLUSIVAMENTE en cambios relativos (Log Returns)
      */
-    @Contract("_, _ -> new")
-    public static @NotNull Pair<float[][][], float[][]> build(@NotNull List<Candle> candles, int lookBack) {
-        // Empezamos desde 1 porque necesitamos candle[i-1] para calcular el cambio relativo
+    @Contract("_, _, _ -> new")
+    public static @NotNull Pair<float[][][], float[][]> build(@NotNull List<Candle> candles, int lookBack, int futureWindow) {
         int n = candles.size();
-        int samples = n - lookBack - 1; // -1 extra por el cálculo de retorno futuro
+        // Ahora restamos futureWindow para asegurar que siempre haya datos hacia adelante
+        int samples = n - lookBack - futureWindow;
 
         if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0][0]);
-        int dynamicFeatures = extractFeatures(candles.get(1), candles.get(0)).length;
 
         float[][][] X = new float[samples][lookBack][features];
-        float[][] y = new float[samples][2];
+        float[][] y = new float[samples][3];
 
-        // i representa el inicio de la ventana de predicción
-        // Empezamos en 1 para garantizar que siempre exista una vela anterior 'prev'
         for (int i = 0; i < samples; i++) {
-            // Construir ventana de LookBack
+            // 1. Construir ventana de LookBack (Entrada del modelo)
             for (int j = 0; j < lookBack; j++) {
                 X[i][j] = extractFeatures(candles.get(i + j + 1), candles.get(i + j));
             }
 
-            for (int j = 0; j < lookBack; j++) {
-                X[i][j] = extractFeatures(candles.get(i + j + 1), candles.get(i + j));
+            // El precio de entrada para el cálculo de retorno es el cierre de la última vela del input
+            double entryPrice = candles.get(i + lookBack).close();
+
+            // 2. Escanear ventana futura (X velas) para los Targets
+            double bestBodyLong = -Double.MAX_VALUE;  // Cierre más alto
+            double worstWickLong = Double.MAX_VALUE;  // Mecha más baja
+
+            double bestBodyShort = Double.MAX_VALUE;  // Cierre más bajo
+            double worstWickShort = -Double.MAX_VALUE; // Mecha más alta
+
+            for (int f = 1; f <= futureWindow; f++) {
+                Candle future = candles.get(i + lookBack + f);
+
+                // Para LONG
+                bestBodyLong = Math.max(bestBodyLong, future.close());
+                worstWickLong = Math.min(worstWickLong, future.low());
+
+                // Para SHORT
+                bestBodyShort = Math.min(bestBodyShort, future.close());
+                worstWickShort = Math.max(worstWickShort, future.high());
             }
 
-            // TARGETS: TP y SL para la SIGUIENTE vela (t+1)
-            int targetIdx = i + lookBack + 1;
-            Candle targetCandle = candles.get(targetIdx);
-            Candle lastInputCandle = candles.get(i + lookBack);
+            // 3. Determinar Dirección Real dominante en esa ventana
+            // Usamos el cierre de la última vela de la ventana vs entrada
+            double finalCloseInWindow = candles.get(i + lookBack + futureWindow).close();
+            boolean isOverallBullish = finalCloseInWindow > entryPrice;
 
-            double prevClose = lastInputCandle.close();
-
-            double currentOpen = targetCandle.open();
-            double currentHigh = targetCandle.high();
-            double currentLow = targetCandle.low();
-            double currentClose = targetCandle.close();
-
-            // Para LONG:
-            // - TP: máximo movimiento positivo (high vs entrada)
-            // - SL: máximo movimiento negativo (low vs entrada)
-            // Para SHORT:
-            // - TP: máximo movimiento negativo (low vs entrada)
-            // - SL: máximo movimiento positivo (high vs entrada)
-
-            // Calculamos ambos movimientos absolutos
-            double longTP = Math.log(currentClose / prevClose);  // Positivo
-            double longSL = Math.log(currentLow / prevClose);   // Negativo (convertir a positivo)
-            double shortTP = Math.log(currentClose / prevClose);  // Negativo (convertir a positivo)
-            double shortSL = Math.log(currentHigh / prevClose); // Positivo
-
-            // Determinamos si la vela es alcista o bajista
-            boolean isBullish = currentClose > currentOpen;
-
-            if (isBullish) {
-                // Vela alcista: LONG es más probable
-                // TP = movimiento positivo máximo (high - entrada)
-                // SL = movimiento negativo máximo (entrada - low)
-                y[i][0] = (float) Math.max(0, longTP);      // TP (positivo)
-                y[i][1] = (float) Math.abs(Math.min(0, longSL)); // SL (valor absoluto del negativo)
+            if (isOverallBullish) {
+                // TARGET LONG: TP (cuerpo máximo), SL (mecha mínima)
+                y[i][0] = (float) Math.log(bestBodyLong / entryPrice);     // Magnitud TP
+                y[i][1] = (float) Math.abs(Math.log(worstWickLong / entryPrice)); // Magnitud SL
+                y[i][2] = 1.0f; // Dirección Alcista
             } else {
-                // Vela bajista: SHORT es más probable
-                // TP = movimiento negativo máximo (entrada - low)
-                // SL = movimiento positivo máximo (high - entrada)
-                y[i][0] = (float) Math.abs(Math.min(0, shortTP)); // TP (valor absoluto del negativo)
-                y[i][1] = (float) Math.max(0, shortSL);      // SL (positivo)
+                // TARGET SHORT: TP (cuerpo mínimo), SL (mecha máxima)
+                y[i][0] = (float) Math.abs(Math.log(bestBodyShort / entryPrice)); // Magnitud TP
+                y[i][1] = (float) Math.log(worstWickShort / entryPrice);    // Magnitud SL
+                y[i][2] = -1.0f; // Dirección Bajista
             }
 
-            // Si los valores son NaN o infinitos, usar valores por defecto seguros
-            if (Float.isNaN(y[i][0]) || Float.isInfinite(y[i][0])) {
-                y[i][0] = 0.001f; // 0.1% por defecto
+            // Limpieza de seguridad
+            for (int k = 0; k < 2; k++) {
+                if (Float.isNaN(y[i][k]) || Float.isInfinite(y[i][k]) || y[i][k] < 0) {
+                    y[i][k] = 0.0001f;
+                }
             }
-            if (Float.isNaN(y[i][1]) || Float.isInfinite(y[i][1])) {
-                y[i][1] = 0.001f; // 0.1% por defecto
-            }
-
-//            // Asegurar que TP sea al menos el doble que SL (ratio 2:1)
-//            // Esto incentiva al modelo a aprender ratios más rentables
-//            if (y[i][0] < y[i][1] * 2) {
-//                y[i][0] = y[i][1] * 2;
-//            }
         }
         return new Pair<>(X, y);
     }
@@ -330,13 +334,13 @@ public class BuilderData {
         fList.add((float) Math.log(curr.low() / prevClose));
         fList.add((float) Math.log(curr.close() / prevClose));
 
-//        fList.add((float) Math.log(curr.amountTrades()));
+        fList.add((float) Math.log(curr.amountTrades()));
 
         // Volúmenes relativos
         fList.add((float) Math.log(curr.volumeBase() / prevClose));
 //        fList.add((float) Math.log(curr.quoteVolume() / prevClose));
-//        fList.add((float) Math.log(curr.buyQuoteVolume() / prevClose));
-//        fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
+        fList.add((float) Math.log(curr.buyQuoteVolume() / prevClose));
+        fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
 
         // Delta y Buy Ratio
         double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
