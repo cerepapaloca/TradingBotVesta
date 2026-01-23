@@ -75,7 +75,7 @@ public class Main {
                                     new ChartUtils.DataPlot("Predicción", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::predTP).toList()),
                                     new ChartUtils.DataPlot("Real", evaluateResult.resultPrediccions().stream().map(EngineUtils.ResultPrediccion::realTP).toList())
                             ));
-                    EngineUtils.analyzePerformanceBySize(evaluateResult.resultPrediccions());
+//                    EngineUtils.analyzePerformanceBySize(evaluateResult.resultPrediccions());
                     if (!backtestResult.auxiliaryResults().isEmpty()) {
                         ChartUtils.plot("BackTest Balance (Walk-Forward)", "Trades", List.of(
                                 new ChartUtils.DataPlot("Balance", backtestResult.auxiliaryResults().stream().map(BackTestEngine.AuxiliaryBackTestResult::balance).toList())
@@ -92,7 +92,7 @@ public class Main {
             }
             case "backtest" -> {
                 String symbol = "BNBUSDT";
-                IOdata.loadMarkets(DataSource.LOCAL_NETWORK, symbol);
+                IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol);
                 showDataBackTest(BackTestEngine.runBacktest(Vesta.MARKETS.get(symbol), PredictionEngine.loadPredictionEngine("VestaIA")));
             }
         }

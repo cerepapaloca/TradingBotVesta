@@ -1,5 +1,6 @@
 package xyz.cereshost.engine;
 
+import com.google.common.collect.MultimapBuilder;
 import lombok.Getter;
 import xyz.cereshost.ChartUtils;
 import xyz.cereshost.builder.BuilderData;
@@ -7,6 +8,8 @@ import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.common.market.Trade;
+import xyz.cereshost.strategy.BacktestStrategy;
+import xyz.cereshost.strategy.DefaultStrategy;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -14,90 +17,259 @@ import java.util.List;
 
 public class BackTestEngine {
 
+    // --- Clases Internas para Estrategia (definidas arriba, pero incluidas aquí para portabilidad) ---
+    // (Puedes moverlas a archivos separados si prefieres)
+
+    public enum ExitReason { TAKE_PROFIT, STOP_LOSS, TIMEOUT, NO_DATA_ERROR }
+
+    public record TradeSetup(double entryPrice, double tpPrice, double slPrice, boolean isLong, double amountUsdt, int maxCandles) {}
+
+    public record TradeResult(double pnl, double pnlPercent, double exitPrice, ExitReason reason, long entryTime, long exitTime) {}
+
+    // --- Motor Principal ---
+
+    public static BackTestResult runBacktest(Market market, PredictionEngine engine) {
+        return runBacktest(market, engine, new DefaultStrategy());
+    }
+
+    public static BackTestResult runBacktest(Market market, PredictionEngine engine, BacktestStrategy strategy) {
+        Vesta.info("⚙️ Iniciando Backtest Avanzado (Tick-Replay + Multi-Candle) para " + market.getSymbol());
+
+        // 1. Preparar datos
+        List<Candle> allCandles = BuilderData.to1mCandles(market);
+        allCandles.sort(Comparator.comparingLong(Candle::openTime));
+        market.buildTradeCache(); // Crucial para velocidad
+
+        int totalSamples = allCandles.size();
+        int lookBack = engine.getLookBack();
+
+        // Empezamos donde tenemos datos suficientes
+        int startIndex = lookBack + 1;
+
+        // Variables de estado
+        double balance = 1000.0;
+        double initialBalance = balance;
+        double feeRate = 0.0004; // 0.04% por trade (entrada + salida)
+
+        BackTestStats stats = new BackTestStats();
+        List<AuxiliaryBackTestResult> equityCurve = new ArrayList<>();
+        List<EngineUtils.ResultPrediccion> predictionsLog = new ArrayList<>();
+
+        // 2. Loop principal (Walk-Forward)
+        // Usamos un loop 'i' que podemos avanzar manualmente si una operación dura varias velas
+        for (int i = startIndex; i < totalSamples - 1; i++) {
+
+            Candle currentCandle = allCandles.get(i);
+
+            // A. Obtener predicción
+            List<Candle> window = allCandles.subList(i - lookBack, i + 1);
+            PredictionEngine.PredictionResultTP_SL prediction = engine.predictNextPriceDetail(window, market.getSymbol());
+
+            // B. Consultar estrategia
+            TradeSetup setup = strategy.preProcess(prediction, currentCandle, balance);
+
+            if (setup == null) {
+                // La estrategia decidió no operar
+                continue;
+            }
+
+            // C. Ejecutar Simulación de la Operación (Puede durar múltiples velas)
+            SimulatedTradeResult simResult = simulateTradeExecution(
+                    market,
+                    allCandles,
+                    i + 1, // Empezamos a buscar en la siguiente vela
+                    setup
+            );
+
+            if (simResult.reason == ExitReason.NO_DATA_ERROR) {
+                continue; // Ignorar operación por falta de datos
+            }
+
+            // D. Calcular PnL Real (con fees)
+            // Fee se cobra al entrar (sobre entry) y al salir (sobre exit)
+            double entryFee = setup.amountUsdt * feeRate;
+            double exitVal = (setup.amountUsdt / setup.entryPrice) * simResult.exitPrice;
+            double exitFee = exitVal * feeRate;
+
+            double grossPnL = exitVal - setup.amountUsdt;
+            double netPnL = grossPnL - entryFee - exitFee;
+            double pnlPercent = netPnL / setup.amountUsdt;
+
+            // E. Actualizar Balance
+            balance += netPnL;
+            if (balance < 0) balance = 0; // Quiebra
+
+            // F. Registrar estadísticas
+            TradeResult resultObj = new TradeResult(netPnL, pnlPercent, simResult.exitPrice, simResult.reason, currentCandle.openTime(), simResult.exitTime);
+            strategy.postProcess(resultObj);
+            stats.addTrade(resultObj, balance);
+            equityCurve.add(new AuxiliaryBackTestResult((float) pnlPercent, (float) balance));
+
+            // Guardar log de predicción (para gráficos)
+            predictionsLog.add(new EngineUtils.ResultPrediccion(
+                    prediction.tpLogReturn(), prediction.slLogReturn(),
+                    // Nota: Los valores reales TP/SL aquí son aproximados para el gráfico,
+                    // ya que en multi-vela es más complejo definir el "real" de una sola vela.
+                    (float)Math.abs(Math.log(simResult.exitPrice/setup.entryPrice)), 0,
+                    currentCandle.openTime()
+            ));
+
+            // G. Avanzar el índice 'i'
+            // Si la operación duró 5 velas, saltamos esas 5 para no abrir operaciones superpuestas
+            // (A menos que tu estrategia soporte grid/hedging, aquí asumimos 1 operación a la vez)
+            int candlesConsumed = simResult.candlesConsumed;
+            if (candlesConsumed > 0) {
+                i += (candlesConsumed - 1);
+            }
+        }
+
+        // 3. Generar Reporte Final
+        stats.printSummary(market.getSymbol());
+
+        if (!predictionsLog.isEmpty()) {
+            ChartUtils.CandleChartUtils.showPredictionComparison("Backtest " + market.getSymbol(), predictionsLog);
+            ChartUtils.plotRatioDistribution("Ratios " + market.getSymbol(), predictionsLog);
+        }
+
+        return new BackTestResult(
+                initialBalance, balance, balance - initialBalance, stats.getRoi(),
+                stats.totalTrades, stats.wins, stats.losses, stats.maxDrawdownPercent,
+                equityCurve
+        );
+    }
+
     /**
-     * Verifica si se alcanzó TP o SL durante un minuto usando trades reales
-     * Ahora usa TP y SL individuales en lugar de un ratio fijo
+     * Simula la vida de un trade a través del tiempo (velas) y trades (ticks).
      */
-    public static double checkPrecisionExit(double entryPrice,
-                                            double tpPrice, double slPrice,
-                                            boolean isLong, List<Trade> trades) {
-        // 1. Obtenemos los trades exactos de ese minuto
+    private static SimulatedTradeResult simulateTradeExecution(
+            Market market,
+            List<Candle> allCandles,
+            int startIndex,
+            TradeSetup setup) {
 
+        int currentIndex = startIndex;
+        int candlesChecked = 0;
 
-        // Si no hay trades, usar lógica de vela OHLC
+        while (currentIndex < allCandles.size() && candlesChecked < setup.maxCandles) {
+            Candle candle = allCandles.get(currentIndex);
+            long endTime = candle.openTime() + 60_000;
 
-        if (trades.isEmpty()) {
-            return 0.0;
-            // Fallback: usar high/low de la vela
-//            Candle nextCandle = getCandleAtTime(market, candleTime);
-//            if (nextCandle == null) {
-//                return 0;
-//            }
-//            if (isLong) {
-//                // Verificar si se alcanzó SL (low <= slPrice)
-//                if (nextCandle.low() <= slPrice) {
-//                    return -Math.abs(entryPrice - slPrice) / entryPrice;
-//                }
-//                // Verificar si se alcanzó TP (high >= tpPrice)
-//                if (nextCandle.high() >= tpPrice) {
-//                    return Math.abs(tpPrice - entryPrice) / entryPrice;
-//                }
-//                // Cierre de mercado
-//                return (nextCandle.close() - entryPrice) / entryPrice;
-//            } else {
-//                // SHORT: SL es por encima, TP es por debajo
-//                if (nextCandle.high() >= slPrice) {
-//                    return -Math.abs(slPrice - entryPrice) / entryPrice;
-//                }
-//                if (nextCandle.low() <= tpPrice) {
-//                    return Math.abs(entryPrice - tpPrice) / entryPrice;
-//                }
-//                return (entryPrice - nextCandle.close()) / entryPrice;
-//            }
+            // Obtener trades reales de este minuto
+            List<Trade> trades = market.getTradesInWindow(candle.openTime(), endTime);
+
+            if (trades.isEmpty()) {
+                // ERROR DE DATOS: Si no hay trades, es arriesgado asumir OHLC.
+                // Opción A: Saltar vela (asumir precio estable).
+                // Opción B: Abortar trade.
+                // Aquí elegimos abortar si es justo en la entrada, o continuar si ya estamos dentro.
+                if (candlesChecked == 0) return new SimulatedTradeResult(setup.entryPrice, ExitReason.NO_DATA_ERROR, 0, 0);
+
+                currentIndex++;
+                candlesChecked++;
+                continue;
+            }
+
+            // REPLAY TICK A TICK
+            for (Trade t : trades) {
+                double price = t.price();
+
+                if (setup.isLong) {
+                    // LONG: SL abajo, TP arriba
+                    if (price <= setup.slPrice) {
+                        return new SimulatedTradeResult(setup.slPrice, ExitReason.STOP_LOSS, t.time(), candlesChecked + 1);
+                    }
+                    if (price >= setup.tpPrice) {
+                        return new SimulatedTradeResult(setup.tpPrice, ExitReason.TAKE_PROFIT, t.time(), candlesChecked + 1);
+                    }
+                } else {
+                    // SHORT: SL arriba, TP abajo
+                    if (price >= setup.slPrice) {
+                        return new SimulatedTradeResult(setup.slPrice, ExitReason.STOP_LOSS, t.time(), candlesChecked + 1);
+                    }
+                    if (price <= setup.tpPrice) {
+                        return new SimulatedTradeResult(setup.tpPrice, ExitReason.TAKE_PROFIT, t.time(), candlesChecked + 1);
+                    }
+                }
+            }
+
+            currentIndex++;
+            candlesChecked++;
         }
 
-        // 2. Recorrer trades en orden cronológico (Tick Replay)
-        for (Trade t : trades) {
-            double currentPrice = t.price();
+        // Si salimos del loop, se acabó el tiempo (TIMEOUT) o los datos
+        double closePrice = allCandles.get(Math.min(currentIndex - 1, allCandles.size() - 1)).close();
+        return new SimulatedTradeResult(closePrice, ExitReason.TIMEOUT, 0, candlesChecked);
+    }
 
-            if (isLong) {
-                // REGLA LONG:
-                if (currentPrice <= slPrice) {
-                    return -Math.abs(entryPrice - slPrice) / entryPrice;
-                }
-                if (currentPrice >= tpPrice) {
-                    return Math.abs(tpPrice - entryPrice) / entryPrice;
-                }
+    // Record interno para comunicar resultado de la simulación
+    private record SimulatedTradeResult(double exitPrice, ExitReason reason, long exitTime, int candlesConsumed) {}
+
+    // --- Clase de Estadísticas (Telemetría) ---
+
+    public static class BackTestStats {
+        int totalTrades = 0;
+        int wins = 0;
+        int losses = 0;
+        int timeouts = 0;
+        double maxDrawdownPercent = 0.0;
+        double peakBalance = 0.0;
+        double currentDrawdown = 0.0;
+        double totalPnL = 0.0;
+        double initialBalance = 0.0;
+
+        // Para calcular Hold Time promedio
+        long totalHoldTimeMillis = 0;
+
+        public void addTrade(TradeResult result, double currentBalance) {
+            if (totalTrades == 0) {
+                initialBalance = currentBalance - result.pnl; // Reconstruir inicial
+                peakBalance = initialBalance;
+            }
+
+            totalTrades++;
+            totalPnL += result.pnl;
+
+            if (result.pnl > 0) wins++;
+            else losses++;
+
+            if (result.reason == ExitReason.TIMEOUT) timeouts++;
+
+            if (result.exitTime > 0 && result.entryTime > 0) {
+                totalHoldTimeMillis += (result.exitTime - result.entryTime);
+            }
+
+            // Drawdown calculation
+            if (currentBalance > peakBalance) {
+                peakBalance = currentBalance;
+                currentDrawdown = 0;
             } else {
-                // REGLA SHORT:
-                if (currentPrice >= slPrice) {
-                    return -Math.abs(slPrice - entryPrice) / entryPrice;
-                }
-                if (currentPrice <= tpPrice) {
-                    return Math.abs(entryPrice - tpPrice) / entryPrice;
+                double dd = (peakBalance - currentBalance) / peakBalance; // 0.10 = 10%
+                if (dd > maxDrawdownPercent) {
+                    maxDrawdownPercent = dd;
                 }
             }
         }
 
-        // 3. Si terminó el minuto y no tocó nada, cerrar al último trade
-        double closePrice = trades.get(trades.size() - 1).price();
-        if (isLong) {
-            return (closePrice - entryPrice) / entryPrice;
-        } else {
-            return (entryPrice - closePrice) / entryPrice;
+        public double getRoi() {
+            return initialBalance > 0 ? (totalPnL / initialBalance) * 100 : 0;
+        }
+
+        public void printSummary(String symbol) {
+            double winRate = totalTrades > 0 ? (double) wins / totalTrades * 100 : 0;
+            double avgHoldMinutes = totalTrades > 0 ? (totalHoldTimeMillis / 1000.0 / 60.0) / totalTrades : 0;
+
+            Vesta.info("====== REPORTE BACKTEST: " + symbol + " ======");
+            Vesta.info(" Trades Totales: " + totalTrades);
+            Vesta.info(" Win Rate:       %.2f%% (%d W / %d L)", winRate, wins, losses);
+            Vesta.info(" Timeouts:       %d (Salida por tiempo)", timeouts);
+            Vesta.info(" ROI Total:      %.2f%%", getRoi());
+            Vesta.info(" Max Drawdown:   %.2f%%", maxDrawdownPercent * 100);
+            Vesta.info(" Avg Hold Time:  %.1f min", avgHoldMinutes);
+            Vesta.info("==========================================");
         }
     }
 
-    private static Candle getCandleAtTime(Market market, long time) {
-        List<Candle> candles = BuilderData.to1mCandles(market);
-        for (Candle candle : candles) {
-            if (candle.openTime() == time) {
-                return candle;
-            }
-        }
-        return null;
-    }
-
+    // Mantener compatibilidad con tu código existente
     public record BackTestResult(
             double initialBalance,
             double finalBalance,
@@ -110,290 +282,5 @@ public class BackTestEngine {
             List<AuxiliaryBackTestResult> auxiliaryResults
     ) {}
 
-    /**
-     * Ejecuta un Backtest realista (Walk-Forward) usando TP y SL predichos por el modelo
-     */
-    public static BackTestResult runBacktest(Market market, PredictionEngine engine) {
-        Vesta.info("⚙️ Iniciando Backtest (Tick-Level) con TP/SL predichos...");
-
-        // 1. Obtener todas las velas
-        List<Candle> allCandles = BuilderData.to1mCandles(market);
-        allCandles.sort(Comparator.comparingLong(Candle::openTime));
-
-        int totalSamples = allCandles.size();
-        int lookBack = engine.getLookBack();
-
-        // Definir zona de Test (último 15%)
-        int splitIndex = (int) (totalSamples * 0);
-        if (splitIndex < lookBack + 2) splitIndex = lookBack + 2;
-
-        Vesta.info("  Total Velas: %d | Inicio Test (Index): %d | Velas a testear: %d",
-                totalSamples, splitIndex, totalSamples - splitIndex);
-
-        // Variables de Simulación
-        double balance = 1000.0;
-        double initialBalance = balance;
-        double fee = 0.0004; // 0.04% comisión
-        double minThreshold = 0.000000; // Umbral mínimo para operar
-
-        int wins = 0, losses = 0, totalTrades = 0;
-        double maxBalance = balance;
-        double maxDrawdown = 0.0;
-
-        List<AuxiliaryBackTestResult> auxiliaryBackTestResults = new ArrayList<>();
-        List<EngineUtils.ResultPrediccion> predictionLog = new ArrayList<>();
-
-        // 2. Bucle Walk-Forward
-        for (int i = splitIndex; i < totalSamples - 1; i++) {
-            // A. Preparar Ventana: [i - lookback, i]
-            int startWindow = i - lookBack;
-            if (startWindow < 0) continue;
-
-            List<Candle> window = allCandles.subList(startWindow, i + 1);
-
-            // B. Predecir TP y SL
-            PredictionEngine.PredictionResultTP_SL prediction = engine.predictNextPriceDetail(window, market.getSymbol());
-
-            float tpLogReturn = prediction.tpLogReturn();
-            float slLogReturn = prediction.slLogReturn();
-            String direction = prediction.direction();
-            boolean isLong = "LONG".equals(direction);
-
-            // Filtrar predicciones muy pequeñas
-            if (tpLogReturn < minThreshold || slLogReturn < minThreshold) {
-                continue;
-            }
-            Candle futureCandle = allCandles.get(i + 1);
-            long endTime = futureCandle.openTime() + 60_000;
-            market.buildTradeCache();
-            List<Trade> trades = market.getTradesInWindow(futureCandle.openTime(), endTime);
-            if (trades.isEmpty()) {
-                continue;
-            }
-
-            // C. Configurar entrada y salidas
-            double entryPrice = allCandles.get(i).close();
-
-            // Calcular precios de TP y SL según dirección
-
-            double tpPrice, slPrice;
-            if (isLong) {
-                tpPrice = entryPrice * Math.exp(tpLogReturn);
-                slPrice = entryPrice * Math.exp(-slLogReturn);
-            } else {
-                tpPrice = entryPrice * Math.exp(-tpLogReturn);
-                slPrice = entryPrice * Math.exp(slLogReturn);
-            }
-
-            // Verificar TP/SL usando trades reales
-            double pnlPercent = checkPrecisionExit(
-                    entryPrice,
-                    tpPrice,
-                    slPrice,
-                    isLong,
-                    trades
-            );
-
-            // E. Actualizar Balance
-            double tradePnL = balance * (pnlPercent - (fee * 2));
-            balance += tradePnL;
-
-            // Estadísticas
-            if (pnlPercent > 0) {
-                wins++;
-            } else if (pnlPercent < 0) {
-                losses++;
-            }
-            totalTrades++;
-
-            // Drawdown
-            if (balance > maxBalance) {
-                maxBalance = balance;
-            }
-            double dd = (maxBalance - balance) / maxBalance;
-            if (dd > maxDrawdown) {
-                maxDrawdown = dd;
-            }
-
-            // Guardar datos para gráficas
-            auxiliaryBackTestResults.add(new AuxiliaryBackTestResult((float) pnlPercent, (float) balance));
-
-            // Calcular TP y SL reales para evaluación
-            float realTP, realSL;
-            if (isLong) {
-                realTP = (float) Math.log(futureCandle.high() / entryPrice);
-                realSL = (float) -Math.log(futureCandle.low() / entryPrice);
-            } else {
-                realTP = (float) -Math.log(futureCandle.low() / entryPrice);
-                realSL = (float) Math.log(futureCandle.high() / entryPrice);
-            }
-
-            // Guardar predicciones para evaluación
-            predictionLog.add(new EngineUtils.ResultPrediccion(
-                    tpLogReturn, slLogReturn,
-                    Math.max(0, realTP), Math.max(0, realSL),
-                    futureCandle.openTime()
-            ));
-
-            // Log detallado (opcional, para debugging)
-            if (totalTrades <= 10) {
-                Vesta.info("Trade %d: Dir=%s, TP=%.4f%%, SL=%.4f%%, PnL=%.4f%%, Balance=%.2f",
-                        totalTrades, direction,
-                        (Math.exp(tpLogReturn) - 1) * 100,
-                        (Math.exp(slLogReturn) - 1) * 100,
-                        pnlPercent * 100, balance);
-            }
-        }
-
-        // 3. Generar Resultados Finales
-        double netPnL = balance - initialBalance;
-        double roiPercent = (netPnL / initialBalance) * 100.0;
-
-        // Mostrar gráficas
-        if (!predictionLog.isEmpty()) {
-            ChartUtils.CandleChartUtils.showPredictionComparison(
-                    "Backtest - " + market.getSymbol(),
-                    predictionLog
-            );
-            ChartUtils.plotPrecisionByMagnitude(
-                    "Precisión por Magnitud - " + market.getSymbol(),
-                    predictionLog
-            );
-            ChartUtils.plotRatioDistribution(
-                    "Distribución de Ratios - " + market.getSymbol(),
-                    predictionLog
-            );
-        }
-
-        return new BackTestResult(
-                initialBalance, balance, netPnL, roiPercent,
-                totalTrades, wins, losses, maxDrawdown * 100.0,
-                auxiliaryBackTestResults
-        );
-    }
-
-    /**
-     * Ejecuta un Backtest simplificado para múltiples símbolos
-     */
-    public static List<BackTestResult> runMultiSymbolBacktest(
-            List<Market> markets,
-            PredictionEngine engine,
-            double initialBalancePerSymbol
-    ) {
-        List<BackTestResult> results = new ArrayList<>();
-
-        Vesta.info("Iniciando Backtest Multi-Símbolo...");
-        Vesta.info("Número de símbolos: %d", markets.size());
-
-        for (Market market : markets) {
-            try {
-                Vesta.info("\n=== Procesando %s ===", market.getSymbol());
-
-                // Crear un engine específico para este símbolo (pero usar mismo modelo)
-                PredictionEngine symbolEngine = new PredictionEngine(
-                        engine.getXNormalizer(),
-                        engine.getYNormalizer(),
-                        engine.getModel(),
-                        engine.getLookBack(),
-                        engine.getFeatures()
-                );
-
-                // Ejecutar backtest
-                BackTestResult result = runBacktest(market, symbolEngine);
-                results.add(result);
-
-            } catch (Exception e) {
-                Vesta.error("Error en backtest para %s: %s",  market.getSymbol(), e.getMessage());
-            }
-        }
-
-        // Calcular estadísticas globales
-        if (!results.isEmpty()) {
-            calculateGlobalStatistics(results);
-        }
-
-        return results;
-    }
-
-    private static void calculateGlobalStatistics(List<BackTestResult> results) {
-        double totalInitial = 0;
-        double totalFinal = 0;
-        int totalTrades = 0;
-        int totalWins = 0;
-        int totalLosses = 0;
-        double avgRoi = 0;
-
-        for (BackTestResult result : results) {
-            totalInitial += result.initialBalance();
-            totalFinal += result.finalBalance();
-            totalTrades += result.totalTrades();
-            totalWins += result.winTrades();
-            totalLosses += result.lossTrades();
-            avgRoi += result.roiPercent();
-        }
-
-        avgRoi /= results.size();
-
-        Vesta.info("\n=== ESTADÍSTICAS GLOBALES ===");
-        Vesta.info("Símbolos procesados: %d", results.size());
-        Vesta.info("Capital total inicial: $%.2f", totalInitial);
-        Vesta.info("Capital total final: $%.2f", totalFinal);
-        Vesta.info("Trades totales: %d", totalTrades);
-        Vesta.info("Trades ganadores: %d (%.1f%%)", totalWins,
-                totalTrades > 0 ? ((double) totalWins / totalTrades) * 100.0 : 0);
-        Vesta.info("ROI promedio: %.2f%%", avgRoi);
-    }
-
     public record AuxiliaryBackTestResult(float pnlPercent, float balance) {}
-
-    @Getter
-    public static class PerformanceBucket {
-        private double minTP;
-        private double maxTP;
-        private String name;
-        private List<EngineUtils.ResultPrediccion> predictions;
-        private int count;
-        private int profitable;
-        private double avgRatio;
-
-        PerformanceBucket(double minTP, double maxTP, String name) {
-            this.minTP = minTP;
-            this.maxTP = maxTP;
-            this.name = name;
-            this.predictions = new ArrayList<>();
-            this.count = 0;
-            this.profitable = 0;
-            this.avgRatio = 0;
-        }
-
-        void analyze(List<EngineUtils.ResultPrediccion> allPredictions) {
-            for (EngineUtils.ResultPrediccion p : allPredictions) {
-                double tp = p.predTP();
-                if (tp >= minTP && tp < maxTP) {
-                    predictions.add(p);
-                    count++;
-
-                    // Verificar si el trade habría sido rentable
-                    if (p.realTP() > p.realSL()) {
-                        profitable++;
-                    }
-
-                    // Calcular ratio
-                    if (p.predSL() > 0) {
-                        avgRatio += p.predTP() / p.predSL();
-                    }
-                }
-            }
-
-            if (count > 0) {
-                avgRatio /= count;
-            }
-        }
-
-        void printResults() {
-            double winRate = count > 0 ? (double) profitable / count * 100.0 : 0;
-            Vesta.info("Bucket %s: %d trades, Win Rate: %.1f%%, Ratio avg: %.2f:1",
-                    name, count, winRate, avgRatio);
-        }
-    }
 }

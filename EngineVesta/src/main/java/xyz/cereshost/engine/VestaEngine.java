@@ -40,7 +40,7 @@ import java.util.List;
 public class VestaEngine {
 
     public static final int LOOK_BACK = 20;
-    public static final int EPOCH = 1000;
+    public static final int EPOCH = 250;
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
@@ -173,7 +173,7 @@ public class VestaEngine {
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 32*4*4*4;
+            int batchSize = 32*4;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -233,7 +233,7 @@ public class VestaEngine {
                     simResult = BackTestEngine.runBacktest(market, predEngine);
                 } else {
                     Vesta.error("No se encontró mercado para backtest: " + testSymbol);
-                    simResult = new BackTestEngine.BackTestResult(0,0,0,0,0,0,0,0, List.of());
+                    simResult = null;
                 }
                 return new TrainingTestsResults(evaluate, simResult);
             }else {

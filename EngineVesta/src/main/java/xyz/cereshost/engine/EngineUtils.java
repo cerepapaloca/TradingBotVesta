@@ -415,7 +415,7 @@ public class EngineUtils {
 
     /**
      * Analiza el rendimiento por tamaño de TP/SL
-     */
+
     public static void analyzePerformanceBySize(List<EngineUtils.ResultPrediccion> predictions) {
         if (predictions == null || predictions.isEmpty()) return;
 
@@ -431,5 +431,5 @@ public class EngineUtils {
             bucket.analyze(predictions);
             bucket.printResults();
         }
-    }
+    }     */
 }

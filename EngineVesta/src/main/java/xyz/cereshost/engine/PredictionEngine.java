@@ -146,63 +146,71 @@ public class PredictionEngine {
         }
     }
 
-    /**
-     * Predice TP y SL para el siguiente intervalo.
-     * Retorna un objeto con detalles para mejor visualización.
-     */
     public PredictionResultTP_SL predictNextPriceDetail(List<Candle> candles, String symbol) {
         candles.sort(Comparator.comparingLong(Candle::openTime));
 
-        // Necesitamos lookBack + 1 velas para tener la referencia del cierre anterior (relativo)
         if (candles.size() < lookBack + 1) {
-            throw new RuntimeException("Historial insuficiente para predecir. Se necesitan " + (lookBack + 1) + " velas.");
+            throw new RuntimeException("Historial insuficiente. Se necesitan " + (lookBack + 1) + " velas.");
         }
 
-        // Tomar las últimas velas necesarias
         List<Candle> subList = candles.subList(candles.size() - (lookBack + 1), candles.size());
 
-        // Construir la secuencia de entrada
-        float[][][] X = new float[1][lookBack][features - 2]; // -2 porque addSymbolFeature añadirá 2 features
-
+        // Construir entrada
+        float[][][] X = new float[1][lookBack][features - 2];
         for (int j = 0; j < lookBack; j++) {
             X[0][j] = BuilderData.extractFeatures(subList.get(j + 1), subList.get(j));
         }
-
-        // Añadir características del símbolo
         float[][][] XWithSymbol = BuilderData.addSymbolFeature(X, symbol);
 
-        // Ejecutar la predicción para obtener TP y SL
+        // Inferencia
         float[] predictions = predictRaw(XWithSymbol);
 
-        if (predictions.length != 2) {
-            throw new RuntimeException("Se esperaban 2 predicciones (TP y SL), pero se obtuvieron " + predictions.length);
-        }
+        // INTERPRETACIÓN CORREGIDA:
+        // predictions[0] = Fuerza Alcista (log return positivo para LONG, negativo para SHORT)
+        // predictions[1] = Fuerza Bajista (log return positivo para SL en LONG, negativo para TP en SHORT)
 
-        float tpLogReturn = predictions[0]; // TP en log return (positivo)
-        float slLogReturn = predictions[1]; // SL en log return (positivo)
+        // Pero el modelo solo fue entrenado con valores positivos, así que ambos son positivos
+        // Necesitamos determinar la dirección de otra manera
 
         // Obtener precio actual
         float currentPrice = (float) subList.get(subList.size() - 1).close();
 
-        // Determinar dirección basada en el ratio TP/SL
-        // Si TP > SL, sugiere operación LONG (ganancia potencial mayor que pérdida)
-        // Si SL > TP, sugiere operación SHORT (pérdida potencial mayor que ganancia)
-        String direction = tpLogReturn > slLogReturn ? "LONG" : "SHORT";
-
-        // Calcular precios absolutos basados en la dirección
-        float tpPrice, slPrice;
-
-        if ("LONG".equals(direction)) {
-            // Para LONG: TP por encima del precio actual, SL por debajo
-            tpPrice = (float) (currentPrice * Math.exp(tpLogReturn));
-            slPrice = (float) (currentPrice * Math.exp(-slLogReturn));
-        } else {
-            // Para SHORT: TP por debajo del precio actual, SL por encima
-            tpPrice = (float) (currentPrice * Math.exp(-tpLogReturn));
-            slPrice = (float) (currentPrice * Math.exp(slLogReturn));
+        // ESTRATEGIA 1: Usar la tendencia reciente para decidir dirección
+        // Calcular tendencia de las últimas N velas
+        int trendPeriod = Math.min(10, subList.size() - 1);
+        double trend = 0.0;
+        for (int i = subList.size() - trendPeriod - 1; i < subList.size() - 1; i++) {
+            trend += Math.log(subList.get(i + 1).close() / subList.get(i).close());
         }
 
-        // Calcular ratio TP/SL
+        Operation direction;
+        float tpLogReturn, slLogReturn;
+        float tpPrice, slPrice;
+
+        if (trend > 0) {
+            // Tendencia alcista -> LONG
+            direction = Operation.LONG;
+
+            // Para LONG: predictions[0] es TP (alcista), predictions[1] es SL (bajista)
+            tpLogReturn = predictions[0];  // Log return positivo
+            slLogReturn = predictions[1];  // Log return positivo (pero se usará negativo)
+
+            tpPrice = (float) (currentPrice * Math.exp(tpLogReturn));
+            slPrice = (float) (currentPrice * Math.exp(-slLogReturn)); // SL por debajo
+        } else {
+            // Tendencia bajista -> SHORT
+            direction = Operation.SHORT;
+
+            // Para SHORT: predictions[0] es SL (alcista), predictions[1] es TP (bajista)
+            // Intercambiamos porque en SHORT el TP está abajo y el SL arriba
+            slLogReturn = predictions[0];  // SL por encima (positivo)
+            tpLogReturn = predictions[1];  // TP por debajo (positivo, pero se usará negativo)
+
+            tpPrice = (float) (currentPrice * Math.exp(-tpLogReturn)); // TP por debajo
+            slPrice = (float) (currentPrice * Math.exp(slLogReturn));  // SL por encima
+        }
+
+        // Ratio: Cuánto espero ganar (TP) vs cuánto espero perder (SL)
         float ratio = slLogReturn > 0 ? tpLogReturn / slLogReturn : 0;
 
         return new PredictionResultTP_SL(
@@ -216,13 +224,19 @@ public class PredictionEngine {
         );
     }
 
+    public enum Operation{
+        SHORT,
+        LONG,
+        DOJI
+    }
+
     public record PredictionResultTP_SL(
             float currentPrice,
             float tpPrice,       // Precio de Take Profit
             float slPrice,       // Precio de Stop Loss
             float tpLogReturn,   // Log return para TP (positivo)
             float slLogReturn,   // Log return para SL (positivo)
-            String direction,    // "LONG" o "SHORT"
+            Operation direction,    // "LONG" o "SHORT"
             float tpSlRatio      // Ratio TP/SL (idealmente > 2)
     ) {
         public float getTpDistance() {
@@ -242,7 +256,7 @@ public class PredictionEngine {
         }
 
         public boolean isProfitableSetup() {
-            return tpSlRatio >= 2.0f; // Ratio 2:1 mínimo para ser rentable
+            return tpSlRatio >= 1.0f;
         }
     }
 
