@@ -18,7 +18,7 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/, "XRPUSDT",*/ "BNBUSDT");
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "SOLUSDT"/* "BNBUSDT"*/);
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
@@ -83,19 +83,25 @@ public class Main {
                         ));
             }
             case "predict" -> {
-                String symbol = "BNBUSDT";
+                String symbol = "SOLUSDT";
                 PredictionEngine.makePrediction(symbol);
             }
             case "backtest" -> {
-                String symbol = "BNBUSDT";
+                String symbol = "SOLUSDT";
                 IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol);
-                showDataBackTest(BackTestEngine.runBacktest(Vesta.MARKETS.get(symbol), PredictionEngine.loadPredictionEngine("VestaIA")));
+                showDataBackTest(new BackTestEngine(Vesta.MARKETS.get(symbol), PredictionEngine.loadPredictionEngine("VestaIA")).run());
             }
         }
     }
 
     private static void showDataBackTest(BackTestEngine.BackTestResult backtestResult) {
-        var stats = backtestResult.stats();
+
+        BackTestEngine.BackTestStats stats = backtestResult.stats();
+        ChartUtils.plotRatioVsROI("BackTest Ratio/ROI (Walk-Forward)", stats.getExtraDataPlot());
+        ChartUtils.plotTPSLMagnitudeVsROI("BackTest Magnitud/ROI (Walk-Forward)", stats.getExtraDataPlot());
+        ChartUtils.plot("BackTest Ratio (Walk-Forward)", "Trades", List.of(
+                new ChartUtils.DataPlot("Ratio", stats.getExtraDataPlot().stream().map(BackTestEngine.ExtraDataPlot::ratio).toList())
+        ));
         ChartUtils.plot("BackTest Balance (Walk-Forward)", "Trades", List.of(
                 new ChartUtils.DataPlot("Balance", stats.getExtraDataPlot().stream().map(BackTestEngine.ExtraDataPlot::balance).toList())
         ));
@@ -112,14 +118,12 @@ public class Main {
         Vesta.info("  Win Rate:               %.2f%% (%d W / %d L)", winRate, stats.getWins(), stats.getLosses());
         Vesta.info("  Timeouts:               %d (Salida por tiempo) ROI %.2f%% ", stats.getTimeouts(), stats.getRoiTimeOut());
         Vesta.info("  TP/SL:                  %d TP / %s SL", stats.getTakeProfit(), stats.getStopLoss());
-        Vesta.info("  ROI Total:              %.2f%%", stats.getRoi());
         Vesta.info("  Max Drawdown:           %.2f%%", stats.getCurrentDrawdown() * 100);
-        Vesta.info("  DireRate:               %.2f%% (%d L, %d S, %d N)", (float) stats.getLongs()/(stats.getLongs() + stats.getShorts()), stats.getLongs(), stats.getShorts(), stats.getNothing());
-        Vesta.info("  Avg Hold Time:          %.1f min", avgHoldMinutes);
+        Vesta.info("  DireRate:               (%d %.2f%% L, %d %.2f%% S, %d N)", stats.getLongs(), stats.getRoiLong(), stats.getShorts(), stats.getRoiShort(), stats.getNothing());
+        Vesta.info("  Avg Hold Time:          %.3f min", avgHoldMinutes);
         Vesta.info("  PNL Neto:               %s$%.2f%s", backtestResult.netPnL() >= 0 ? "\u001B[32m" : "\u001B[31m", backtestResult.netPnL(), "\u001B[0m");
         Vesta.info("  ROI Total:              %s%.2f%%%s", backtestResult.roiPercent() >= 0 ? "\u001B[32m" : "\u001B[31m", backtestResult.roiPercent(), "\u001B[0m");
-        Vesta.info("  Trades (Win/Loss):      %d (%d/%d)", backtestResult.totalTrades(), backtestResult.winTrades(), backtestResult.lossTrades());
-        Vesta.info("  Max Drawdown:           %.2f%%", backtestResult.maxDrawdown());
+        Vesta.info("  Max Drawdown:           %.2f%%", backtestResult.maxDrawdown()*100);
         Vesta.info("--------------------------------------------------");
     }
 }

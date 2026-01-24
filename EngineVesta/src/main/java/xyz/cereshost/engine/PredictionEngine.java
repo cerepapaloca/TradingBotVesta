@@ -133,10 +133,13 @@ public class PredictionEngine {
                 }
             }
 
-            // 5. Desnormalizar salidas (TP y SL)
+            // Des normalizar salidas
             float[][] denormalized = yNormalizer.inverseTransform(output2D);
-            // Para batch size = 1, retornar la primera fila
-            return denormalized[0];
+            float[] raw = denormalized[0];
+            // No tiene sentido que prediga en negativo
+            raw[0] = Math.max(raw[0], 0);
+            raw[1] = Math.max(raw[1], 0);
+            return raw;
         } catch (Exception e) {
             Vesta.error("Error en predictRaw: " + e.getMessage());
             e.printStackTrace();
@@ -176,7 +179,7 @@ public class PredictionEngine {
 
         // 3. Lógica de Negocio
         float currentPrice = (float) subList.get(subList.size() - 1).close();
-        DireccionOperation direction;
+        BackTestEngine.DireccionOperation direction;
         float tpLogReturn, slLogReturn;
 
         // Filtro Híbrido: Fuerza + Probabilidad
@@ -185,70 +188,61 @@ public class PredictionEngine {
         boolean signalShort = directionProb < -0.03f;
 
         if (signalLong) {
-            direction = DireccionOperation.LONG;
+            direction = BackTestEngine.DireccionOperation.LONG;
             tpLogReturn = upForce;
             slLogReturn = downForce;
         } else if (signalShort) {
-            direction = DireccionOperation.SHORT;
+            direction = BackTestEngine.DireccionOperation.SHORT;
             tpLogReturn = downForce;
             slLogReturn = upForce;
         } else {
-            direction = DireccionOperation.NEUTRAL;
+            direction = BackTestEngine.DireccionOperation.NEUTRAL;
             tpLogReturn = 0;
             slLogReturn = 0;
         }
 
         // Cálculos de precios finales
-        float tpPrice = (float) (currentPrice * Math.exp(direction.equals(DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
-        float slPrice = (float) (currentPrice * Math.exp(direction.equals(DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
+        float tpPrice = (float) (currentPrice * Math.exp(direction.equals(BackTestEngine.DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
+        float slPrice = (float) (currentPrice * Math.exp(direction.equals(BackTestEngine.DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
 
         // Fix visual para Neutral
         //if(direction.equals(DireccionOperation.NEUTRAL)) { tpPrice = currentPrice; slPrice = currentPrice; }
 
-        float ratio = slLogReturn > 0 ? tpLogReturn / slLogReturn : 0;
-
         return new PredictionResultTP_SL(
-                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, direction, ratio
+                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, direction
         );
     }
 
-    public enum DireccionOperation {
-        SHORT,
-        LONG,
-        NEUTRAL
-    }
-
     public record PredictionResultTP_SL(
-            float currentPrice,
-            float tpPrice,       // Precio de Take Profit
-            float slPrice,       // Precio de Stop Loss
-            float tpLogReturn,   // Log return para TP (positivo)
-            float slLogReturn,   // Log return para SL (positivo)
-            DireccionOperation direction,    // "LONG" o "SHORT"
-            float tpSlRatio      // Ratio TP/SL (idealmente > 2)
+            double currentPrice,
+            double tpPrice,       // Precio de Take Profit
+            double slPrice,       // Precio de Stop Loss
+            double tpLogReturn,   // Log return para TP (positivo)
+            double slLogReturn,   // Log return para SL (positivo)
+            BackTestEngine.DireccionOperation direction   // "LONG" o "SHORT"
     ) {
-        public float getTpDistance() {
+        public double getTpDistance() {
             return Math.abs(tpPrice - currentPrice);
         }
 
-        public float getSlDistance() {
+        public double getSlDistance() {
             return Math.abs(slPrice - currentPrice);
         }
 
-        public float getTpPercent() {
+        public double getTpPercent() {
             return (float) ((Math.exp(tpLogReturn) - 1.0) * 100.0);
         }
 
-        public float getSlPercent() {
+        public double getSlPercent() {
             return (float) ((Math.exp(slLogReturn) - 1.0) * 100.0);
         }
 
-        public float percentToPrice(float p) {
-            return currentPrice * p;
+        public double getRatio(){
+            return getTpPercent() / getSlPercent();
         }
 
         public boolean isProfitableSetup() {
-            return tpSlRatio <= 0.5f;
+            return getRatio() <= 1f;
         }
     }
 
@@ -322,7 +316,7 @@ public class PredictionEngine {
                 Vesta.info("    Dirección sugerida:     %s%s%s",
                         directionColor, result.direction(), reset);
                 Vesta.info("    Ratio TP/SL:            %s%s:1%s",
-                        profitableColor, dfRatio.format(result.tpSlRatio()), reset);
+                        profitableColor, dfRatio.format(result.getRatio()), reset);
                 Vesta.info("    Setup rentable:         %s%s%s",
                         profitableColor, result.isProfitableSetup() ? "SÍ" : "NO", reset);
 
@@ -339,63 +333,5 @@ public class PredictionEngine {
             Vesta.error("Error en predicción:");
             e.printStackTrace();
         }
-    }
-
-    /**
-     * Predice múltiples pasos hacia adelante
-     */
-    public PredictionResultTP_SL[] predictMultipleSteps(List<Candle> candles, String symbol, int steps) {
-        PredictionResultTP_SL[] results = new PredictionResultTP_SL[steps];
-        List<Candle> currentCandles = new java.util.ArrayList<>(candles);
-
-        for (int i = 0; i < steps; i++) {
-            try {
-                results[i] = predictNextPriceDetail(currentCandles, symbol);
-
-                // Añadir una vela "simulada" para el siguiente paso (usando predicción como cierre)
-                // Esto es una simplificación, en producción usarías datos reales
-                if (i < steps - 1) {
-                    Candle lastCandle = currentCandles.get(currentCandles.size() - 1);
-                    Candle simulatedCandle = createSimulatedCandle(lastCandle, results[i]);
-                    currentCandles.add(simulatedCandle);
-                }
-            } catch (Exception e) {
-                Vesta.error("Error en predicción del paso " + (i+1) + ": " + e.getMessage());
-                results[i] = null;
-            }
-        }
-
-        return results;
-    }
-
-    private Candle createSimulatedCandle(Candle lastCandle, PredictionResultTP_SL prediction) {
-        // Crear una vela simulada basada en la predicción
-        // Esto es una simplificación para demostración
-        return new Candle(
-                lastCandle.openTime() + 60000L, // +1 minuto
-                lastCandle.close(), // open = último close
-                Math.max(prediction.tpPrice(), prediction.currentPrice()), // high
-                Math.min(prediction.slPrice(), prediction.currentPrice()), // low
-                "LONG".equals(prediction.direction()) ? prediction.tpPrice() : prediction.slPrice(), // close
-                lastCandle.amountTrades(),
-                lastCandle.volumeBase(),
-                lastCandle.quoteVolume(),
-                lastCandle.buyQuoteVolume(),
-                lastCandle.sellQuoteVolume(),
-                lastCandle.deltaUSDT(),
-                lastCandle.buyRatio(),
-                lastCandle.bidLiquidity(),
-                lastCandle.askLiquidity(),
-                lastCandle.depthImbalance(),
-                lastCandle.midPrice(),
-                lastCandle.spread(),
-                lastCandle.rsi4(),
-                lastCandle.rsi8(),
-                lastCandle.rsi16(),
-                lastCandle.macdVal(),
-                lastCandle.macdSignal(),
-                lastCandle.macdHist(),
-                lastCandle.nvi()
-        );
     }
 }

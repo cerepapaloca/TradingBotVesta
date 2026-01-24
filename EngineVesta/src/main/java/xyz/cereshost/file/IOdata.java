@@ -128,9 +128,9 @@ public class IOdata {
                     Deque<CandleSimple> candles = new ArrayDeque<>();
                     Deque<Trade> trades = new ArrayDeque<>();
                     for (int i = startMonth; i <= endtMonth; i++) {
-                        File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, startMonth);
+                        File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, i);
                         candles.addAll(parseKlinesFromFile(klineFile));
-                        File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, startMonth);
+                        File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, i);
                         trades.addAll(parseTradesFromFile(tradeFile));
                     }
 

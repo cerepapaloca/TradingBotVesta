@@ -3,9 +3,12 @@ package xyz.cereshost.engine;
 import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
+import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
+import ai.djl.nn.ParallelBlock;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.Dropout;
@@ -13,10 +16,7 @@ import ai.djl.nn.recurrent.GRU;
 import ai.djl.nn.recurrent.LSTM;
 import ai.djl.pytorch.engine.PtModel;
 import ai.djl.pytorch.engine.PtNDManager;
-import ai.djl.training.DefaultTrainingConfig;
-import ai.djl.training.EasyTrain;
-import ai.djl.training.Trainer;
-import ai.djl.training.TrainingConfig;
+import ai.djl.training.*;
 import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.training.dataset.Dataset;
 import ai.djl.training.listener.TrainingListener;
@@ -39,7 +39,7 @@ import java.util.List;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 40;
+    public static final int LOOK_BACK = 30;
     public static final int EPOCH = 250;
 
     /**
@@ -157,7 +157,7 @@ public class VestaEngine {
             model.setBlock(getSequentialBlock());
             // Configuración de entrenamiento (igual a tu código)
             MetricsListener metrics = new MetricsListener();
-            TrainingConfig config = new DefaultTrainingConfig(Loss.l2Loss())
+            TrainingConfig config = new DefaultTrainingConfig(new WeightedDirectionLoss("WeightedL2", 5.0f))
                     .optOptimizer(Optimizer.adam()
                             .optLearningRateTracker(Tracker.cosine()
                                     .setBaseValue(0.0001f)
@@ -173,7 +173,7 @@ public class VestaEngine {
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 32*4;
+            int batchSize = 32*4*2;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -230,7 +230,7 @@ public class VestaEngine {
                 BackTestEngine.BackTestResult simResult;
 
                 if (market != null) {
-                    simResult = BackTestEngine.runBacktest(market, predEngine);
+                    simResult = new BackTestEngine(market, predEngine).run();
                 } else {
                     Vesta.error("No se encontró mercado para backtest: " + testSymbol);
                     simResult = null;
@@ -245,8 +245,10 @@ public class VestaEngine {
     public record TrainingTestsResults(EngineUtils.ResultsEvaluate evaluate, BackTestEngine.BackTestResult backtest) {}
 
     public static SequentialBlock getSequentialBlock() {
-        return new SequentialBlock()
-                .add(GRU.builder()
+        SequentialBlock mainBlock = new SequentialBlock();
+
+        // 1. BACKBONE (Capas comunes que extraen patrones de las velas)
+        mainBlock.add(GRU.builder()
                         .setStateSize(256)
                         .setNumLayers(2)
                         .optReturnState(false)
@@ -260,21 +262,48 @@ public class VestaEngine {
                         .optBatchFirst(true)
                         .optDropRate(0.2f)
                         .build())
-                .add(ndList -> new NDList(ndList.singletonOrThrow().get(":, -1, :")))
-//                .add(Dropout.builder().optRate(0.1f).build())
-//                .add(Linear.builder().setUnits(256).build())
-                .add(Dropout.builder().optRate(0.2f).build())
+                .add(ndList -> new NDList(ndList.singletonOrThrow().get(":, -1, :"))) // Tomar último estado
                 .add(Linear.builder().setUnits(128).build())
-                .add(Dropout.builder().optRate(0.1f).build())
-                .add(Linear.builder().setUnits(64).build())
-                .add(Linear.builder().setUnits(3).build())
-                .add(ndList -> {
-                    NDArray out = ndList.singletonOrThrow();
-                    NDArray tpSl = Activation.relu(out.get(":, 0:2"));
-                    NDArray dir = Activation.tanh(out.get(":, 2:3"));
-                    return new NDList(tpSl.concat(dir, 1));
-                });
-    }
+                .add(Activation::relu);
 
+        // 2. RAMIFICACIÓN (Aquí dividimos el camino)
+        // El ParallelBlock enviará los 128 datos a ambas ramas y luego las juntará
+        ParallelBlock branches = new ParallelBlock(list -> {
+            // Esta función indica cómo concatenar los resultados de las dos ramas
+            NDArray tp = list.get(0).singletonOrThrow();
+            NDArray sl = list.get(1).singletonOrThrow();
+            NDArray dir = list.get(2).singletonOrThrow();
+            return new NDList(
+                    NDArrays.concat(new NDList(tp, sl, dir), 1) // ✅ axis = 1
+            );
+        });
+
+        // TP
+        branches.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Activation::relu)
+                .add(Linear.builder().setUnits(1).build())
+        );
+
+        // SL
+        branches.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Activation::relu)
+                .add(Linear.builder().setUnits(1).build())
+        );
+
+        // Dirección
+        branches.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Activation::relu)
+                .add(Linear.builder().setUnits(1).build())
+                .add(Activation::tanh)
+        );
+
+        // Añadimos las ramas al bloque principal
+        mainBlock.add(branches);
+        return mainBlock;
+    }
 
 }

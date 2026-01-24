@@ -217,7 +217,7 @@ public class EngineUtils {
         double directionAccuracy = (double) correctDirections / batchSize * 100.0;
         double profitHitRate = (double) hitsProfitability / batchSize * 100.0;
 
-        Vesta.info("=== Evaluación Corregida (3-Outputs) ===");
+        Vesta.info("=== Evaluación (3-Outputs) ===");
         Vesta.info("MAE UP: %.6f | MAE DOWN: %.6f", avgMaeUP, avgMaeDOWN);
         Vesta.info("Acc Dirección: %.2f%%", directionAccuracy);
         Vesta.info("Hit Rate Estructural: %.2f%%", profitHitRate);

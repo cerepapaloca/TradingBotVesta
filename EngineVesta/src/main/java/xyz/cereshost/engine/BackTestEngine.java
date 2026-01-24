@@ -1,9 +1,9 @@
 package xyz.cereshost.engine;
 
+import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
 import xyz.cereshost.builder.BuilderData;
-import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.common.market.Trade;
@@ -14,26 +14,39 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+import static xyz.cereshost.engine.BackTestEngine.DireccionOperation.SHORT;
+
+@Getter
 public class BackTestEngine {
 
-    // --- Clases Internas para Estrategia (definidas arriba, pero incluidas aquí para portabilidad) ---
-    // (Puedes moverlas a archivos separados si prefieres)
+    private final BackTestStats stats = new BackTestStats();
+    private final List<ExtraDataPlot> extraStats = new ArrayList<>();
+    private final ListOperations operations = new ListOperations(this);
+    private final Market market;
+    private final PredictionEngine engine;
+    private final BacktestStrategy strategy;
+    private double balance = 1000.0;
+    private final double feeMaker;
+    private final double feeTaker;
 
-    public enum ExitReason { TAKE_PROFIT, STOP_LOSS, TIMEOUT, NO_DATA_ERROR }
-
-    public record TradeSetup(double entryPrice, double tpPrice, double slPrice, PredictionEngine.DireccionOperation direccion, double amountUsdt, int maxCandles, int leverage) {}
-
-    public record TradeResult(double pnl, double pnlPercent, double exitPrice, ExitReason reason, long entryTime, long exitTime) {}
-
-    // --- Motor Principal ---
-
-    public static BackTestResult runBacktest(Market market, PredictionEngine engine) {
-        return runBacktest(market, engine, new DefaultStrategy());
+    public BackTestEngine(Market market, PredictionEngine engine, BacktestStrategy strategy) {
+        this.market = market;
+        this.engine = engine;
+        this.strategy = strategy;
+        if (market.getSymbol().endsWith("USDT")) {
+            feeMaker = 0.0002;
+            feeTaker = 0.0005;
+        } else {
+            feeMaker = 0;
+            feeTaker = 0.0004;
+        }
     }
 
-    public static BackTestResult runBacktest(Market market, PredictionEngine engine, BacktestStrategy strategy) {
-        Vesta.info("⚙️ Iniciando Backtest Avanzado (Tick-Replay + Multi-Candle) para " + market.getSymbol());
+    public BackTestEngine(Market market, PredictionEngine engine) {
+        this(market, engine, new DefaultStrategy());
+    }
 
+    public BackTestResult run(){
         // 1. Preparar datos
         List<Candle> allCandles = BuilderData.to1mCandles(market);
         allCandles.sort(Comparator.comparingLong(Candle::openTime));
@@ -46,21 +59,8 @@ public class BackTestEngine {
         int startIndex = lookBack + 1;
 
         // Variables de estado
-        double balance = 1000.0;
         double initialBalance = balance;
-        double feeMaker;
-        double feeTaker;
-        if (market.getSymbol().endsWith("USDT")) {
-            feeMaker = 0.0002;
-            feeTaker = 0.0005;
-        }else {
-            feeMaker = 0;
-            feeTaker = 0.0004;
-        }
 
-
-        BackTestStats stats = new BackTestStats();
-        List<ExtraDataPlot> extraStats = new ArrayList<>();
 
         // 2. Loop principal (Walk-Forward)
         // Usamos un loop 'i' que podemos avanzar manualmente si una operación dura varias velas
@@ -73,66 +73,29 @@ public class BackTestEngine {
             PredictionEngine.PredictionResultTP_SL prediction = engine.predictNextPriceDetail(window, market.getSymbol());
 
             // B. Consultar estrategia
-            TradeSetup setup = strategy.preProcess(prediction, currentCandle, balance);
+            OpenOperation setup = strategy.preProcess(prediction, operations,currentCandle, balance);
 
-            if (setup == null) {
-                // La estrategia decidió no operar
-                continue;
+            if (setup != null && setup.getDireccion() != DireccionOperation.NEUTRAL) {
+                setup.setOpenTime(currentCandle.openTime());
+                operations.add(setup);
+                switch (setup.getDireccion()) {
+                    case LONG -> stats.longs++;
+                    case SHORT -> stats.shorts++;
+                }
+            } else {
+                stats.nothing++;
             }
 
-            switch (setup.direccion){
-                case LONG -> stats.longs++;
-                case SHORT -> stats.shorts++;
-                case NEUTRAL -> stats.nothing++;
-            }
-
-            if (setup.direccion == PredictionEngine.DireccionOperation.NEUTRAL) continue;
-
-            // C. Ejecutar Simulación de la Operación (Puede durar múltiples velas)
-            SimulatedTradeResult simResult = simulateTradeExecution(
+            // Inicia la simulaciónn de una vela de duración
+            simulateOneTick(
                     market,
                     allCandles,
-                    i, // Empezamos a buscar en la siguiente vela
-                    setup
+                    i + 1, // Empezamos a buscar en la siguiente vela
+                    // Debe ser una lista mutable
+                    operations
             );
-
-            if (simResult.reason == ExitReason.NO_DATA_ERROR) {
-                continue; // Ignorar operación por falta de datos
-            }
-
-            // D. Calcular PnL Real (con fees)
-            // Fee se cobra al entrar (sobre entry) y al salir (sobre exit)
-            double positionSize = setup.amountUsdt * setup.leverage; // notional
-            double qty = positionSize / setup.entryPrice;
-
-            double entryFee = positionSize * feeMaker;
-            double exitNotional = qty * simResult.exitPrice;
-            double exitFee = exitNotional * feeTaker;
-
-            double grossPnL = (simResult.exitPrice - setup.entryPrice) * qty;
-            double netPnL = grossPnL - entryFee - exitFee;
-
-            double pnlPercent = netPnL / setup.amountUsdt; // sobre margen
-
-            // E. Actualizar Balance
-            balance += netPnL;
-            if (balance < 0) balance = 0; // Quiebra
-
-            // F. Registrar estadísticas
-            TradeResult resultObj = new TradeResult(netPnL, pnlPercent, simResult.exitPrice, simResult.reason, currentCandle.openTime(), simResult.exitTime);
-            strategy.postProcess(resultObj);
-            stats.addTrade(resultObj, balance);
-            extraStats.add(new ExtraDataPlot((float) pnlPercent, (float) balance));
-
-            // G. Avanzar el índice 'i'
-            // Si la operación duró 5 velas, saltamos esas 5 para no abrir operaciones superpuestas
-            // (A menos que tu estrategia soporte grid/hedging, aquí asumimos 1 operación a la vez)
-            int candlesConsumed = simResult.candlesConsumed;
-            if (candlesConsumed > 0) {
-                i += (candlesConsumed - 1);
-            }
+            operations.computeCloses();
         }
-
         stats.getExtraDataPlot().addAll(extraStats);
         return new BackTestResult(
                 initialBalance, balance, balance - initialBalance, stats.getRoi(),
@@ -141,87 +104,111 @@ public class BackTestEngine {
         );
     }
 
-    private static int findCandleIndexByTime(List<Candle> candles, long exitTime, int currentIndex) {
-        for (int j = currentIndex; j < candles.size(); j++) {
-            if (candles.get(j).openTime() >= exitTime) {
-                return j;
-            }
+    public void computeFinal(CloseOperation closeOperation) {
+        if (closeOperation.reason() == ExitReason.NO_DATA_ERROR) {
+            return;
         }
-        return candles.size(); // Fin de los datos
+
+        // D. Calcular PnL Real (con fees)
+        // Fee se cobra al entrar (sobre entry) y al salir (sobre exit)
+        OpenOperation operation = closeOperation.openOperationLastEstate();
+        double positionSize = operation.amountInitUSDT * operation.leverage; // notional
+        double qty = positionSize / operation.entryPrice;
+
+        double entryFee = positionSize * feeMaker;
+        double exitNotional = qty * closeOperation.exitPrice;
+        double exitFee = exitNotional * feeTaker;
+
+        double grossPnL = (closeOperation.exitPrice - operation.entryPrice) * qty;
+        double netPnL = grossPnL - entryFee - exitFee;
+
+        double pnlPercent = netPnL / operation.amountInitUSDT; // sobre margen
+
+        // E. Actualizar Balance
+        balance += netPnL;
+        if (balance < 0) balance = 0; // Quiebra
+
+        // F. Registrar estadísticas
+        TradeResult resultObj = new TradeResult(netPnL, pnlPercent, closeOperation.exitPrice, closeOperation.reason, closeOperation.openOperationLastEstate().getOpenTime(), closeOperation.exitTime);
+        strategy.postProcess(resultObj);
+        stats.addTrade(resultObj, balance);
+        extraStats.add(new ExtraDataPlot((float) pnlPercent,
+                (float) balance,
+                (float) (operation.getTpPercent() / operation.getSlPercent()),
+                (float) operation.getTpPercent(),
+                (float) operation.getSlPercent()
+        ));
     }
 
     /**
      * Simula la vida de un trade a través del tiempo (velas) y trades (ticks).
      */
-    private static SimulatedTradeResult simulateTradeExecution(
+    private static void simulateOneTick(
             Market market,
             List<Candle> allCandles,
             int startIndex,
-            TradeSetup setup) {
+            ListOperations operations
+    ) {
 
-        int currentIndex = startIndex;
         int candlesChecked = 0;
 
-        while (currentIndex < allCandles.size() && candlesChecked < setup.maxCandles) {
-            Candle candle = allCandles.get(currentIndex);
-            long endTime = candle.openTime() + 60_000;
+        Candle candle = allCandles.get(startIndex);
+        long endTime = candle.openTime() + 60_000;
 
-            // Obtener trades reales de este minuto
-            List<Trade> trades = market.getTradesInWindow(candle.openTime(), endTime);
+        // Obtener trades reales de este minuto
+        List<Trade> trades = market.getTradesInWindow(candle.openTime(), endTime);
 
-            if (trades.isEmpty()) {
-                // ERROR DE DATOS: Si no hay trades, es arriesgado asumir OHLC.
-                // Opción A: Saltar vela (asumir precio estable).
-                // Opción B: Abortar trade.
-                // Aquí elegimos abortar si es justo en la entrada, o continuar si ya estamos dentro.
-                if (candlesChecked == 0) return new SimulatedTradeResult(setup.entryPrice, ExitReason.NO_DATA_ERROR, 0, 0);
+        if (trades.isEmpty()) {
+            // Si no hay trades no hay resultados ya que no se cerro nigun ninguna operación
+            return;
+        }
+        double lastPrice = 0;
 
-                currentIndex++;
-                candlesChecked++;
-                continue;
-            }
-
-            // REPLAY TICK A TICK
+        for (OpenOperation openOperation : operations.iteratorOpens()) {
+            // Analiza cada operacion
             for (Trade t : trades) {
+                lastPrice = t.price();
                 double price = t.price();
-
-                final SimulatedTradeResult sl = new SimulatedTradeResult(price, ExitReason.STOP_LOSS, t.time(), candlesChecked + 1);
-                final SimulatedTradeResult tp = new SimulatedTradeResult(price, ExitReason.TAKE_PROFIT, t.time(), candlesChecked + 1);
-                switch (setup.direccion()) {
+                openOperation.setLastExitPrices(price);
+                boolean computeLimit = false;
+                switch (openOperation.getDireccion()) {
                     case LONG -> {
-                        // LONG: SL abajo, TP arriba
-                        if (price <= setup.slPrice) {
-                            return sl;
+                        if (price >= openOperation.getTpPrice()) {
+                            operations.close(new CloseOperation(price, ExitReason.LONG_TAKE_PROFIT, t.time(), candlesChecked, openOperation));
+                            computeLimit = true;
+                            break;
+
                         }
-                        if (price >= setup.tpPrice) {
-                            return tp;
+                        if (price <= openOperation.getSlPrice()) {
+                            operations.close(new CloseOperation(price, ExitReason.LONG_STOP_LOSS, t.time(), candlesChecked, openOperation));
+                            computeLimit = true;
                         }
                     }
                     case SHORT -> {
-                        // SHORT: SL arriba, TP abajo
-                        if (price >= setup.slPrice) {
-                            return sl;
+                        if (price <= openOperation.getTpPrice()) {
+                            operations.close(new CloseOperation(price, ExitReason.SHORT_TAKE_PROFIT, t.time(), candlesChecked, openOperation));
+                            computeLimit = true;
+                            break;
                         }
-                        if (price <= setup.tpPrice) {
-                            return tp;
+                        if (price >= openOperation.getSlPrice()) {
+                            operations.close(new CloseOperation(price, ExitReason.SHORT_STOP_LOSS, t.time(), candlesChecked, openOperation));
+                            computeLimit = true;
                         }
+
                     }
                 }
+                if (computeLimit) break;
             }
-
-            currentIndex++;
-            candlesChecked++;
         }
-
-        // Si salimos del loop, se acabó el tiempo (TIMEOUT) o los datos
-        double closePrice = allCandles.get(Math.min(currentIndex - 1, allCandles.size() - 1)).close();
-        return new SimulatedTradeResult(closePrice, ExitReason.TIMEOUT, 0, candlesChecked);
+        for (OpenOperation openOperation : operations.iteratorOpens()) {
+            // Se superó el límite?
+            if (openOperation.next())  {
+                operations.close(new CloseOperation(lastPrice, ExitReason.TIMEOUT, 0, candlesChecked, openOperation));
+            }
+        }
+        return;
     }
 
-    // Record interno para comunicar resultado de la simulación
-    private record SimulatedTradeResult(double exitPrice, ExitReason reason, long exitTime, int candlesConsumed) {}
-
-    // --- Clase de Estadísticas (Telemetría) ---
 
     @Getter
     @Setter
@@ -245,13 +232,13 @@ public class BackTestEngine {
 
         public int getTakeProfit() {
             int i = 0;
-            for (TradeResult tr : trades) if (tr.reason().equals(ExitReason.TAKE_PROFIT)) i++;
+            for (TradeResult tr : trades) if (tr.reason().equals(ExitReason.LONG_TAKE_PROFIT)) i++;
             return i;
         }
 
         public int getStopLoss() {
             int i = 0;
-            for (TradeResult tr : trades) if (tr.reason().equals(ExitReason.STOP_LOSS)) i++;
+            for (TradeResult tr : trades) if (tr.reason().equals(ExitReason.LONG_STOP_LOSS)) i++;
             return i;
         }
 
@@ -301,7 +288,85 @@ public class BackTestEngine {
             }
             return roi*100;
         }
+
+        public double getRoiLong() {
+            double roi = 0;
+            for (TradeResult tr : trades) {
+                if (tr.reason().equals(ExitReason.LONG_STOP_LOSS) || tr.reason().equals(ExitReason.LONG_TAKE_PROFIT)) roi += tr.pnlPercent;
+            }
+            return roi*100;
+        }
+
+        public double getRoiShort() {
+            double roi = 0;
+            for (TradeResult tr : trades) {
+                if (tr.reason().equals(ExitReason.SHORT_STOP_LOSS) || tr.reason().equals(ExitReason.SHORT_TAKE_PROFIT)) roi += tr.pnlPercent;
+            }
+            return roi*100;
+        }
     }
+
+    public enum ExitReason {
+        LONG_TAKE_PROFIT,
+        LONG_STOP_LOSS,
+        SHORT_TAKE_PROFIT,
+        SHORT_STOP_LOSS,
+        TIMEOUT,
+        NO_DATA_ERROR
+    }
+
+    public record CloseOperation(double exitPrice, ExitReason reason, long exitTime, int candlesConsumed, OpenOperation openOperationLastEstate) {}
+
+    @Data
+    public static final class OpenOperation {
+        private double tpPercent;
+        private double slPercent;
+        private int maxCandles;
+        private int countCandles = 0;
+        private double lastExitPrices;
+
+        private long openTime;
+
+        private final double entryPrice;
+        private final DireccionOperation direccion;
+        private final double amountInitUSDT;
+        private final int leverage;
+
+        // Ojo el TP y SL en Porcentajes ABS sin apalancar
+        public OpenOperation(double entryPrice, double tpPercent, double slPercent, DireccionOperation direccion, double amountUSDT, int maxCandles, int leverage) {
+            this.tpPercent = tpPercent;
+            this.slPercent = slPercent;
+            this.maxCandles = maxCandles;
+
+            this.entryPrice = entryPrice;
+            this.direccion = direccion;
+            this.amountInitUSDT = amountUSDT;
+            this.leverage = leverage;
+        }
+
+        public double getSlPrice() {
+            return entryPrice + (entryPrice * ((direccion.equals(SHORT) ? slPercent : -slPercent)*0.01));
+        }
+
+        public double getTpPrice() {
+            return entryPrice + (entryPrice * ((direccion.equals(SHORT) ? -tpPercent : tpPercent)*0.01));
+        }
+
+        public boolean next() {
+            if (maxCandles <= 0) return false;
+            countCandles++;
+            return countCandles >= maxCandles;
+        }
+    }
+
+    public enum DireccionOperation {
+        SHORT,
+        LONG,
+        // OJO no se puede operar con neutral solo es una forma de identificar operacion sin movimiento ósea nada
+        NEUTRAL
+    }
+
+    public record TradeResult(double pnl, double pnlPercent, double exitPrice, ExitReason reason, long entryTime, long exitTime) {}
 
     // Mantener compatibilidad con tu código existente
     public record BackTestResult(
@@ -316,5 +381,5 @@ public class BackTestEngine {
             BackTestStats stats
     ) {}
 
-    public record ExtraDataPlot(float pnlPercent, float balance) {}
+    public record ExtraDataPlot(float pnlPercent, float balance, float ratio, float tpPercent, float slPercent) {}
 }

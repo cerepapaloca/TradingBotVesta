@@ -157,11 +157,11 @@ public class BuilderData {
             }
 
             // Limpieza de seguridad
-            for (int k = 0; k < 2; k++) {
-                if (Float.isNaN(y[i][k]) || Float.isInfinite(y[i][k]) || y[i][k] < 0) {
-                    y[i][k] = 0.0001f;
-                }
-            }
+//            for (int k = 0; k < 2; k++) {
+//                if (Float.isNaN(y[i][k]) || Float.isInfinite(y[i][k]) || y[i][k] < 0) {
+//                    y[i][k] = 0.000f;
+//                }
+//            }
         }
         return new Pair<>(X, y);
     }

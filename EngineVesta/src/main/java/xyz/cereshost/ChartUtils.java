@@ -13,6 +13,7 @@ import org.jfree.data.xy.OHLCDataset;
 import org.jfree.data.xy.XYSeriesCollection;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
+import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.engine.EngineUtils;
 
 import javax.swing.*;
@@ -34,7 +35,6 @@ public class ChartUtils {
         for (DataPlot plot : plots) {
             List<Float> values = plot.values();
             String seriesName = plot.yLabel();
-
             for (int i = 0; i < values.size(); i++) {
                 dataset.addValue(values.get(i), seriesName, String.valueOf(i + 1));
             }
@@ -136,73 +136,6 @@ public class ChartUtils {
 
             } catch (Exception e) {
                 Vesta.error("Error mostrando gráfico: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }
-
-        public static void showPriceComparison(
-                String title,
-                List<Float> actualPrices,
-                List<Float> predictedPrices
-        ) {
-            if (actualPrices.size() != predictedPrices.size()) {
-                Vesta.error("Los arrays de precios no tienen el mismo tamaño");
-                return;
-            }
-
-            try {
-                // Dataset
-                XYSeriesCollection dataset = getXySeriesCollection(actualPrices, predictedPrices);
-
-                // Crear gráfico
-                JFreeChart chart = ChartFactory.createXYLineChart(
-                        title,
-                        "Muestra",
-                        "Precio",
-                        dataset
-                );
-
-                XYPlot plot = chart.getXYPlot();
-
-                double min = Double.POSITIVE_INFINITY;
-                double max = Double.NEGATIVE_INFINITY;
-
-                for (int i = 0; i < actualPrices.size(); i++) {
-                    double a = actualPrices.get(i);
-                    double p = predictedPrices.get(i);
-                    min = Math.min(min, Math.min(a, p));
-                    max = Math.max(max, Math.max(a, p));
-                }
-
-                // margen del 2%
-                double padding = (max - min) * 0.02;
-                if (padding == 0) padding = max * 0.001; // por si todo es constante
-
-                NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
-                rangeAxis.setAutoRange(false);
-                rangeAxis.setLowerBound(min - padding);
-                rangeAxis.setUpperBound(max + padding);
-
-                // ===== MEJORAS VISUALES OPCIONALES =====
-                rangeAxis.setAutoTickUnitSelection(true);
-                plot.setDomainGridlinesVisible(true);
-                plot.setRangeGridlinesVisible(true);
-
-                // Mostrar
-                ChartPanel chartPanel = new ChartPanel(chart);
-                chartPanel.setPreferredSize(new Dimension(1200, 600));
-
-                JFrame frame = new JFrame("Comparación Predicciones");
-                frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-                frame.getContentPane().add(chartPanel);
-                frame.pack();
-                frame.setLocationRelativeTo(null);
-                frame.setVisible(true);
-
-                Vesta.info("Mostrando comparación de " + actualPrices.size() + " predicciones");
-
-            } catch (Exception e) {
-                Vesta.error("Error mostrando comparación: " + e.getMessage());
                 e.printStackTrace();
             }
         }
@@ -442,103 +375,6 @@ public class ChartUtils {
     }
 
     /**
-     * Muestra la precisión del modelo por magnitud del movimiento
-     */
-    public static void plotPrecisionByMagnitude(String title, List<EngineUtils.ResultPrediction> results) {
-        if (results == null || results.isEmpty()) return;
-
-        // Ordenar por magnitud del TP real
-        List<EngineUtils.ResultPrediction> sorted = new ArrayList<>(results);
-        sorted.sort(Comparator.comparingDouble(r -> Math.abs(r.realTP())));
-
-        int numBins = 10;
-        int binSize = Math.max(1, sorted.size() / numBins);
-
-        DefaultCategoryDataset datasetDirection = new DefaultCategoryDataset();
-        DefaultCategoryDataset datasetRatio = new DefaultCategoryDataset();
-
-        for (int i = 0; i < numBins; i++) {
-            int start = i * binSize;
-            int end = (i == numBins - 1) ? sorted.size() : Math.min(sorted.size(), (i + 1) * binSize);
-
-            if (start >= end) continue;
-
-            List<EngineUtils.ResultPrediction> subList = sorted.subList(start, end);
-
-            // Calcular métricas
-            long directionalHits = subList.stream()
-                    .filter(r -> (r.predTP() > r.predSL()) == (r.realTP() > r.realSL()))
-                    .count();
-
-            long profitableHits = subList.stream()
-                    .filter(r -> {
-                        boolean predProfitable = r.predTP() > r.predSL();
-                        boolean realProfitable = r.realTP() > r.realSL();
-                        return predProfitable && realProfitable;
-                    })
-                    .count();
-
-            // Magnitud promedio del TP real en este bin
-            double avgMagnitude = subList.stream()
-                    .mapToDouble(EngineUtils.ResultPrediction::realTP)
-                    .average().orElse(0);
-
-            // Calcular porcentajes
-            double directionalAccuracy = (double) directionalHits / subList.size() * 100.0;
-            double profitableAccuracy = (double) profitableHits / subList.size() * 100.0;
-
-            String binLabel = String.format("%.4f", avgMagnitude * 100) + "%";
-            datasetDirection.addValue(directionalAccuracy, "Precisión Direccional", binLabel);
-            datasetRatio.addValue(profitableAccuracy, "Trades Rentables", binLabel);
-        }
-
-        // Crear gráficos
-        JFreeChart chartDirection = ChartFactory.createBarChart(
-                title + " - Precisión Direccional",
-                "Magnitud del TP Real (%)",
-                "Precisión (%)",
-                datasetDirection,
-                PlotOrientation.VERTICAL,
-                true,
-                true,
-                false
-        );
-
-        JFreeChart chartRatio = ChartFactory.createBarChart(
-                title + " - Trades Rentables",
-                "Magnitud del TP Real (%)",
-                "Precisión (%)",
-                datasetRatio,
-                PlotOrientation.VERTICAL,
-                true,
-                true,
-                false
-        );
-
-        // Configurar rangos
-        CategoryPlot plot1 = chartDirection.getCategoryPlot();
-        NumberAxis rangeAxis1 = (NumberAxis) plot1.getRangeAxis();
-        rangeAxis1.setRange(0.0, 100.0);
-
-        CategoryPlot plot2 = chartRatio.getCategoryPlot();
-        NumberAxis rangeAxis2 = (NumberAxis) plot2.getRangeAxis();
-        rangeAxis2.setRange(0.0, 100.0);
-
-        // Mostrar en panel dividido
-        JPanel panel = new JPanel(new GridLayout(2, 1));
-        panel.add(new ChartPanel(chartDirection));
-        panel.add(new ChartPanel(chartRatio));
-
-        JFrame frame = new JFrame(title);
-        frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        frame.getContentPane().add(panel);
-        frame.pack();
-        frame.setSize(1200, 800);
-        frame.setLocationRelativeTo(null);
-        frame.setVisible(true);
-    }
-
-    /**
      * Muestra la distribución de ratios TP/SL
      */
     public static void plotRatioDistribution(String title, List<EngineUtils.ResultPrediction> results) {
@@ -601,5 +437,306 @@ public class ChartUtils {
         frame.pack();
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
+    }
+
+    public static void plotRatioVsROI(String title, List<BackTestEngine.ExtraDataPlot> extraStats) {
+        if (extraStats == null || extraStats.isEmpty()) return;
+
+        try {
+            // Ordenar por ratio (de menor a mayor)
+            List<BackTestEngine.ExtraDataPlot> sortedStats = new ArrayList<>(extraStats);
+            sortedStats.sort(Comparator.comparingDouble(BackTestEngine.ExtraDataPlot::ratio));
+
+            // Crear dataset para ROI vs Ratio
+            XYSeriesCollection dataset = new XYSeriesCollection();
+            org.jfree.data.xy.XYSeries roiSeries = new org.jfree.data.xy.XYSeries("ROI por Ratio");
+            org.jfree.data.xy.XYSeries cumulativeROISeries = new org.jfree.data.xy.XYSeries("ROI Acumulado");
+
+            double cumulativeROI = 0;
+            for (int i = 0; i < sortedStats.size(); i++) {
+                BackTestEngine.ExtraDataPlot stat = sortedStats.get(i);
+                float roi = stat.pnlPercent() * 100; // Convertir a porcentaje
+                float ratio = stat.ratio();
+
+                roiSeries.add(ratio, roi);
+
+                cumulativeROI += roi;
+                cumulativeROISeries.add(ratio, cumulativeROI);
+            }
+
+            dataset.addSeries(roiSeries);
+            dataset.addSeries(cumulativeROISeries);
+
+            // Crear gráfico
+            JFreeChart chart = ChartFactory.createXYLineChart(
+                    title + " - ROI vs Ratio TP/SL",
+                    "Ratio TP/SL (Ordenado)",
+                    "ROI (%)",
+                    dataset
+            );
+
+            // Configurar colores y estilo
+            XYPlot plot = (XYPlot) chart.getPlot();
+            plot.getRenderer().setSeriesPaint(0, Color.BLUE);
+            plot.getRenderer().setSeriesPaint(1, Color.RED);
+
+            // Añadir línea en ROI=0 para referencia
+            plot.addRangeMarker(new org.jfree.chart.plot.ValueMarker(0, Color.GRAY, new BasicStroke(1.0f)));
+
+            // Añadir línea en Ratio=1 (TP=SL) para referencia
+            plot.addDomainMarker(new org.jfree.chart.plot.ValueMarker(1, Color.GREEN, new BasicStroke(1.0f)));
+
+            // Mostrar en ventana
+            ChartPanel chartPanel = new ChartPanel(chart);
+            chartPanel.setPreferredSize(new Dimension(1200, 600));
+
+            JFrame frame = new JFrame("Ratio vs ROI");
+            frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            frame.getContentPane().add(chartPanel);
+            frame.pack();
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+
+            // Calcular estadísticas
+            double avgRatio = sortedStats.stream()
+                    .mapToDouble(BackTestEngine.ExtraDataPlot::ratio)
+                    .average()
+                    .orElse(0);
+
+            double positiveROICount = sortedStats.stream()
+                    .filter(s -> s.pnlPercent() > 0)
+                    .count();
+
+            double winRate = (positiveROICount / sortedStats.size()) * 100;
+
+            Vesta.info("Estadísticas Ratio vs ROI:");
+            Vesta.info("  Ratio promedio: " + avgRatio);
+            Vesta.info("  Ratio mínimo: " + sortedStats.get(0).ratio());
+            Vesta.info("  Ratio máximo: " + sortedStats.get(sortedStats.size() - 1).ratio());
+            Vesta.info("  Win Rate: " + String.format("%.2f", winRate) + "%");
+            Vesta.info("  ROI total acumulado: " + String.format("%.2f", cumulativeROI) + "%");
+
+        } catch (Exception e) {
+            Vesta.error("Error en plotRatioVsROI: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Muestra un gráfico que ordena las operaciones por magnitud del TP (de menor a mayor)
+     * y visualiza el ROI correspondiente
+     */
+    public static void plotTPSLMagnitudeVsROI(
+            String title,
+            List<BackTestEngine.ExtraDataPlot> ExtraData
+    ) {
+        if ( ExtraData == null || ExtraData.isEmpty()) return;
+
+        try {
+            // Crear lista combinada de datos
+            List<TPSLROIData> dataList = new ArrayList<>();
+            for (int i = 0; i < ExtraData.size(); i++) {
+                BackTestEngine.ExtraDataPlot stat = ExtraData.get(i);
+                // Calcular magnitud del TP (en porcentaje de log return)
+                float tpMagnitude = Math.abs(stat.tpPercent() * 10000); // Convertir a puntos base
+                float slMagnitude = Math.abs(stat.slPercent() * 10000); // Convertir a puntos base
+                float roi = stat.pnlPercent() * 100; // Convertir a porcentaje
+
+                dataList.add(new TPSLROIData(tpMagnitude, slMagnitude, roi));
+            }
+
+            // Ordenar por magnitud del TP (menor a mayor)
+            dataList.sort(Comparator.comparingDouble(TPSLROIData::tpMagnitude));
+
+            // Crear datasets
+            XYSeriesCollection datasetTP = new XYSeriesCollection();
+            XYSeriesCollection datasetSL = new XYSeriesCollection();
+            XYSeriesCollection datasetRatio = new XYSeriesCollection();
+
+            org.jfree.data.xy.XYSeries tpSeries = new org.jfree.data.xy.XYSeries("ROI vs Magnitud TP");
+            org.jfree.data.xy.XYSeries slSeries = new org.jfree.data.xy.XYSeries("ROI vs Magnitud SL");
+            org.jfree.data.xy.XYSeries ratioSeries = new org.jfree.data.xy.XYSeries("ROI vs Ratio TP/SL");
+
+            org.jfree.data.xy.XYSeries cumTPROI = new org.jfree.data.xy.XYSeries("ROI Acumulado TP");
+            org.jfree.data.xy.XYSeries cumSLROI = new org.jfree.data.xy.XYSeries("ROI Acumulado SL");
+
+            double cumTP = 0;
+            double cumSL = 0;
+
+            for (TPSLROIData data : dataList) {
+                tpSeries.add(data.tpMagnitude(), data.roi());
+                slSeries.add(data.slMagnitude(), data.roi());
+
+                float ratio = data.tpMagnitude() > 0 && data.slMagnitude() > 0 ?
+                        data.tpMagnitude() / data.slMagnitude() : 0;
+                ratioSeries.add(ratio, data.roi());
+
+                cumTP += data.roi();
+                cumSL += data.roi();
+
+                cumTPROI.add(data.tpMagnitude(), cumTP);
+                cumSLROI.add(data.slMagnitude(), cumSL);
+            }
+
+            datasetTP.addSeries(tpSeries);
+            datasetTP.addSeries(cumTPROI);
+
+            datasetSL.addSeries(slSeries);
+            datasetSL.addSeries(cumSLROI);
+
+            datasetRatio.addSeries(ratioSeries);
+
+            // Crear panel con múltiples gráficos
+            JPanel panel = new JPanel(new GridLayout(2, 2));
+
+            // Gráfico 1: ROI vs Magnitud TP
+            JFreeChart chartTP = ChartFactory.createScatterPlot(
+                    "ROI vs Magnitud TP",
+                    "Magnitud TP (puntos base)",
+                    "ROI (%)",
+                    datasetTP
+            );
+            XYPlot plotTP = (XYPlot) chartTP.getPlot();
+            plotTP.getRenderer().setSeriesPaint(0, Color.BLUE);
+            plotTP.getRenderer().setSeriesPaint(1, Color.RED);
+            plotTP.addRangeMarker(new org.jfree.chart.plot.ValueMarker(0, Color.GRAY, new BasicStroke(1.0f)));
+            panel.add(new ChartPanel(chartTP));
+
+            // Gráfico 2: ROI vs Magnitud SL
+            JFreeChart chartSL = ChartFactory.createScatterPlot(
+                    "ROI vs Magnitud SL",
+                    "Magnitud SL (puntos base)",
+                    "ROI (%)",
+                    datasetSL
+            );
+            XYPlot plotSL = (XYPlot) chartSL.getPlot();
+            plotSL.getRenderer().setSeriesPaint(0, Color.GREEN);
+            plotSL.getRenderer().setSeriesPaint(1, Color.ORANGE);
+            plotSL.addRangeMarker(new org.jfree.chart.plot.ValueMarker(0, Color.GRAY, new BasicStroke(1.0f)));
+            panel.add(new ChartPanel(chartSL));
+
+            // Gráfico 3: ROI vs Ratio TP/SL
+            JFreeChart chartRatio = ChartFactory.createScatterPlot(
+                    "ROI vs Ratio TP/SL",
+                    "Ratio TP/SL",
+                    "ROI (%)",
+                    datasetRatio
+            );
+            XYPlot plotRatio = (XYPlot) chartRatio.getPlot();
+            plotRatio.getRenderer().setSeriesPaint(0, Color.MAGENTA);
+            plotRatio.addRangeMarker(new org.jfree.chart.plot.ValueMarker(0, Color.GRAY, new BasicStroke(1.0f)));
+            plotRatio.addDomainMarker(new org.jfree.chart.plot.ValueMarker(1, Color.GREEN, new BasicStroke(1.0f)));
+            panel.add(new ChartPanel(chartRatio));
+
+            // Gráfico 4: Heatmap de densidad
+            JFreeChart heatmap = createROIDensityHeatmap(dataList);
+            panel.add(new ChartPanel(heatmap));
+
+            // Mostrar ventana
+            JFrame frame = new JFrame(title);
+            frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            frame.getContentPane().add(new JScrollPane(panel));
+            frame.setSize(1600, 1200);
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+
+            // Calcular estadísticas
+            double avgTP = dataList.stream()
+                    .mapToDouble(TPSLROIData::tpMagnitude)
+                    .average()
+                    .orElse(0);
+
+            double avgSL = dataList.stream()
+                    .mapToDouble(TPSLROIData::slMagnitude)
+                    .average()
+                    .orElse(0);
+
+            double avgROI = dataList.stream()
+                    .mapToDouble(TPSLROIData::roi)
+                    .average()
+                    .orElse(0);
+
+            Vesta.info("Estadísticas Magnitud TP/SL vs ROI:");
+            Vesta.info("  Magnitud TP promedio: " + String.format("%.2f", avgTP) + " pbs");
+            Vesta.info("  Magnitud SL promedio: " + String.format("%.2f", avgSL) + " pbs");
+            Vesta.info("  ROI promedio: " + String.format("%.2f", avgROI) + "%");
+            Vesta.info("  ROI total acumulado: " + String.format("%.2f", cumTP) + "%");
+
+        } catch (Exception e) {
+            Vesta.error("Error en plotTPSLMagnitudeVsROI: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+         * Clase auxiliar para almacenar datos de TP/SL y ROI
+         */
+        private record TPSLROIData(float tpMagnitude, float slMagnitude, float roi) {
+    }
+
+    /**
+     * Crea un heatmap de densidad para visualizar la relación entre TP, SL y ROI
+     */
+    private static JFreeChart createROIDensityHeatmap(List<TPSLROIData> dataList) {
+        try {
+            // Crear dataset para gráfico de dispersión 3D usando colores para representar el ROI
+            XYSeriesCollection dataset = new XYSeriesCollection();
+
+            // Crear series para diferentes rangos de ROI
+            org.jfree.data.xy.XYSeries highROI = new org.jfree.data.xy.XYSeries("ROI Alto (>5%)");
+            org.jfree.data.xy.XYSeries mediumROI = new org.jfree.data.xy.XYSeries("ROI Medio (0-5%)");
+            org.jfree.data.xy.XYSeries lowROI = new org.jfree.data.xy.XYSeries("ROI Bajo (-5-0%)");
+            org.jfree.data.xy.XYSeries negativeROI = new org.jfree.data.xy.XYSeries("ROI Negativo (<-5%)");
+
+            for (TPSLROIData data : dataList) {
+                if (data.roi() > 5) {
+                    highROI.add(data.slMagnitude(), data.tpMagnitude());
+                } else if (data.roi() > 0) {
+                    mediumROI.add(data.slMagnitude(), data.tpMagnitude());
+                } else if (data.roi() > -5) {
+                    lowROI.add(data.slMagnitude(), data.tpMagnitude());
+                } else {
+                    negativeROI.add(data.slMagnitude(), data.tpMagnitude());
+                }
+            }
+
+            if (highROI.getItemCount() > 0) dataset.addSeries(highROI);
+            if (mediumROI.getItemCount() > 0) dataset.addSeries(mediumROI);
+            if (lowROI.getItemCount() > 0) dataset.addSeries(lowROI);
+            if (negativeROI.getItemCount() > 0) dataset.addSeries(negativeROI);
+
+            // Crear gráfico de dispersión
+            JFreeChart chart = ChartFactory.createScatterPlot(
+                    "Heatmap: TP vs SL vs ROI",
+                    "Stop Loss (puntos base)",
+                    "Take Profit (puntos base)",
+                    dataset
+            );
+
+            XYPlot plot = (XYPlot) chart.getPlot();
+
+            // Configurar colores para cada serie
+            plot.getRenderer().setSeriesPaint(0, Color.GREEN);     // Alto ROI
+            plot.getRenderer().setSeriesPaint(1, Color.YELLOW);    // Medio ROI
+            plot.getRenderer().setSeriesPaint(2, Color.ORANGE);    // Bajo ROI
+            plot.getRenderer().setSeriesPaint(3, Color.RED);       // Negativo ROI
+
+            // Añadir líneas de referencia
+            plot.addDomainMarker(new org.jfree.chart.plot.ValueMarker(0, Color.GRAY, new BasicStroke(1.0f)));
+            plot.addRangeMarker(new org.jfree.chart.plot.ValueMarker(0, Color.GRAY, new BasicStroke(1.0f)));
+
+            return chart;
+
+        } catch (Exception e) {
+            Vesta.error("Error creando heatmap: " + e.getMessage());
+            e.printStackTrace();
+            // Crear un gráfico vacío en caso de error
+            return ChartFactory.createScatterPlot(
+                    "Heatmap: TP vs SL vs ROI (Error)",
+                    "Stop Loss",
+                    "Take Profit",
+                    new XYSeriesCollection()
+            );
+        }
     }
 }
