@@ -8,6 +8,7 @@ import xyz.cereshost.ChartUtils;
 import xyz.cereshost.FinancialCalculation;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
+import xyz.cereshost.engine.PredictionEngine;
 
 import java.util.*;
 
@@ -55,7 +56,7 @@ public class BuilderData {
                     continue;
                 }
 
-                Pair<float[][][], float[][]> pair = BuilderData.build(candles, LOOK_BACK, 5);
+                Pair<float[][][], float[][]> pair = BuilderData.build(candles, LOOK_BACK, 10);
                 float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                 float[][] yraw = pair.getValue();
 
@@ -121,39 +122,61 @@ public class BuilderData {
             double entryPrice = candles.get(i + lookBack).close();
 
             // 2. Escanear ventana futura (X velas) para los Targets
-            double bestBodyLong = -Double.MAX_VALUE;  // Cierre más alto
-            double worstWickLong = Double.MAX_VALUE;  // Mecha más baja
+            double bestPriceLong = -Double.MAX_VALUE;  // Cierre más alto
+            double worstPriceLong = Double.MAX_VALUE;  // Mecha más baja
 
-            double bestBodyShort = Double.MAX_VALUE;  // Cierre más bajo
-            double worstWickShort = -Double.MAX_VALUE; // Mecha más alta
+            double bestPriceShort = Double.MAX_VALUE;  // Cierre más bajo
+            double worstPriceShort = -Double.MAX_VALUE; // Mecha más alta
 
             for (int f = 1; f <= futureWindow; f++) {
                 Candle future = candles.get(i + lookBack + f);
 
                 // Para LONG
-                bestBodyLong = Math.max(bestBodyLong, future.close());
-                worstWickLong = Math.min(worstWickLong, future.low());
+                bestPriceLong = Math.max(bestPriceLong, future.close());
+                worstPriceLong = Math.min(worstPriceLong, future.low());
 
                 // Para SHORT
-                bestBodyShort = Math.min(bestBodyShort, future.close());
-                worstWickShort = Math.max(worstWickShort, future.high());
+                bestPriceShort = Math.min(bestPriceShort, future.close());
+                worstPriceShort = Math.max(worstPriceShort, future.high());
             }
 
             // 3. Determinar Dirección Real dominante en esa ventana
             // Usamos el cierre de la última vela de la ventana vs entrada
+            // 3. Calcular el Retorno Total de la ventana (Cierre Final vs Entrada)
             double finalCloseInWindow = candles.get(i + lookBack + futureWindow).close();
-            boolean isOverallBullish = finalCloseInWindow > entryPrice;
 
-            if (isOverallBullish) {
-                // TARGET LONG: TP (cuerpo máximo), SL (mecha mínima)
-                y[i][0] = (float) Math.log(bestBodyLong / entryPrice);     // Magnitud TP
-                y[i][1] = (float) Math.abs(Math.log(worstWickLong / entryPrice)); // Magnitud SL
-                y[i][2] = 1.0f; // Dirección Alcista
+            // Usamos log return para ser consistentes con el resto de la lógica
+            double totalMovementLog = Math.log(finalCloseInWindow / entryPrice);
+
+            double logTP;
+            double logSL;
+
+            if (totalMovementLog > PredictionEngine.THRESHOLD) {
+                // Alcista
+                logTP = Math.log(bestPriceLong / entryPrice);
+                logSL = Math.log(entryPrice / worstPriceLong);
+
+                y[i][0] = (float) Math.abs(logTP);
+                y[i][1] = (float) Math.abs(logSL);
+                y[i][2] = 1.0f; // Clase 1: LONG
+
+            } else if (totalMovementLog < -PredictionEngine.THRESHOLD) {
+                // Bajista
+                logTP = Math.log(entryPrice / bestPriceShort);
+                logSL = Math.log(worstPriceShort / entryPrice);
+
+                y[i][0] = (float) Math.abs(logTP);
+                y[i][1] = (float) Math.abs(logSL);
+                y[i][2] = -1.0f; // Clase -1: SHORT
+
             } else {
-                // TARGET SHORT: TP (cuerpo mínimo), SL (mecha máxima)
-                y[i][0] = (float) Math.abs(Math.log(bestBodyShort / entryPrice)); // Magnitud TP
-                y[i][1] = (float) Math.log(worstWickShort / entryPrice);    // Magnitud SL
-                y[i][2] = -1.0f; // Dirección Bajista
+                // Lateral
+                double volatilityUp = Math.abs(Math.log(bestPriceLong / entryPrice));
+                double volatilityDown = Math.abs(Math.log(worstPriceLong / entryPrice));
+
+                y[i][0] = (float) volatilityUp;   // TP potencial (aunque no operemos)
+                y[i][1] = (float) volatilityDown; // SL potencial (riesgo)
+                y[i][2] = 0.0f; // Clase 0: NEUTRAL
             }
 
             // Limpieza de seguridad

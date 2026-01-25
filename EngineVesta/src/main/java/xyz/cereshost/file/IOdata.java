@@ -156,10 +156,12 @@ public class IOdata {
                             .filter(c -> c.openTime() >= commonStart && c.openTime() <= commonEnd)
                             .collect(Collectors.toCollection(ArrayDeque::new));
                     candles.clear();
+                    System.gc();
                     Deque<Trade> finalTrades = trades.stream()
                             .filter(t -> t.time() >= commonStart && t.time() <= commonEnd)
                             .collect(Collectors.toCollection(ArrayDeque::new));
                     trades.clear(); // Esto puede pesar más 20GB de RAM
+                    System.gc();
                     Market market = new Market(s);
                     market.addCandles(finalCandles);
                     market.addTrade(finalTrades);

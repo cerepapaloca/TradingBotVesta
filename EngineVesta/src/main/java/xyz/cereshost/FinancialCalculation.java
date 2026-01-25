@@ -10,8 +10,8 @@ import java.util.List;
 @UtilityClass
 public class FinancialCalculation {
 
-    public static double @NotNull [] computeRSI(@NotNull List<Double> closes, int period) {
-        int n = closes.size();
+    public static double @NotNull [] computeRSI(@NotNull List<Double> price, int period) {
+        int n = price.size();
         double[] rsi = new double[n];
 
         if (n <= period) {
@@ -23,7 +23,7 @@ public class FinancialCalculation {
         double loss = 0.0;
 
         for (int i = 1; i <= period; i++) {
-            double diff = closes.get(i) - closes.get(i - 1);
+            double diff = price.get(i) - price.get(i - 1);
             if (diff >= 0) gain += diff;
             else loss -= diff;
         }
@@ -40,7 +40,7 @@ public class FinancialCalculation {
                 : 100.0 - (100.0 / (1.0 + (avgGain / avgLoss)));
 
         for (int i = period + 1; i < n; i++) {
-            double diff = closes.get(i) - closes.get(i - 1);
+            double diff = price.get(i) - price.get(i - 1);
             double g = diff > 0 ? diff : 0;
             double l = diff < 0 ? -diff : 0;
 

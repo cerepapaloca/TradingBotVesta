@@ -10,6 +10,7 @@ import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.file.IOdata;
 import xyz.cereshost.packet.PacketHandler;
+import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
 import java.util.*;
@@ -18,7 +19,7 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "SOLUSDT"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "DOGEUSDC"/* "BNBUSDT"*/);
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
@@ -30,10 +31,6 @@ public class Main {
 
     public static void main(String[] args) throws IOException, TranslateException, InterruptedException {
         instance = new Main();
-        String datasetLimit = System.getenv("DATASET_LIMIT");
-        if (datasetLimit != null) {
-            System.setProperty("DATASET_LIMIT", datasetLimit);
-        }
 
         System.setProperty("org.slf4j.simpleLogger.showThreadName", "false");
         System.setProperty("org.slf4j.simpleLogger.showLogName", "false");
@@ -53,10 +50,11 @@ public class Main {
 
                 Vesta.info("--------------------------------------------------");
                 String fullNameSymbol = String.join(" ", symbols);
+
                 Vesta.info("RESULTADOS FINALES DE " + fullNameSymbol.toUpperCase(Locale.ROOT) + ":");
                 Vesta.info("  MAE Promedio TP:           %.8f", evaluateResult.avgMaeTP());
                 Vesta.info("  MAE Promedio SL:           %.8f", evaluateResult.avgMaeSL());
-                Vesta.info("  Acierto de Tendencia:   %.2f%%", evaluateResult.hitRate());
+                Vesta.info("  Acierto de Tendencia:   %.2f%% (%.2f%%)", evaluateResult.hitRateSimple(), evaluateResult.hitRateAdvanced());
                 ChartUtils.CandleChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultPrediction());
                 ChartUtils.plotRatioDistribution("Ratios " + String.join(" ", symbols), evaluateResult.resultPrediction());
                 showDataBackTest(backtestResult);
@@ -83,11 +81,11 @@ public class Main {
                         ));
             }
             case "predict" -> {
-                String symbol = "SOLUSDT";
+                String symbol = "DOGEUSDC";
                 PredictionEngine.makePrediction(symbol);
             }
             case "backtest" -> {
-                String symbol = "SOLUSDT";
+                String symbol = "DOGEUSDC";
                 IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol);
                 showDataBackTest(new BackTestEngine(Vesta.MARKETS.get(symbol), PredictionEngine.loadPredictionEngine("VestaIA")).run());
             }
@@ -117,7 +115,10 @@ public class Main {
         Vesta.info(" Trades Totales:          %d",  stats.getTotalTrades());
         Vesta.info("  Win Rate:               %.2f%% (%d W / %d L)", winRate, stats.getWins(), stats.getLosses());
         Vesta.info("  Timeouts:               %d (Salida por tiempo) ROI %.2f%% ", stats.getTimeouts(), stats.getRoiTimeOut());
-        Vesta.info("  TP/SL:                  %d TP / %s SL", stats.getTakeProfit(), stats.getStopLoss());
+        Vesta.info("  Total TP/SL:            %d TP / %s SL", stats.getTrades(Trading.ExitReason.LONG_TAKE_PROFIT) + stats.getTrades(Trading.ExitReason.SHORT_TAKE_PROFIT), stats.getTrades(Trading.ExitReason.LONG_STOP_LOSS) + stats.getTrades(Trading.ExitReason.SHORT_STOP_LOSS));
+        Vesta.info("  L TP/SL:                %d TP / %s SL", stats.getTrades(Trading.ExitReason.LONG_TAKE_PROFIT), stats.getTrades(Trading.ExitReason.LONG_STOP_LOSS));
+        Vesta.info("  S TP/SL:                %d TP / %s SL", stats.getTrades(Trading.ExitReason.SHORT_TAKE_PROFIT), stats.getTrades(Trading.ExitReason.SHORT_STOP_LOSS));
+        Vesta.info("  ROI TP                  %.2f%% L %.2f%% S", stats.getRoiTPAvgLong(), stats.getRoiTPAvgShort());
         Vesta.info("  Max Drawdown:           %.2f%%", stats.getCurrentDrawdown() * 100);
         Vesta.info("  DireRate:               (%d %.2f%% L, %d %.2f%% S, %d N)", stats.getLongs(), stats.getRoiLong(), stats.getShorts(), stats.getRoiShort(), stats.getNothing());
         Vesta.info("  Avg Hold Time:          %.3f min", avgHoldMinutes);
@@ -125,5 +126,7 @@ public class Main {
         Vesta.info("  ROI Total:              %s%.2f%%%s", backtestResult.roiPercent() >= 0 ? "\u001B[32m" : "\u001B[31m", backtestResult.roiPercent(), "\u001B[0m");
         Vesta.info("  Max Drawdown:           %.2f%%", backtestResult.maxDrawdown()*100);
         Vesta.info("--------------------------------------------------");
+
+        System.gc();
     }
 }

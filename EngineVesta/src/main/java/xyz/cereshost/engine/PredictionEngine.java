@@ -18,15 +18,17 @@ import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.file.IOdata;
+import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
 import java.text.DecimalFormat;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
 @Getter
 public class PredictionEngine {
+
+    public static final double THRESHOLD = 0.0006;
 
     private final Model model;
     private final RobustNormalizer xNormalizer;
@@ -147,7 +149,7 @@ public class PredictionEngine {
         }
     }
 
-    public PredictionResultTP_SL predictNextPriceDetail(List<Candle> candles, String symbol) {
+    public PredictionResult predictNextPriceDetail(List<Candle> candles, String symbol) {
         candles.sort(Comparator.comparingLong(Candle::openTime));
 
         if (candles.size() < lookBack + 1) {
@@ -166,60 +168,54 @@ public class PredictionEngine {
         // Inferencia
         float[] rawPredictions = predictRaw(XWithSymbol); // Output del modelo
 
-        // 2. Des-normalización SELECTIVA
-        // Extraemos solo TP(0) y SL(1) para el normalizador
-        float[][] tempInput = new float[][]{{rawPredictions[0], rawPredictions[1], 0.0f}};
-        // Nota: Agregamos 0.0f dummy al final por si el normalizer exige input de tamaño 3.
 
-        float[][] denormalized = yNormalizer.inverseTransform(tempInput);
-
-        float upForce = denormalized[0][0];   // TP real
-        float downForce = denormalized[0][1]; // SL real
+        float upForce = rawPredictions[0];   // TP real
+        float downForce = rawPredictions[1]; // SL real
         float directionProb = rawPredictions[2]; // Probabilidad RAW (0 a 1) - NO TOCAR
 
         // 3. Lógica de Negocio
         float currentPrice = (float) subList.get(subList.size() - 1).close();
-        BackTestEngine.DireccionOperation direction;
+        Trading.DireccionOperation direction;
         float tpLogReturn, slLogReturn;
 
         // Filtro Híbrido: Fuerza + Probabilidad
         // Solo operamos si la fuerza acompaña a la probabilidad
-        boolean signalLong = directionProb > 0.03f; // 55% confianza
-        boolean signalShort = directionProb < -0.03f;
+        boolean signalLong = directionProb > THRESHOLD*100;
+        boolean signalShort = directionProb < -THRESHOLD*100;
 
         if (signalLong) {
-            direction = BackTestEngine.DireccionOperation.LONG;
+            direction = Trading.DireccionOperation.LONG;
             tpLogReturn = upForce;
             slLogReturn = downForce;
         } else if (signalShort) {
-            direction = BackTestEngine.DireccionOperation.SHORT;
+            direction = Trading.DireccionOperation.SHORT;
             tpLogReturn = downForce;
             slLogReturn = upForce;
         } else {
-            direction = BackTestEngine.DireccionOperation.NEUTRAL;
+            direction = Trading.DireccionOperation.NEUTRAL;
             tpLogReturn = 0;
             slLogReturn = 0;
         }
 
         // Cálculos de precios finales
-        float tpPrice = (float) (currentPrice * Math.exp(direction.equals(BackTestEngine.DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
-        float slPrice = (float) (currentPrice * Math.exp(direction.equals(BackTestEngine.DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
+        float tpPrice = (float) (currentPrice * Math.exp(direction.equals(Trading.DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
+        float slPrice = (float) (currentPrice * Math.exp(direction.equals(Trading.DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
 
         // Fix visual para Neutral
         //if(direction.equals(DireccionOperation.NEUTRAL)) { tpPrice = currentPrice; slPrice = currentPrice; }
 
-        return new PredictionResultTP_SL(
+        return new PredictionResult(
                 currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, direction
         );
     }
 
-    public record PredictionResultTP_SL(
+    public record PredictionResult(
             double currentPrice,
             double tpPrice,       // Precio de Take Profit
             double slPrice,       // Precio de Stop Loss
             double tpLogReturn,   // Log return para TP (positivo)
             double slLogReturn,   // Log return para SL (positivo)
-            BackTestEngine.DireccionOperation direction   // "LONG" o "SHORT"
+            Trading.DireccionOperation direction   // "LONG" o "SHORT"
     ) {
         public double getTpDistance() {
             return Math.abs(tpPrice - currentPrice);
@@ -279,7 +275,7 @@ public class PredictionEngine {
                 }
 
                 // Realizar predicción detallada
-                PredictionResultTP_SL result = engine.predictNextPriceDetail(BuilderData.to1mCandles(market), market.getSymbol());
+                PredictionResult result = engine.predictNextPriceDetail(BuilderData.to1mCandles(market), market.getSymbol());
 
                 DecimalFormat df = new DecimalFormat("###,##0.00###$");
                 DecimalFormat dfPercent = new DecimalFormat("###,##0.00###%");

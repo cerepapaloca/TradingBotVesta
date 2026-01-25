@@ -75,4 +75,20 @@ public class Market {
             tradesByMinuteCache.computeIfAbsent(minute, k -> new ArrayList<>()).add(t);
         }
     }
+
+    public double getFeedTaker(){
+        if (symbol.endsWith("USDT")) {
+            return 0.0005;
+        } else {
+            return 0.0004;
+        }
+    }
+
+    public double getFeedMaker(){
+        if (symbol.endsWith("USDT")) {
+            return 0.0002;
+        }else {
+            return 0;
+        }
+    }
 }

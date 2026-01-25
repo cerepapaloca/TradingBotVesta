@@ -143,8 +143,6 @@ public class EngineUtils {
 
         double totalMaeUP = 0;
         double totalMaeDOWN = 0;
-        int correctDirections = 0;
-        int hitsProfitability = 0;
 
         List<ResultPrediction> results = new ArrayList<>();
 
@@ -201,37 +199,49 @@ public class EngineUtils {
             totalMaeUP += Math.abs(realUP - predUP);
             totalMaeDOWN += Math.abs(realDOWN - predDOWN);
 
-            // Dirección: Umbral 0.5
-            boolean isRealLong = realDir > 0.5f;
-            boolean isPredLong = predDirProb > 0.5f;
-            if (isRealLong == isPredLong) correctDirections++;
-
-            // Rentabilidad (TP > SL)
-            if ((realUP > realDOWN) == (predUP > predDOWN)) hitsProfitability++;
-
             results.add(new ResultPrediction(predUP, predDOWN, predDirProb, realUP, realDOWN, realDir, i));
         }
 
         double avgMaeUP = totalMaeUP / batchSize;
         double avgMaeDOWN = totalMaeDOWN / batchSize;
-        double directionAccuracy = (double) correctDirections / batchSize * 100.0;
-        double profitHitRate = (double) hitsProfitability / batchSize * 100.0;
 
-        Vesta.info("=== Evaluación (3-Outputs) ===");
-        Vesta.info("MAE UP: %.6f | MAE DOWN: %.6f", avgMaeUP, avgMaeDOWN);
-        Vesta.info("Acc Dirección: %.2f%%", directionAccuracy);
-        Vesta.info("Hit Rate Estructural: %.2f%%", profitHitRate);
-
-        return new ResultsEvaluate("VestaHybrid", avgMaeUP, avgMaeDOWN, directionAccuracy, results);
+        return new ResultsEvaluate("VestaHybrid", avgMaeUP, avgMaeDOWN, results);
     }
 
     public record ResultsEvaluate(
             String modelName,
             double avgMaeTP,
             double avgMaeSL,
-            double hitRate,
             List<ResultPrediction> resultPrediction
-    ) {}
+    ) {
+        public float hitRateSimple(){
+            int hits = 0;
+            for (ResultPrediction prediction : resultPrediction) {
+                if ((prediction.realDir() > 0 && prediction.predDir() > 0) || (prediction.realDir() < 0 && prediction.predDir() < 0)) {
+                    hits++;
+                }
+            }
+            return ((float) hits / resultPrediction.size()) *100;
+        }
+
+        public float hitRateAdvanced() {
+            int hits = 0;
+            int total = 0;
+
+            float threshold = (float) (PredictionEngine.THRESHOLD * 100);
+
+            for (ResultPrediction prediction : resultPrediction) {
+                float pred = prediction.predDir();
+                float real = prediction.realDir();
+                if (pred > threshold && real > 0) hits++;// Long
+                else if (pred < -threshold && real < 0) hits++; // Short
+                else if (pred <= threshold && pred >= -threshold && real == 0) hits++; // Neutral
+                total++;
+            }
+
+            return total > 0 ? ((float) hits / total) * 100 : 0;
+        }
+    }
 
     public record ResultPrediction(
             float predTP, float predSL, float predDir,
