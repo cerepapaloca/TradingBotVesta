@@ -136,8 +136,24 @@ public class BackTestEngine {
         double exitNotional = qty * closeOperation.getExitPrice();
         double exitFee = exitNotional * market.getFeedTaker();
 
-        double grossPnL = (closeOperation.getExitPrice() - openOperation.getEntryPrice()) * qty;
+        double grossPnL = getGrossPnL(closeOperation, openOperation, qty);
+
         return grossPnL - entryFee - exitFee;
+    }
+
+    private static double getGrossPnL(Trading.@NotNull CloseOperation closeOperation, Trading.OpenOperation openOperation, double qty) {
+        double grossPnL;
+        if (openOperation.getDireccion() == Trading.DireccionOperation.LONG) {
+            // LONG
+            grossPnL = (closeOperation.getExitPrice() - openOperation.getEntryPrice()) * qty;
+        } else if (openOperation.getDireccion() == Trading.DireccionOperation.SHORT) {
+            // SHORT
+            grossPnL = (openOperation.getEntryPrice() - closeOperation.getExitPrice()) * qty;
+        } else {
+            // NEUTRAL
+            grossPnL = 0;
+        }
+        return grossPnL;
     }
 
     /**

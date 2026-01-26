@@ -12,7 +12,6 @@ import ai.djl.nn.LambdaBlock;
 import ai.djl.nn.ParallelBlock;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
-import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.norm.Dropout;
 import ai.djl.nn.recurrent.GRU;
 import ai.djl.nn.recurrent.LSTM;
@@ -165,14 +164,14 @@ public class VestaEngine {
             // Configuración de entrenamiento (igual a tu código)
             MetricsListener metrics = new MetricsListener();
             TrainingConfig config = new DefaultTrainingConfig(new WeightedDirectionLoss("WeightedL2", 3.0f))
-                    .optOptimizer(Optimizer.adam()
+                    .optOptimizer(Optimizer.adamW()
                             .optLearningRateTracker(Tracker.cosine()
-                                    .setBaseValue(0.0001f)
-                                    .optFinalValue(0.00001f)
-                                    .setMaxUpdates(EPOCH)
+                                    .setBaseValue(0.000_1f)
+                                    .optFinalValue(0.000_005f)
+                                    .setMaxUpdates((int) (EPOCH*0.75))
                                     .build())
-//                            .optLearningRateTracker(Tracker.fixed(0.0005f))
-                            .optWeightDecays(0.0f)
+                            .optLearningRateTracker(Tracker.fixed(0.0005f))
+                            .optWeightDecays(0.01f)
                             .optClipGrad(2.8f)
                             .build())
                     .optDevices(Engine.getInstance().getDevices())

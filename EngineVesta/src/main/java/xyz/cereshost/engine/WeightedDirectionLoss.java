@@ -43,9 +43,9 @@ public class WeightedDirectionLoss extends Loss {
         // 3. Cálculo del Peso (W)
         // Empezamos con peso base 1.0.
         // Si hay falsa alarma o ceguera, subimos a 5.0. Si hay error de signo, subimos a 10.0.
-        NDArray penalty = signError.toType(DataType.FLOAT32, false).mul(10.0f)
-                .add(falseAlarm.toType(DataType.FLOAT32, false).mul(5.0f))
-                .add(blindness.toType(DataType.FLOAT32, false).mul(5.0f));
+        NDArray penalty = signError.toType(DataType.FLOAT32, false).mul(4.0f) // Antes 10.0
+                .add(falseAlarm.toType(DataType.FLOAT32, false).mul(2.0f)) // Antes 5.0
+                .add(blindness.toType(DataType.FLOAT32, false).mul(1.5f)); // Antes 5.0
 
         NDArray weights = penalty.add(1.0f);
 

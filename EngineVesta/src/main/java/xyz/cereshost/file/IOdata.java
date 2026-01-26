@@ -122,7 +122,7 @@ public class IOdata {
                 case CSV -> {
                     int targetYear = 2025;
                     int endtMonth = 12;
-                    int startMonth = 11;
+                    int startMonth = 12;
                     long timeTotal = System.currentTimeMillis();
                     Vesta.info("📂 Verificando caché local para: " + s);
                     Deque<CandleSimple> candles = new ArrayDeque<>();
