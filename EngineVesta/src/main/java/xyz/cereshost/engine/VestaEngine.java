@@ -46,7 +46,7 @@ import java.util.List;
 public class VestaEngine {
 
     public static final int LOOK_BACK = 35;
-    public static final int EPOCH = 250;
+    public static final int EPOCH = 400;
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
@@ -166,8 +166,8 @@ public class VestaEngine {
             TrainingConfig config = new DefaultTrainingConfig(new WeightedDirectionLoss("WeightedL2", 3.0f))
                     .optOptimizer(Optimizer.adamW()
                             .optLearningRateTracker(Tracker.cosine()
-                                    .setBaseValue(0.000_1f)
-                                    .optFinalValue(0.000_005f)
+                                    .setBaseValue(0.000_01f)
+                                    .optFinalValue(0.000_000_5f)
                                     .setMaxUpdates((int) (EPOCH*0.75))
                                     .build())
                             .optLearningRateTracker(Tracker.fixed(0.0005f))
@@ -180,7 +180,7 @@ public class VestaEngine {
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 32*4*2;
+            int batchSize = 32*4*2*4;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -259,14 +259,14 @@ public class VestaEngine {
 
         mainBlock.add(GRU.builder()
                         .setStateSize(256)
-                        .setNumLayers(2)
+                        .setNumLayers(3)
                         .optReturnState(false)
                         .optBatchFirst(true)
                         .optDropRate(0.2f)
                         .build())
                 .add(LSTM.builder()
                         .setStateSize(128)
-                        .setNumLayers(2)
+                        .setNumLayers(3)
                         .optReturnState(false)
                         .optBatchFirst(true)
                         .optDropRate(0.2f)
@@ -286,6 +286,7 @@ public class VestaEngine {
         // TP
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(64).build())
                 .add(Dropout.builder().build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
@@ -295,6 +296,7 @@ public class VestaEngine {
         // SL
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(64).build())
                 .add(Dropout.builder().build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
@@ -303,6 +305,7 @@ public class VestaEngine {
 
         // Dirección
         branches.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
                 .add(Linear.builder().setUnits(64).build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Dropout.builder().build())

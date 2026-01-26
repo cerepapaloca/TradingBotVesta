@@ -8,6 +8,7 @@ import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.strategy.AlfaStrategy;
+import xyz.cereshost.strategy.BetaStrategy;
 import xyz.cereshost.strategy.TradingStrategy;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.trading.TradingBackTest;

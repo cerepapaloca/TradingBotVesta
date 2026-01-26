@@ -112,88 +112,81 @@ public class BuilderData {
         float[][][] X = new float[samples][lookBack][features];
         float[][] y = new float[samples][3];
 
-        double longTPArr = 0;
-        double longSLArr = 0;
-        double ShortTPArr = 0;
-        double ShortSLArr = 0;
-
         int[] direccionCount = new int[3];
+        double MIN_GAIN = 0.001;
         for (int i = 0; i < samples; i++) {
-            // 1. Construir ventana de LookBack (Entrada del modelo)
             for (int j = 0; j < lookBack; j++) {
                 X[i][j] = extractFeatures(candles.get(i + j + 1), candles.get(i + j));
             }
 
-            // El precio de entrada para el cálculo de retorno es el cierre de la última vela del input
             double entryPrice = candles.get(i + lookBack).close();
 
-            // 2. Escanear ventana futura (X velas) para los Targets
-            double bestPriceLong = -Double.MAX_VALUE;  // Cierre más alto
-            double worstPriceLong = Double.MAX_VALUE;  // Mecha más baja
-
-            double bestPriceShort = Double.MAX_VALUE;  // Cierre más bajo
-            double worstPriceShort = -Double.MAX_VALUE; // Mecha más alta
+            double bestPriceLong = -Double.MAX_VALUE;
+            double worstPriceLong = Double.MAX_VALUE;
+            double bestPriceShort = Double.MAX_VALUE;
+            double worstPriceShort = -Double.MAX_VALUE;
 
             for (int f = 1; f <= futureWindow; f++) {
                 Candle future = candles.get(i + lookBack + f);
-
-                // Para LONG
                 bestPriceLong = Math.max(bestPriceLong, future.close());
                 worstPriceLong = Math.min(worstPriceLong, future.low());
-
-                // Para SHORT
                 bestPriceShort = Math.min(bestPriceShort, future.close());
                 worstPriceShort = Math.max(worstPriceShort, future.high());
             }
 
-            // 3. Determinar Dirección Real dominante en esa ventana
-            // Usamos el cierre de la última vela de la ventana vs entrada
-            // 3. Calcular el Retorno Total de la ventana (Cierre Final vs Entrada)
             double finalCloseInWindow = candles.get(i + lookBack + futureWindow).close();
-
-            // Usamos log return para ser consistentes con el resto de la lógica
             double totalMovementLog = Math.log(finalCloseInWindow / entryPrice);
 
-            double logTP;
-            double logSL;
+            boolean conditionMet = false;
 
             if (totalMovementLog > PredictionEngine.THRESHOLD) {
-                // Alcista
-                logTP = Math.log(bestPriceLong / entryPrice);
-                logSL = Math.log(entryPrice / worstPriceLong);
+                // --- Lógica LONG ---
+                double logTP = Math.log(bestPriceLong / entryPrice);
+                double logSL = Math.max(0.00001, Math.log(entryPrice / worstPriceLong)); // Evitamos división por cero
 
-                y[i][0] = (float) Math.abs(logTP);
-                y[i][1] = (float) Math.abs(logSL);
-                y[i][2] = 1.0f; // Clase 1: LONG
-                direccionCount[0]++;
-            } else if (totalMovementLog < -PredictionEngine.THRESHOLD) {
-                // Bajista
-                logTP = Math.log(entryPrice / bestPriceShort);
-                logSL = Math.log(worstPriceShort / entryPrice);
+                if (Double.isInfinite(logTP) || Double.isNaN(logTP)) logTP = 0;
+                if (Double.isInfinite(logSL) || Double.isNaN(logSL)) logSL = 0;
 
-                y[i][0] = (float) Math.abs(logTP);
-                y[i][1] = (float) Math.abs(logSL);
-                y[i][2] = -1.0f; // Clase -1: SHORT
-                direccionCount[1]++;
-            } else {
-                // Lateral
+                // Filtros: Ganancia >= 0.1% Y Ratio RR >= 1:1 (TP >= SL)
+                if (logTP >= MIN_GAIN && logTP >= logSL) {
+                    y[i][0] = (float) Math.abs(logTP);
+                    y[i][1] = (float) Math.abs(logSL);
+                    y[i][2] = 1.0f; // LONG
+                    direccionCount[0]++;
+                    conditionMet = true;
+                }
+            }else if (totalMovementLog < -PredictionEngine.THRESHOLD) {
+                // --- Lógica SHORT ---
+                double logTP = Math.log(entryPrice / bestPriceShort);
+                double logSL = Math.max(0.00001, Math.log(worstPriceShort / entryPrice)); // Evitamos división por cero
+
+                if (Double.isInfinite(logTP) || Double.isNaN(logTP)) logTP = 0;
+                if (Double.isInfinite(logSL) || Double.isNaN(logSL)) logSL = 0;
+
+                // Filtros: Ganancia >= 0.1% Y Ratio RR >= 1:1 (TP >= SL)
+                if (logTP >= MIN_GAIN && logTP*2 >= logSL) {
+                    y[i][0] = (float) Math.abs(logTP);
+                    y[i][1] = (float) Math.abs(logSL);
+                    y[i][2] = -1.0f; // SHORT
+                    direccionCount[1]++;
+                    conditionMet = true;
+                }
+            }
+
+            // Si no cumple el THRESHOLD o no pasó los filtros de RR/Ganancia Mínima -> NEUTRAL
+            if (!conditionMet) {
                 double volatilityUp = Math.abs(Math.log(bestPriceLong / entryPrice));
                 double volatilityDown = Math.abs(Math.log(worstPriceLong / entryPrice));
 
-                y[i][0] = (float) volatilityUp;   // TP potencial (aunque no operemos)
-                y[i][1] = (float) volatilityDown; // SL potencial (riesgo)
-                y[i][2] = 0.0f; // Clase 0: NEUTRAL
+                if (Double.isInfinite(volatilityUp) || Double.isNaN(volatilityUp)) volatilityUp = 0;
+                if (Double.isInfinite(volatilityDown) || Double.isNaN(volatilityDown)) volatilityDown = 0;
+
+                y[i][0] = (float) volatilityUp;
+                y[i][1] = (float) volatilityDown;
+                y[i][2] = 0.0f; // NEUTRAL
                 direccionCount[2]++;
             }
-
-            // Limpieza de seguridad
-//            for (int k = 0; k < 2; k++) {
-//                if (Float.isNaN(y[i][k]) || Float.isInfinite(y[i][k]) || y[i][k] < 0) {
-//                    y[i][k] = 0.000f;
-//                }
-//            }
         }
-        Vesta.info("Direcciones: " + longTPArr + "|" + longSLArr + "  " + ShortTPArr+ "|" + ShortSLArr);
         Vesta.info("Direcciones: " +  direccionCount[0] + "L " +  direccionCount[1] + "S " + direccionCount[2] + "N");
         return new Pair<>(X, y);
     }
