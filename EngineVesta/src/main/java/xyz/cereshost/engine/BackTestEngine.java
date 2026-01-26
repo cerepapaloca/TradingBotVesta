@@ -8,7 +8,7 @@ import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.strategy.AlfaStrategy;
-import xyz.cereshost.strategy.BacktestStrategy;
+import xyz.cereshost.strategy.TradingStrategy;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.trading.TradingBackTest;
 
@@ -24,12 +24,12 @@ public class BackTestEngine {
     private final TradingBackTest operations = new TradingBackTest(this);
     private final Market market;
     private final PredictionEngine engine;
-    private final BacktestStrategy strategy;
+    private final TradingStrategy strategy;
     private double balance = 1000.0;
     private double currentPrice;
     private long currentTime;
 
-    public BackTestEngine(Market market, PredictionEngine engine, BacktestStrategy strategy) {
+    public BackTestEngine(Market market, PredictionEngine engine, TradingStrategy strategy) {
         this.market = market;
         this.engine = engine;
         this.strategy = strategy;
@@ -63,14 +63,10 @@ public class BackTestEngine {
             List<Candle> window = allCandles.subList(i - lookBack, i + 1);
             PredictionEngine.PredictionResult prediction = engine.predictNextPriceDetail(window, market.getSymbol());
 
-            // Limita el balance que uno puede operar
-            double balanceAvailable = balance;
-            for (Trading.OpenOperation openOperation : operations.getOpens()){
-                balanceAvailable -= openOperation.getAmountInitUSDT();
-            }
+
 
             // Consultar estrategia
-            strategy.preProcess(prediction, operations, balanceAvailable);
+            strategy.executeStrategy(prediction, operations);
 
             if (operations.getLastOpenOperation().isEmpty()){
                 stats.nothing++;
@@ -123,7 +119,6 @@ public class BackTestEngine {
 
         // F. Registrar estadísticas
         TradeResult resultObj = new TradeResult(netPnL, pnlPercent, closeOperation.getExitPrice(), closeOperation.getReason(), closeOperation.getEntryTime(), closeOperation.getExitTime());
-        strategy.postProcess(resultObj);
         stats.addTrade(resultObj, balance);
         extraStats.add(new ExtraDataPlot((float) pnlPercent,
                 (float) balance,

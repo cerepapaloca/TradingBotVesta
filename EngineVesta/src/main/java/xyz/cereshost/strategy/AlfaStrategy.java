@@ -1,14 +1,13 @@
 package xyz.cereshost.strategy;
 
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.engine.PredictionEngine;
 
-public class AlfaStrategy implements BacktestStrategy {
+public class AlfaStrategy implements TradingStrategy {
     @Override
-    public void preProcess(PredictionEngine.@NotNull PredictionResult pred, Trading operations, double balance) {
+    public void executeStrategy(PredictionEngine.@NotNull PredictionResult pred, Trading operations) {
         for (Trading.OpenOperation o : operations.getOpens()){
             if (o.getCountCandles() >= 60){
                 operations.close(Trading.ExitReason.TIMEOUT, o.getUuid());
@@ -22,13 +21,8 @@ public class AlfaStrategy implements BacktestStrategy {
 
         if ((pred.getRatio() > 1 && pred.getRatio() < 2) && (pred.getTpPercent() > 0.15 && pred.getTpPercent() < 0.4)) {
             if (operations.openSize() == 0 && pred.direction() !=  Trading.DireccionOperation.NEUTRAL) {
-                operations.open(pred.getTpPercent(), pred.getSlPercent() + 0.2, pred.direction(), balance,1);
+                operations.open(pred.getTpPercent(), pred.getSlPercent() + 0.2, pred.direction(), operations.getAvailableBalance(), 1);
             }
         }
-    }
-
-    @Override
-    public void postProcess(BackTestEngine.TradeResult result) {
-
     }
 }

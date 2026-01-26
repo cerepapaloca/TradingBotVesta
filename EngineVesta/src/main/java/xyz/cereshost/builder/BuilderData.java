@@ -112,6 +112,12 @@ public class BuilderData {
         float[][][] X = new float[samples][lookBack][features];
         float[][] y = new float[samples][3];
 
+        double longTPArr = 0;
+        double longSLArr = 0;
+        double ShortTPArr = 0;
+        double ShortSLArr = 0;
+
+        int[] direccionCount = new int[3];
         for (int i = 0; i < samples; i++) {
             // 1. Construir ventana de LookBack (Entrada del modelo)
             for (int j = 0; j < lookBack; j++) {
@@ -159,7 +165,7 @@ public class BuilderData {
                 y[i][0] = (float) Math.abs(logTP);
                 y[i][1] = (float) Math.abs(logSL);
                 y[i][2] = 1.0f; // Clase 1: LONG
-
+                direccionCount[0]++;
             } else if (totalMovementLog < -PredictionEngine.THRESHOLD) {
                 // Bajista
                 logTP = Math.log(entryPrice / bestPriceShort);
@@ -168,7 +174,7 @@ public class BuilderData {
                 y[i][0] = (float) Math.abs(logTP);
                 y[i][1] = (float) Math.abs(logSL);
                 y[i][2] = -1.0f; // Clase -1: SHORT
-
+                direccionCount[1]++;
             } else {
                 // Lateral
                 double volatilityUp = Math.abs(Math.log(bestPriceLong / entryPrice));
@@ -177,6 +183,7 @@ public class BuilderData {
                 y[i][0] = (float) volatilityUp;   // TP potencial (aunque no operemos)
                 y[i][1] = (float) volatilityDown; // SL potencial (riesgo)
                 y[i][2] = 0.0f; // Clase 0: NEUTRAL
+                direccionCount[2]++;
             }
 
             // Limpieza de seguridad
@@ -186,6 +193,8 @@ public class BuilderData {
 //                }
 //            }
         }
+        Vesta.info("Direcciones: " + longTPArr + "|" + longSLArr + "  " + ShortTPArr+ "|" + ShortSLArr);
+        Vesta.info("Direcciones: " +  direccionCount[0] + "L " +  direccionCount[1] + "S " + direccionCount[2] + "N");
         return new Pair<>(X, y);
     }
 
@@ -236,7 +245,16 @@ public class BuilderData {
         double[] signalArr = macdRes.signal();
         double[] histArr = macdRes.histogram();
 
+        // NVI
         double[] nviArr = FinancialCalculation.computeNVI(closes, simpleByMinute.values().stream().map(c -> c.volumen().quoteVolume()).toList(), 1000.0);
+
+        // Bollinger
+        FinancialCalculation.BollingerBandsResult bollingerBandsResult = FinancialCalculation.computeBollingerBands(closes, 20, 2);
+        double[] upperBandArr = bollingerBandsResult.upperBand();
+        double[] middleBandArr = bollingerBandsResult.middleBand();
+        double[] lowerBandArr = bollingerBandsResult.lowerBand();
+        double[] bandwidthArr = bollingerBandsResult.bandwidth();
+        double[] percentBArr = bollingerBandsResult.percentB();
 
         for (long minute = startMinute; minute <= endMinute; minute += 60_000L) {
             // OHLC + VOLUMEN
@@ -315,6 +333,12 @@ public class BuilderData {
             // NVI
             double nvi = idx < nviArr.length ? nviArr[idx] : Double.NaN;
 
+            double upperBand = idx < upperBandArr.length ? upperBandArr[idx] : Double.NaN;
+            double middleBand = idx < middleBandArr.length ? middleBandArr[idx] : Double.NaN;
+            double lowerBand = idx < lowerBandArr.length ? lowerBandArr[idx] : Double.NaN;
+            double bandwidth = idx < bandwidthArr.length ? bandwidthArr[idx] : Double.NaN;
+            double percentB = idx < percentBArr.length ? percentBArr[idx] : Double.NaN;
+
             candles.add(new Candle(
                     minute,
                     open, high, low, close,
@@ -336,7 +360,12 @@ public class BuilderData {
                     macdVal,
                     macdSignal,
                     macdHist,
-                    nvi
+                    nvi,
+                    upperBand,
+                    middleBand,
+                    lowerBand,
+                    bandwidth,
+                    percentB
             ));
             idx++;
         }
@@ -391,6 +420,23 @@ public class BuilderData {
         // NVI
         fList.add((float)  curr.nvi());
 
+        // Bollinger
+        double bbUpper = curr.upperBand();
+        double bbLower = curr.lowerBand();
+        double bbMiddle = curr.middleBand();
+
+        double bbRange = bbUpper - bbLower;
+        float bbBandwidth = 0f;
+        if (bbMiddle > 0 && bbRange > 0) {
+            bbBandwidth = (float) (bbRange / bbMiddle);
+        }
+        float bbPos = 0f;
+        if (bbRange > 0) {
+            bbPos = (float) ((curr.close() - bbMiddle) / bbRange);
+        }
+
+        fList.add(bbBandwidth);
+        fList.add(bbPos);
         float[] f = new float[fList.size()];
         for (int i = 0; i < fList.size(); i++){
             f[i] = fList.get(i);
@@ -429,11 +475,11 @@ public class BuilderData {
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1, 1),
+                1,1,1, 1, 1, 1, 1,1,1,1,1),
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1, 1)
+                1,1,1, 1, 1, 1,1,1,1,1,1)
         ).length + 2; // más 2 por que tiene sumar el feature del símbolo en el que esta y todos los símbolos que puede estar
     }
 

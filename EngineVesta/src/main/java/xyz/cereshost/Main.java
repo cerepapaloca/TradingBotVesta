@@ -10,6 +10,7 @@ import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.file.IOdata;
 import xyz.cereshost.packet.PacketHandler;
+import xyz.cereshost.strategy.AlfaStrategy;
 import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
@@ -54,7 +55,13 @@ public class Main {
                 Vesta.info("RESULTADOS FINALES DE " + fullNameSymbol.toUpperCase(Locale.ROOT) + ":");
                 Vesta.info("  MAE Promedio TP:           %.8f", evaluateResult.avgMaeTP());
                 Vesta.info("  MAE Promedio SL:           %.8f", evaluateResult.avgMaeSL());
-                Vesta.info("  Acierto de Tendencia:   %.2f%% (%.2f%%)", evaluateResult.hitRateSimple(), evaluateResult.hitRateAdvanced());
+                Vesta.info("  Acierto de Tendencia:      %.2f%% %.2f%% %.2f%%", evaluateResult.hitRateSimple(), evaluateResult.hitRateAdvanced(), evaluateResult.hitRateSafe());
+                int[] longHits = evaluateResult.hitRateLong();
+                Vesta.info("  Real Long                  %d L %d S %d N", longHits[0], longHits[1], longHits[2]);
+                int[] shortHits = evaluateResult.hitRateShort();
+                Vesta.info("  Real Short                 %d L %d S %d N", shortHits[0],  shortHits[1], shortHits[2]);
+                int[] NeutralHits = evaluateResult.hitRateNeutral();
+                Vesta.info("  Real Neutral               %d L %d S %d N", NeutralHits[0], NeutralHits[1], NeutralHits[2]);
                 ChartUtils.CandleChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultPrediction());
                 ChartUtils.plotRatioDistribution("Ratios " + String.join(" ", symbols), evaluateResult.resultPrediction());
                 showDataBackTest(backtestResult);
@@ -89,8 +96,14 @@ public class Main {
                 IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol);
                 showDataBackTest(new BackTestEngine(Vesta.MARKETS.get(symbol), PredictionEngine.loadPredictionEngine("VestaIA")).run());
             }
+            case "trading" -> {
+                String symbol = "DOGEUSDC";
+                new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new AlfaStrategy()).startCandleLoop();
+            }
         }
     }
+
+
 
     private static void showDataBackTest(BackTestEngine.BackTestResult backtestResult) {
 

@@ -190,5 +190,67 @@ public class FinancialCalculation {
         return nvi;
     }
 
+    public static BollingerBandsResult computeBollingerBands(List<Double> closes, int period, double multiplier) {
+        if (closes.size() < period) {
+            throw new IllegalArgumentException(
+                    String.format("Se necesitan al menos %d velas, solo hay %d", period, closes.size())
+            );
+        }
 
+        int size = closes.size();
+        double[] upperBand = new double[size];
+        double[] middleBand = new double[size]; // SMA
+        double[] lowerBand = new double[size];
+        double[] bandwidth = new double[size]; // Ancho de banda en porcentaje
+        double[] percentB = new double[size];  // %B indicator
+
+        // Calcular para cada punto desde (period-1) hasta el final
+        for (int i = period - 1; i < size; i++) {
+            // Calcular SMA (media móvil simple)
+            double sum = 0;
+            for (int j = i - period + 1; j <= i; j++) {
+                sum += closes.get(j);
+            }
+            double sma = sum / period;
+            middleBand[i] = sma;
+
+            // Calcular desviación estándar
+            double sumSquaredDiff = 0;
+            for (int j = i - period + 1; j <= i; j++) {
+                double diff = closes.get(j) - sma;
+                sumSquaredDiff += diff * diff;
+            }
+            double stdDev = Math.sqrt(sumSquaredDiff / period);
+
+            // Calcular bandas
+            upperBand[i] = sma + (stdDev * multiplier);
+            lowerBand[i] = sma - (stdDev * multiplier);
+
+            // Calcular métricas adicionales
+            double currentPrice = closes.get(i);
+
+            // Ancho de banda en porcentaje
+            bandwidth[i] = ((upperBand[i] - lowerBand[i]) / sma) * 100;
+
+            // %B indicator (posicion dentro de la banda)
+            if (upperBand[i] != lowerBand[i]) {
+                percentB[i] = (currentPrice - lowerBand[i]) / (upperBand[i] - lowerBand[i]);
+            } else {
+                percentB[i] = 0.5; // Si las bandas son iguales (raro)
+            }
+        }
+
+        // Los primeros (period-1) elementos no tienen cálculo
+        for (int i = 0; i < period - 1; i++) {
+            upperBand[i] = Double.NaN;
+            middleBand[i] = Double.NaN;
+            lowerBand[i] = Double.NaN;
+            bandwidth[i] = Double.NaN;
+            percentB[i] = Double.NaN;
+        }
+
+        return new BollingerBandsResult(upperBand, middleBand, lowerBand, bandwidth, percentB);
+    }
+
+    public record BollingerBandsResult(double[] upperBand, double[] middleBand, double[] lowerBand, double[] bandwidth, double[] percentB) {};
 }

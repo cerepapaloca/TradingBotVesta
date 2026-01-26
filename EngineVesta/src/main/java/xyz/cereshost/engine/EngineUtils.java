@@ -11,8 +11,11 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.trading.Trading;
 
 import java.util.*;
+
+import static xyz.cereshost.engine.PredictionEngine.THRESHOLD;
 
 @UtilityClass
 public class EngineUtils {
@@ -216,19 +219,23 @@ public class EngineUtils {
     ) {
         public float hitRateSimple(){
             int hits = 0;
+            int total = 0;
             for (ResultPrediction prediction : resultPrediction) {
-                if ((prediction.realDir() > 0 && prediction.predDir() > 0) || (prediction.realDir() < 0 && prediction.predDir() < 0)) {
+                if (prediction.predDir() == 0) continue;
+                // ley de los signos
+                if (prediction.realDir() * prediction.predDir() > 0) {
                     hits++;
                 }
+                total++;
             }
-            return ((float) hits / resultPrediction.size()) *100;
+            return ((float) hits / total) *100;
         }
 
         public float hitRateAdvanced() {
             int hits = 0;
             int total = 0;
 
-            float threshold = (float) (PredictionEngine.THRESHOLD * 100);
+            float threshold = (float) (THRESHOLD * 100);
 
             for (ResultPrediction prediction : resultPrediction) {
                 float pred = prediction.predDir();
@@ -241,6 +248,70 @@ public class EngineUtils {
 
             return total > 0 ? ((float) hits / total) * 100 : 0;
         }
+
+        public float hitRateSafe() {
+            int hits = 0;
+            int total = 0;
+
+            float threshold = (float) (THRESHOLD * 100);
+            for (ResultPrediction prediction : resultPrediction) {
+                float pred = prediction.predDir();
+                float real = prediction.realDir();
+                if (real > threshold) {
+                    total++;
+                    if (pred > threshold) hits++; // Long
+                }
+                else if (real < -threshold) {
+                    total++;
+                    if (pred < -threshold) hits++; // Short
+                }
+            }
+
+            return total > 0 ? ((float) hits / total) * 100 : 0;
+        }
+
+        public int @NotNull [] hitRateLong() {
+            int[] hits = new int[3];
+            for (ResultPrediction prediction : resultPrediction){
+                if (prediction.realDir() > THRESHOLD*100){
+                    computeDir(hits, prediction);
+                }
+            }
+            return hits;
+        }
+
+        public int @NotNull [] hitRateShort() {
+            int[] hits = new int[3];
+            for (ResultPrediction prediction : resultPrediction){
+                if (prediction.realDir() < -THRESHOLD*100){
+                    computeDir(hits, prediction);
+                }
+            }
+            return hits;
+        }
+
+        public int @NotNull [] hitRateNeutral() {
+            int[] hits = new int[3];
+            for (ResultPrediction prediction : resultPrediction){
+                if (prediction.realDir() > -THRESHOLD*100 && prediction.realDir() < THRESHOLD*100) {
+                    computeDir(hits, prediction);
+                }
+            }
+            return hits;
+        }
+
+        private void computeDir(int[] hits, @NotNull ResultPrediction prediction) {
+            boolean signalLong = prediction.predDir() > THRESHOLD*100;
+            boolean signalShort = prediction.predDir() < -THRESHOLD*100;
+            if (signalLong) {
+                hits[0]++; // Long
+            } else if (signalShort) {
+                hits[1]++; // Short
+            } else {
+                hits[2]++; // Neutral
+            }
+        }
+
     }
 
     public record ResultPrediction(

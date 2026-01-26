@@ -28,6 +28,8 @@ public interface Trading {
 
     Market getMarket();
 
+    double getAvailableBalance();
+
     @Data
     abstract class CloseOperation {
 

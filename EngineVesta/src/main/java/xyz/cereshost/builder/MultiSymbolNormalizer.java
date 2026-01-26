@@ -11,6 +11,7 @@ import java.util.List;
 public class MultiSymbolNormalizer {
     private float[] medians;
     private float[] mads;
+    private float[] mins; // Nuevo: para almacenar los mínimos por columna
     private static final float EPSILON = 1e-8f;
     private int numOutputs;
 
@@ -19,15 +20,17 @@ public class MultiSymbolNormalizer {
             throw new IllegalArgumentException("Los datos y no pueden ser nulos o vacíos");
         }
 
-        numOutputs = y[0].length; // Ahora serán 3
+        numOutputs = y[0].length;
         medians = new float[numOutputs];
         mads = new float[numOutputs];
+        mins = new float[numOutputs]; // Inicializar array de mínimos
 
         for (int col = 0; col < numOutputs; col++) {
             // CRÍTICO: Si es la columna 2 (Dirección), no calculamos estadísticas de normalización
             if (col == 2) {
                 medians[col] = 0.0f;
-                mads[col] = 1.0f; // Multiplicar por 1 y sumar 0 deja el valor igual
+                mads[col] = 1.0f;
+                mins[col] = 0.0f;
                 continue;
             }
 
@@ -39,11 +42,13 @@ public class MultiSymbolNormalizer {
             if (values.isEmpty()) continue;
 
             Collections.sort(values);
+            float minVal = values.get(0); // Mínimo de la columna
             float med = median(values);
             float deviation = mad(values, med);
 
             medians[col] = med;
             mads[col] = Math.max(deviation, EPSILON);
+            mins[col] = minVal; // Guardar el mínimo
         }
     }
 
@@ -53,10 +58,9 @@ public class MultiSymbolNormalizer {
         for (int i = 0; i < y.length; i++) {
             for (int col = 0; col < numOutputs; col++) {
                 if (col == 2) {
-                    // La dirección pasa directa (0 o 1), no se normaliza
                     normalized[i][col] = y[i][col];
                 } else {
-                    normalized[i][col] = (y[i][col] - medians[col]) / mads[col];
+                    normalized[i][col] = (y[i][col] - mins[col]) / mads[col];
                 }
             }
         }
@@ -70,19 +74,19 @@ public class MultiSymbolNormalizer {
                 if (col == 2) {
                     original[i][col] = yNorm[i][col]; // No des-normalizar la probabilidad
                 } else if (col < medians.length) {
-                    original[i][col] = (yNorm[i][col] * mads[col]) + medians[col];
+                    original[i][col] = (yNorm[i][col] * mads[col]) + mins[col];
                 }
             }
         }
         return original;
     }
 
-    private float median(List<Float> values) {
+    private float median(@NotNull List<Float> values) {
         int n = values.size();
         return (n % 2 == 0) ? (values.get(n/2 - 1) + values.get(n/2)) / 2.0f : values.get(n/2);
     }
 
-    private float mad(List<Float> values, float median) {
+    private float mad(@NotNull List<Float> values, float median) {
         List<Float> deviations = new ArrayList<>();
         for (float v : values) deviations.add(Math.abs(v - median));
         Collections.sort(deviations);

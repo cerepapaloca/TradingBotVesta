@@ -7,10 +7,8 @@ import xyz.cereshost.trading.Trading;
 /**
  * Interfaz para definir estrategias de trading personalizadas
  */
-public interface BacktestStrategy {
+public interface TradingStrategy {
 
-   void preProcess(PredictionEngine.PredictionResult prediction, Trading openOperations, double balance);
-
-    void postProcess(BackTestEngine.TradeResult result);
+   void executeStrategy(PredictionEngine.PredictionResult prediction, Trading openOperations);
 }
 

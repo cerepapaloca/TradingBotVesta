@@ -73,6 +73,15 @@ public class TradingBackTest implements Trading {
         return backTestEngine.getMarket();
     }
 
+    @Override
+    public double getAvailableBalance() {
+        double balanceAvailable = backTestEngine.getBalance();
+        for (Trading.OpenOperation openOperation : getOpens()){
+            balanceAvailable -= openOperation.getAmountInitUSDT();
+        }
+        return balanceAvailable;
+    }
+
     public void computeCloses() {
         lastOpenOperation.clear();
         for (CloseOperation closeOperation : closeOperations) {

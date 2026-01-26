@@ -55,9 +55,9 @@ public class IOdata {
         String baseDir = "data";
         for (String s : symbols){
             switch (data) {
-                case LOCAL_NETWORK -> {
+                case LOCAL_NETWORK, LOCAL_NETWORK_MINIMAL -> {
                     Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
-                    PacketHandler.sendPacket(new RequestMarketClient(s, true), MarketDataServer.class).thenAccept(packet -> {
+                    PacketHandler.sendPacket(new RequestMarketClient(s, data == DataSource.LOCAL_NETWORK), MarketDataServer.class).thenAccept(packet -> {
                         Vesta.MARKETS.put(s, packet.getMarket());
                         latch.countDown();
                         lastUpdate.set(packet.getLastUpdate());

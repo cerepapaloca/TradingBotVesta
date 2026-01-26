@@ -180,8 +180,8 @@ public class PredictionEngine {
 
         // Filtro Híbrido: Fuerza + Probabilidad
         // Solo operamos si la fuerza acompaña a la probabilidad
-        boolean signalLong = directionProb > THRESHOLD*100;
-        boolean signalShort = directionProb < -THRESHOLD*100;
+        boolean signalLong = directionProb > THRESHOLD;
+        boolean signalShort = directionProb < -THRESHOLD;
 
         if (signalLong) {
             direction = Trading.DireccionOperation.LONG;

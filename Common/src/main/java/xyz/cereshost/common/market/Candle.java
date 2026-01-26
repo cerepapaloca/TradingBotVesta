@@ -23,11 +23,20 @@ public record Candle(
         double midPrice,
         double spread,
 
+
         double rsi4,
         double rsi8,
         double rsi16,
+
         double macdVal,
         double macdSignal,
         double macdHist,
-        double nvi
+
+        double nvi,
+
+        double upperBand,
+        double middleBand,
+        double lowerBand,
+        double bandwidth,
+        double percentB
 ) {}

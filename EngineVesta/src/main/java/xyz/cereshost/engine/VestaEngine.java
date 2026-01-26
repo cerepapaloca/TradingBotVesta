@@ -8,9 +8,12 @@ import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
+import ai.djl.nn.LambdaBlock;
 import ai.djl.nn.ParallelBlock;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
+import ai.djl.nn.norm.BatchNorm;
+import ai.djl.nn.norm.Dropout;
 import ai.djl.nn.recurrent.GRU;
 import ai.djl.nn.recurrent.LSTM;
 import ai.djl.pytorch.engine.PtModel;
@@ -161,14 +164,14 @@ public class VestaEngine {
             model.setBlock(getSequentialBlock());
             // Configuración de entrenamiento (igual a tu código)
             MetricsListener metrics = new MetricsListener();
-            TrainingConfig config = new DefaultTrainingConfig(new WeightedDirectionLoss("WeightedL2", 5.0f))
+            TrainingConfig config = new DefaultTrainingConfig(new WeightedDirectionLoss("WeightedL2", 3.0f))
                     .optOptimizer(Optimizer.adam()
                             .optLearningRateTracker(Tracker.cosine()
                                     .setBaseValue(0.0001f)
                                     .optFinalValue(0.00001f)
                                     .setMaxUpdates(EPOCH)
                                     .build())
-                            .optLearningRateTracker(Tracker.fixed(0.0005f))
+//                            .optLearningRateTracker(Tracker.fixed(0.0005f))
                             .optWeightDecays(0.0f)
                             .optClipGrad(2.8f)
                             .build())
@@ -178,7 +181,7 @@ public class VestaEngine {
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 32*4;
+            int batchSize = 32*4*2;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -255,7 +258,6 @@ public class VestaEngine {
     public static SequentialBlock getSequentialBlock() {
         SequentialBlock mainBlock = new SequentialBlock();
 
-        // 1. BACKBONE (Capas comunes que extraen patrones de las velas)
         mainBlock.add(GRU.builder()
                         .setStateSize(256)
                         .setNumLayers(2)
@@ -270,12 +272,8 @@ public class VestaEngine {
                         .optBatchFirst(true)
                         .optDropRate(0.2f)
                         .build())
-                .add(ndList -> new NDList(ndList.singletonOrThrow().get(":, -1, :"))) // Tomar último estado
-                .add(Linear.builder().setUnits(128).build())
-                .add(Activation::relu);
-
-        // 2. RAMIFICACIÓN (Aquí dividimos el camino)
-        // El ParallelBlock enviará los 128 datos a ambas ramas y luego las juntará
+                .add(ndList -> new NDList(ndList.singletonOrThrow().get(":, -1, :")))
+                .add(Linear.builder().setUnits(128).build());
         ParallelBlock branches = new ParallelBlock(list -> {
             // Esta función indica cómo concatenar los resultados de las dos ramas
             NDArray tp = list.get(0).singletonOrThrow();
@@ -289,27 +287,29 @@ public class VestaEngine {
         // TP
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(64).build())
+                .add(Dropout.builder().build())
                 .add(Linear.builder().setUnits(32).build())
-                .add(Activation::relu)
                 .add(Linear.builder().setUnits(1).build())
+                .add(new LambdaBlock((ndArrays -> new NDList(ndArrays.singletonOrThrow().abs()))))
         );
 
         // SL
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(64).build())
+                .add(Dropout.builder().build())
                 .add(Linear.builder().setUnits(32).build())
-                .add(Activation::relu)
                 .add(Linear.builder().setUnits(1).build())
+                .add(new LambdaBlock((ndArrays -> new NDList(ndArrays.singletonOrThrow().abs()))))
         );
 
         // Dirección
         branches.add(new SequentialBlock()
-                        .add(Linear.builder().setUnits(64).build())
-                        .add(Linear.builder().setUnits(32).build())
-                        .add(Linear.builder().setUnits(32).build())
-                        .add(Activation::relu)
-                        .add(Linear.builder().setUnits(1).build())
-//                .add(Activation::tanh)
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Linear.builder().setUnits(1).build())
+                .add(Activation::tanh)
         );
         mainBlock.add(branches);
         return mainBlock;
