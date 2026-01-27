@@ -46,7 +46,7 @@ import java.util.List;
 public class VestaEngine {
 
     public static final int LOOK_BACK = 35;
-    public static final int EPOCH = 400;
+    public static final int EPOCH = 1200;
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
@@ -180,7 +180,7 @@ public class VestaEngine {
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 32*4*2*4;
+            int batchSize = 256;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
@@ -258,21 +258,14 @@ public class VestaEngine {
         SequentialBlock mainBlock = new SequentialBlock();
 
         mainBlock.add(GRU.builder()
-                        .setStateSize(256)
-                        .setNumLayers(3)
-                        .optReturnState(false)
-                        .optBatchFirst(true)
-                        .optDropRate(0.2f)
-                        .build())
-                .add(LSTM.builder()
                         .setStateSize(128)
-                        .setNumLayers(3)
+                        .setNumLayers(1)
                         .optReturnState(false)
                         .optBatchFirst(true)
-                        .optDropRate(0.2f)
+                        .optDropRate(0.3f)
                         .build())
                 .add(ndList -> new NDList(ndList.singletonOrThrow().get(":, -1, :")))
-                .add(Linear.builder().setUnits(128).build());
+                .add(Linear.builder().setUnits(64).build());
         ParallelBlock branches = new ParallelBlock(list -> {
             // Esta función indica cómo concatenar los resultados de las dos ramas
             NDArray tp = list.get(0).singletonOrThrow();
@@ -285,31 +278,28 @@ public class VestaEngine {
 
         // TP
         branches.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(64).build())
-                .add(Linear.builder().setUnits(64).build())
-                .add(Dropout.builder().build())
                 .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().build())
+                .add(Linear.builder().setUnits(16).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock((ndArrays -> new NDList(ndArrays.singletonOrThrow().abs()))))
         );
 
         // SL
         branches.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(64).build())
-                .add(Linear.builder().setUnits(64).build())
-                .add(Dropout.builder().build())
                 .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().build())
+                .add(Linear.builder().setUnits(16).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock((ndArrays -> new NDList(ndArrays.singletonOrThrow().abs()))))
         );
 
         // Dirección
         branches.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(64).build())
-                .add(Linear.builder().setUnits(64).build())
                 .add(Linear.builder().setUnits(32).build())
+                .add(Linear.builder().setUnits(16).build())
                 .add(Dropout.builder().build())
-                .add(Linear.builder().setUnits(32).build())
+                .add(Linear.builder().setUnits(16).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(Activation::tanh)
         );
