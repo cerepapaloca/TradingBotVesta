@@ -194,6 +194,7 @@ public class BuilderData {
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
 
         market.sortd();
+        int remove = 0;
         int idx = 0;
 
         // CandleSimple por minuto
@@ -313,57 +314,77 @@ public class BuilderData {
             }
             double depthImbalance = (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
 
-            // RSI
-            double rsi4 = idx < rsi4Arr.length ? rsi8Arr[idx] : Double.NaN;
-            double rsi8 = idx < rsi8Arr.length ? rsi8Arr[idx] : Double.NaN;
-            double rsi16 = idx < rsi16Arr.length ? rsi16Arr[idx] : Double.NaN;
+            try {
+                // RSI
+                double rsi4 = checkDouble(rsi8Arr, idx);
+                double rsi8 = checkDouble(rsi8Arr, idx);
+                double rsi16 = checkDouble(rsi16Arr, idx);
 
-            // MACD
-            double macdVal = idx < macdArr.length ? macdArr[idx] : Double.NaN;
-            double macdSignal = idx < signalArr.length ? signalArr[idx] : Double.NaN;
-            double macdHist = idx < histArr.length ? histArr[idx] : Double.NaN;
+                // MACD
+                double macdVal = checkDouble(macdArr, idx);
+                double macdSignal = checkDouble(signalArr, idx);
+                double macdHist = checkDouble(histArr, idx);
 
-            // NVI
-            double nvi = idx < nviArr.length ? nviArr[idx] : Double.NaN;
+                // NVI
+                double nvi = checkDouble(nviArr, idx);
 
-            double upperBand = idx < upperBandArr.length ? upperBandArr[idx] : Double.NaN;
-            double middleBand = idx < middleBandArr.length ? middleBandArr[idx] : Double.NaN;
-            double lowerBand = idx < lowerBandArr.length ? lowerBandArr[idx] : Double.NaN;
-            double bandwidth = idx < bandwidthArr.length ? bandwidthArr[idx] : Double.NaN;
-            double percentB = idx < percentBArr.length ? percentBArr[idx] : Double.NaN;
+                double upperBand = checkDouble(upperBandArr, idx);
+                double middleBand = checkDouble(middleBandArr, idx);
+                double lowerBand = checkDouble(lowerBandArr, idx);
+                double bandwidth = checkDouble(bandwidthArr, idx);
+                double percentB = checkDouble(percentBArr, idx);
 
-            candles.add(new Candle(
-                    minute,
-                    open, high, low, close,
-                    tradeCount,
-                    volumeBase,
-                    quoteVolume,
-                    buyQV,
-                    sellQV,
-                    deltaUSDT,
-                    buyRatio,
-                    bidLiq,
-                    askLiq,
-                    depthImbalance,
-                    mid,
-                    spread,
-                    rsi4,
-                    rsi8,
-                    rsi16,
-                    macdVal,
-                    macdSignal,
-                    macdHist,
-                    nvi,
-                    upperBand,
-                    middleBand,
-                    lowerBand,
-                    bandwidth,
-                    percentB
-            ));
+                candles.add(new Candle(
+                        minute,
+                        checkDouble(open), checkDouble(high), checkDouble(low), checkDouble(close),
+                        checkDouble(tradeCount),
+                        checkDouble(volumeBase),
+                        checkDouble(quoteVolume),
+                        checkDouble(buyQV),
+                        checkDouble(sellQV),
+                        checkDouble(deltaUSDT),
+                        checkDouble(buyRatio),
+                        checkDouble(bidLiq),
+                        checkDouble(askLiq),
+                        checkDouble(depthImbalance),
+                        checkDouble(mid),
+                        checkDouble(spread),
+                        rsi4,
+                        rsi8,
+                        rsi16,
+                        macdVal,
+                        macdSignal,
+                        macdHist,
+                        nvi,
+                        upperBand,
+                        middleBand,
+                        lowerBand,
+                        bandwidth,
+                        percentB
+                ));
+            } catch (IllegalArgumentException ignored) {
+                remove++;
+            }
             idx++;
         }
+        Vesta.info("Se elimino %d por dar resultado NA o Infinito", remove);
         return candles;
     }
+
+
+    public static double checkDouble(double[] d, int i) throws IllegalArgumentException{
+        if (i < d.length) {
+            return checkDouble(d[i]);
+        } else throw new IllegalArgumentException("Fuera del index");
+    }
+
+    public static double checkDouble(double d) throws IllegalArgumentException{
+        if (Double.isInfinite(d) || Double.isNaN(d)) {
+            throw new IllegalArgumentException("The input is infinite or NaN");
+        }
+        return d;
+    }
+
 
     @Getter
     private static int features;
@@ -401,17 +422,17 @@ public class BuilderData {
 //        fList.add((float) (curr.spread() / curr.close()));
 
         // RSI
-        fList.add((float)  curr.rsi4());
-        fList.add((float)  curr.rsi8());
-        fList.add((float)  curr.rsi16());
+        fList.add((float) curr.rsi4());
+        fList.add((float) curr.rsi8());
+        fList.add((float) curr.rsi16());
 
         // MACD
-        fList.add((float)  curr.macdVal());
-        fList.add((float)  curr.macdSignal());
-        fList.add((float)  curr.macdHist());
+        fList.add((float) curr.macdVal());
+        fList.add((float) curr.macdSignal());
+        fList.add((float) curr.macdHist());
 
         // NVI
-        fList.add((float)  curr.nvi());
+        fList.add((float) curr.nvi());
 
         // Bollinger
         double bbUpper = curr.upperBand();
@@ -431,7 +452,7 @@ public class BuilderData {
         fList.add(bbBandwidth);
         fList.add(bbPos);
         float[] f = new float[fList.size()];
-        for (int i = 0; i < fList.size(); i++){
+        for (int i = 0; i < fList.size(); i++) {
             f[i] = fList.get(i);
         }
         return f;

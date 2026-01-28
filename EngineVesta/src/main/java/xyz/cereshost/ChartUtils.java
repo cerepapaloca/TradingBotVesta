@@ -25,7 +25,7 @@ import java.util.List;
 public class ChartUtils {
 
 
-    public static void plot(
+    public static DefaultCategoryDataset plot(
             String title,
             String xLabel,
             List<DataPlot> plots
@@ -55,6 +55,8 @@ public class ChartUtils {
         ChartFrame frame = new ChartFrame(title, chart);
         frame.pack();
         frame.setVisible(true);
+
+        return dataset;
     }
 
     public record DataPlot(

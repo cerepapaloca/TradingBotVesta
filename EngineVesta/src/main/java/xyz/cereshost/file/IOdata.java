@@ -116,13 +116,13 @@ public class IOdata {
                     market.addCandles(deque);
                     market.addTrade(trades);
                     Vesta.MARKETS.put(s, market);
-                    Vesta.info("✅ Datos procesado de binance del mercado: %s ( %.2f s)", s, (float) (System.currentTimeMillis() - timeTotal) / 1000);
+                    Vesta.info("✅ Datos procesado de binance del mercado: %s (%.2fss)", s, (float) (System.currentTimeMillis() - timeTotal) / 1000);
                     latch.countDown();
                 }
                 case CSV -> {
                     int targetYear = 2025;
                     int endtMonth = 12;
-                    int startMonth = 11;
+                    int startMonth = 8;
                     long timeTotal = System.currentTimeMillis();
                     Vesta.info("📂 Verificando caché local para: " + s);
                     Deque<CandleSimple> candles = new ArrayDeque<>();

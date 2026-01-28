@@ -11,7 +11,6 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.common.Vesta;
-import xyz.cereshost.trading.Trading;
 
 import java.util.*;
 
@@ -353,14 +352,14 @@ public class EngineUtils {
             if (Float.isNaN(tp) || Float.isInfinite(tp) ||
                     Float.isNaN(sl) || Float.isInfinite(sl)) {
                 removedBadValue++;
-                Vesta.waring("Eliminando muestra con TP/SL inválido en índice " + i);
+                Vesta.warning("Eliminando muestra con TP/SL inválido en índice " + i);
                 continue;
             }
 
             // 2) filtrar valores negativos o cero
             if (tp <= 0 || sl <= 0) {
                 removedBadValue++;
-                Vesta.waring("Eliminando muestra con TP/SL <= 0 en índice " + i);
+                Vesta.warning("Eliminando muestra con TP/SL <= 0 en índice " + i);
                 continue;
             }
 
@@ -372,7 +371,7 @@ public class EngineUtils {
                 uniqueY.add(new float[]{tp, sl});
             } else {
                 removedDuplicates++;
-                Vesta.waring("Eliminando duplicado en índice " + i);
+                Vesta.warning("Eliminando duplicado en índice " + i);
             }
         }
 

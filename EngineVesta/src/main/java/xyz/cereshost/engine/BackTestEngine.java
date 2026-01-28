@@ -92,6 +92,7 @@ public class BackTestEngine {
                     // Debe ser una lista mutable
                     operations
             );
+            operations.getOpens().forEach(Trading.OpenOperation::next);
             operations.computeCloses();
         }
         stats.getExtraDataPlot().addAll(extraStats);

@@ -24,12 +24,12 @@ public class Vesta {
         LOGGER.info(message);
     }
 
-    public static void waring(String message, Object... o) {
+    public static void warning(String message, Object... o) {
         LOGGER.warn(String.format(message, o));
     }
 
 
-    public static void waring(String message) {
+    public static void warning(String message) {
         LOGGER.warn(message);
     }
 

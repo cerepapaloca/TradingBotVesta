@@ -10,17 +10,19 @@ import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.file.IOdata;
 import xyz.cereshost.packet.PacketHandler;
-import xyz.cereshost.strategy.AlfaStrategy;
+import xyz.cereshost.strategy.DefaultStrategy;
 import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
 
 public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "DOGEUSDC"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "BNBUSDC"/* "BNBUSDT"*/);
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
@@ -88,17 +90,17 @@ public class Main {
                         ));
             }
             case "predict" -> {
-                String symbol = "DOGEUSDC";
+                String symbol = "BNBUSDC";
                 PredictionEngine.makePrediction(symbol);
             }
             case "backtest" -> {
-                String symbol = "DOGEUSDC";
+                String symbol = "BNBUSDC";
                 IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol);
                 showDataBackTest(new BackTestEngine(Vesta.MARKETS.get(symbol), PredictionEngine.loadPredictionEngine("VestaIA")).run());
             }
             case "trading" -> {
-                String symbol = "DOGEUSDC";
-                new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new AlfaStrategy()).startCandleLoop();
+                String symbol = "BNBUSDC";
+                new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
             }
         }
     }

@@ -11,12 +11,12 @@ import xyz.cereshost.engine.PredictionEngine;
 public class DefaultStrategy implements TradingStrategy {
     @Override
     public void executeStrategy(PredictionEngine.@NotNull PredictionResult pred, Trading openOperations) {
-
+        for (Trading.OpenOperation op : openOperations.getOpens()) if (op.getCountCandles() >= 1) openOperations.close(Trading.ExitReason.STRATEGY, op.getUuid());
         if (openOperations.openSize() == 0) {
             openOperations.open(
-                    pred.getTpPercent(),
-                    pred.getSlPercent(),
-                    pred.direction(),
+                    0.06,
+                    0.06,
+                    Trading.DireccionOperation.LONG,
                     openOperations.getAvailableBalance()/2,
                     1
             );

@@ -45,8 +45,8 @@ import java.util.List;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 35;
-    public static final int EPOCH = 1200;
+    public static final int LOOK_BACK = 45;
+    public static final int EPOCH = 50;
 
     /**
      * Entrena un modelo con múltiples símbolos combinados
@@ -203,9 +203,6 @@ public class VestaEngine {
             Vesta.info("Iniciando entrenamiento con " + EPOCH + " epochs...");
             EasyTrain.fit(trainer, EPOCH, trainDataset, valDataset);
 
-            // Gráficas
-            ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",  List.of(new ChartUtils.DataPlot("Loss", metrics.getLoss()), new ChartUtils.DataPlot("MAE", metrics.getMae())));
-
             // Guardar modelo (igual que antes)
             IOdata.saveModel(model);
             IOdata.saveYNormalizer(yNormalizer);
@@ -256,10 +253,12 @@ public class VestaEngine {
 
     public static SequentialBlock getSequentialBlock() {
         SequentialBlock mainBlock = new SequentialBlock();
+        float delta = 0.7f; // Controla qué tan suave es el centro
+        float deltaSq = delta * delta;
 
         mainBlock.add(GRU.builder()
-                        .setStateSize(128)
-                        .setNumLayers(1)
+                        .setStateSize(64)
+                        .setNumLayers(2)
                         .optReturnState(false)
                         .optBatchFirst(true)
                         .optDropRate(0.3f)
@@ -280,26 +279,31 @@ public class VestaEngine {
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(32).build())
                 .add(Dropout.builder().build())
-                .add(Linear.builder().setUnits(16).build())
+                .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
-                .add(new LambdaBlock((ndArrays -> new NDList(ndArrays.singletonOrThrow().abs()))))
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow();
+                    return new NDList(x.pow(2).add(deltaSq).sqrt().sub(delta));
+                }))
         );
 
         // SL
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(32).build())
                 .add(Dropout.builder().build())
-                .add(Linear.builder().setUnits(16).build())
+                .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
-                .add(new LambdaBlock((ndArrays -> new NDList(ndArrays.singletonOrThrow().abs()))))
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow();
+                    return new NDList(x.pow(2).add(deltaSq).sqrt().sub(delta));
+                }))
         );
 
         // Dirección
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(16).build())
                 .add(Dropout.builder().build())
-                .add(Linear.builder().setUnits(16).build())
+                .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(Activation::tanh)
         );

@@ -30,6 +30,8 @@ public interface Trading {
 
     double getAvailableBalance();
 
+     default void log(String s){};
+
     @Data
     abstract class CloseOperation {
 

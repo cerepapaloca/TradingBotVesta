@@ -1,9 +1,9 @@
 package xyz.cereshost.packet;
 
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.packet.*;
+import xyz.cereshost.common.packet.client.HelloClient;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -13,6 +13,7 @@ import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.LockSupport;
 
@@ -21,8 +22,10 @@ public class PacketHandler extends BasePacketHandler {
     private static final Queue<PacketClient> packetQueue = new ConcurrentLinkedQueue<>();
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private static SocketProperties socketProperties;
-    private static String id;
-    private static final String HOST = "192.168.1.55";//localhost
+    public static final UUID idClient = UUID.randomUUID();
+    private static final String HOST = "192.168.1.55";// localhost
+    private static final CountDownLatch latch = new CountDownLatch(1);
+
     private static final int PORT = 2545;
 
     public PacketHandler() {
@@ -49,11 +52,12 @@ public class PacketHandler extends BasePacketHandler {
                     socketProperties = new SocketProperties(socket, out, in);
 
                     sendAllPacket();          // Enviar en bloques
-
+                    sendPacket(new HelloClient());
+                    Vesta.info("✅ UUID del cliente: %s", idClient);
+                    latch.countDown();
                     handleClientConnection(); // Leer en bloques
-
                 } catch (IOException e) {
-                    Vesta.waring("Reconectando en 5s...");
+                    Vesta.warning("Reconectando en 5s...");
                     LockSupport.parkNanos(5_000_000_000L);
                 }
             }
@@ -66,7 +70,7 @@ public class PacketHandler extends BasePacketHandler {
         SocketChannel channel = sp.socket().getChannel();
 
         ByteBuffer header = ByteBuffer.allocateDirect(4);
-        ByteBuffer body = null;
+        ByteBuffer body;
 
         try {
             while (!sp.isClosed()) {
@@ -103,18 +107,16 @@ public class PacketHandler extends BasePacketHandler {
     private void processPacket(byte[] message) {
         Class<?> clazz = PacketManager.getPacketClass(message);
         PacketListener<? extends Packet> packetListener = BasePacketHandler.listeners.get(clazz);
-        Packet p;
+        Packet p = PacketManager.decodePacket(message);;
 
-        if (packetListener == null){
-            p = PacketManager.decodePacket(message);
-        }else {
-            p = packetListener.decodePacketAndReceive(message);
+        if (packetListener != null){
+            packetListener.receivePacket(p);
         }
         BasePacketHandler.replyFuture(p);
     }
 
     public static void sendPacket(@NotNull PacketClient packet) {
-        packet.setFrom(Main.getInstance().getClass().getName());
+        packet.setFrom(idClient);
         byte[] payload = PacketManager.encodePacket(packet);
 
         SocketProperties sp = socketProperties;
@@ -153,9 +155,12 @@ public class PacketHandler extends BasePacketHandler {
     }
 
     public static <T extends Packet> @NotNull CompletableFuture<T> sendPacket(@NotNull PacketClient packet, Class<T> packetRepose) {
-
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
         sendPacket(packet);
-
         return packetPendingOnResponse(packet, packetRepose);
     }
 

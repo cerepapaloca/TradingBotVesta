@@ -18,15 +18,9 @@ public abstract class PacketListener<T extends Packet> {
         BasePacketHandler.addListener(this);
     }
 
-    public T decodePacketAndReceive(byte[] data) {
-        T packet = (T) PacketManager.decodePacket(data);
-        try {
-            onReceive(packet);
-        }catch (Exception e){
-            e.printStackTrace();
-        }
-        return packet;
+    public void receivePacket(Packet packet){
+        onReceive((T) packet);
     }
 
-    public abstract void onReceive(T packet);
+    protected abstract void onReceive(T packet);
 }

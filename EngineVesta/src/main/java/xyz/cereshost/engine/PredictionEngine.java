@@ -28,7 +28,7 @@ import java.util.List;
 @Getter
 public class PredictionEngine {
 
-    public static final double THRESHOLD = 0.0006;
+    public static final double THRESHOLD = 0.001;
 
     private final Model model;
     private final RobustNormalizer xNormalizer;
@@ -100,7 +100,7 @@ public class PredictionEngine {
             //debugInputData(inputSequence);
             // Validación de dimensiones
             if (actualFeatures != features) {
-                Vesta.waring("⚠️ Advertencia de dimensiones: El modelo espera " + features +
+                Vesta.warning("⚠️ Advertencia de dimensiones: El modelo espera " + features +
                         " features, pero recibió " + actualFeatures);
             }
 

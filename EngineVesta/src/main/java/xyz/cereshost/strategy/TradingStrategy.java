@@ -1,6 +1,5 @@
 package xyz.cereshost.strategy;
 
-import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.trading.Trading;
 
