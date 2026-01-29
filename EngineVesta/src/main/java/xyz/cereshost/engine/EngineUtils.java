@@ -14,7 +14,8 @@ import xyz.cereshost.common.Vesta;
 
 import java.util.*;
 
-import static xyz.cereshost.engine.PredictionEngine.THRESHOLD;
+import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_PRICE;
+import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_RELATIVE;
 
 @UtilityClass
 public class EngineUtils {
@@ -131,7 +132,9 @@ public class EngineUtils {
     /**
      * Evalúa el modelo con lógica de 3 salidas: Regresión (UP/DOWN) + Clasificación (DIR)
      */
-    public static ResultsEvaluate evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test, MultiSymbolNormalizer yNormalizer) {
+    public static ResultsEvaluate evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test,
+                                                MultiSymbolNormalizer yNormalizer) {
+
         NDList predictions = trainer.evaluate(new NDList(X_test));
         NDArray yPred = predictions.singletonOrThrow();
 
@@ -141,73 +144,77 @@ public class EngineUtils {
 
         long[] shape = y_test.getShape().getShape();
         int batchSize = (int) shape[0];
-        // Asumimos que numOutputs es 3
+
+        // Ahora tenemos 5 salidas en predicciones, pero el target sigue teniendo 3
+        int targetCols = 3;  // [TP, SL, dirección_continua]
+        int predCols = 5;    // [TP, SL, LONG_prob, NEUTRAL_prob, SHORT_prob]
 
         double totalMaeUP = 0;
         double totalMaeDOWN = 0;
+        double totalMaeDir = 0;
 
         List<ResultPrediction> results = new ArrayList<>();
 
         for (int i = 0; i < batchSize; i++) {
-            int idx = i * 3;
+            // Índices para los arrays planos
+            int targetIdx = i * targetCols;
+            int predIdx = i * predCols;
 
-            // 1. Extraer RAW values (Tal como salen del modelo/dataset)
-            float rawRealUP = yTestFlat[idx];
-            float rawRealDOWN = yTestFlat[idx + 1];
-            float rawRealDir = yTestFlat[idx + 2]; // 0 o 1 (No debe estar normalizado)
+            // 1. Extraer valores del target (3 columnas)
+            float rawRealTP = yTestFlat[targetIdx];
+            float rawRealSL = yTestFlat[targetIdx + 1];
+            float rawRealLong = yTestFlat[targetIdx + 2]; // Dirección continua [-1, 1]
+            float rawRealNeutral = yTestFlat[targetIdx + 3]; // Dirección continua [-1, 1]
+            float rawRealShort = yTestFlat[targetIdx + 24]; // Dirección continua [-1, 1]
 
-            float rawPredUP = yPredFlat[idx];
-            float rawPredDOWN = yPredFlat[idx + 1];
-            float rawPredDir = yPredFlat[idx + 2]; // Probabilidad
+            float rawRealDir = PredictionEngine.computeDirection(
+                    new float[]{rawRealLong, rawRealNeutral, rawRealShort}
+            );
 
-            // 2. DES-NORMALIZAR SOLO UP Y DOWN
-            // Creamos un array temporal solo con las partes de regresión
-            float[][] tempInput = new float[][]{{rawRealUP, rawRealDOWN}, {rawPredUP, rawPredDOWN}};
+            // 2. Extraer predicciones (5 columnas)
+            float rawPredTP = yPredFlat[predIdx];
+            float rawPredSL = yPredFlat[predIdx + 1];
+            float rawPredLong = yPredFlat[predIdx + 2];    // Probabilidad LONG
+            float rawPredNeutral = yPredFlat[predIdx + 3]; // Probabilidad NEUTRAL
+            float rawPredShort = yPredFlat[predIdx + 4];   // Probabilidad SHORT
 
-            // Usamos el normalizer que (asumimos) fue entrenado solo con 2 columnas o maneja el split
-            // FIX: Si el normalizer espera 3 columnas, esto fallará.
-            // Asumiremos que el usuario arregló el normalizer O haremos un truco:
-            // Des-normalizamos manualmente si tenemos acceso a media/std, o usamos el normalizer:
+            // 3. Convertir probabilidades a dirección continua [-1, 1]
+            float predDirection = PredictionEngine.computeDirection(
+                    new float[]{rawPredLong, rawPredNeutral, rawPredShort}
+            );
 
-            float[][] tempOutput;
-            try {
-                // Intentamos desnormalizar el par [UP, DOWN].
-                // NOTA: Esto requiere que tu yNormalizer acepte arrays de 2 columnas.
-                tempOutput = yNormalizer.inverseTransform(tempInput);
-            } catch (Exception e) {
-                // Fallback si el normalizer es estricto con el tamaño:
-                // Pasamos dummy 0 en la tercera columna para engañarlo, luego ignoramos el resultado
-                float[][] dummyInput = new float[][]{
-                        {rawRealUP, rawRealDOWN, 0},
-                        {rawPredUP, rawPredDOWN, 0}
-                };
-                float[][] dummyOutput = yNormalizer.inverseTransform(dummyInput);
-                tempOutput = new float[][]{
-                        {dummyOutput[0][0], dummyOutput[0][1]},
-                        {dummyOutput[1][0], dummyOutput[1][1]}
-                };
-            }
+            // 4. Crear arrays temporales para desnormalización
+            // Target: [TP, SL] (2 columnas)
+            float[][] targetArray = new float[][]{{rawRealTP, rawRealSL}};
+            float[][] predArray = new float[][]{{rawPredTP, rawPredSL}};
 
-            float realUP = tempOutput[0][0];
-            float realDOWN = tempOutput[0][1];
-            float predUP = tempOutput[1][0];
-            float predDOWN = tempOutput[1][1];
+            // 5. Desnormalizar TP y SL
+            float[][] denormTarget = yNormalizer.inverseTransform(targetArray);
+            float[][] denormPred = yNormalizer.inverseTransform(predArray);
 
-            // La dirección NO se toca
-            float realDir = rawRealDir;
-            float predDirProb = rawPredDir;
+            float realTP = denormTarget[0][0];
+            float realSL = denormTarget[0][1];
+            float predTP = denormPred[0][0];
+            float predSL = denormPred[0][1];
 
-            // --- Métricas ---
-            totalMaeUP += Math.abs(realUP - predUP);
-            totalMaeDOWN += Math.abs(realDOWN - predDOWN);
+            // 6. Métricas
+            totalMaeUP += Math.abs(realTP - predTP);
+            totalMaeDOWN += Math.abs(realSL - predSL);
+            totalMaeDir += Math.abs(rawRealDir - predDirection); // MAE de dirección
 
-            results.add(new ResultPrediction(predUP, predDOWN, predDirProb, realUP, realDOWN, realDir, i));
+            // 7. Crear ResultPrediction con el nuevo formato
+            results.add(new ResultPrediction(
+                    predTP, predSL, predDirection, // Predicciones
+                    realTP, realSL, rawRealDir,    // Valores reales
+                    i
+            ));
         }
 
         double avgMaeUP = totalMaeUP / batchSize;
         double avgMaeDOWN = totalMaeDOWN / batchSize;
+        double avgMaeDir = totalMaeDir / batchSize;
 
-        return new ResultsEvaluate("VestaHybrid", avgMaeUP, avgMaeDOWN, results);
+        return new ResultsEvaluate("VestaIA", avgMaeUP, avgMaeDOWN, results);
     }
 
     public record ResultsEvaluate(
@@ -218,23 +225,26 @@ public class EngineUtils {
     ) {
         public float hitRateSimple(){
             int hits = 0;
-            int total = 0;
+            int nohits = 0;
             for (ResultPrediction prediction : resultPrediction) {
                 if (prediction.predDir() == 0) continue;
                 // ley de los signos
                 if (prediction.realDir() * prediction.predDir() > 0) {
                     hits++;
+                }else {
+                    nohits++;
                 }
-                total++;
+
             }
-            return ((float) hits / total) *100;
+            int total = nohits + hits;
+            return total > 0 ? ((float) hits / total) *100 : 0;
         }
 
         public float hitRateAdvanced() {
             int hits = 0;
             int total = 0;
 
-            float threshold = (float) (THRESHOLD * 100);
+            float threshold = (float) THRESHOLD_RELATIVE;
 
             for (ResultPrediction prediction : resultPrediction) {
                 float pred = prediction.predDir();
@@ -250,29 +260,34 @@ public class EngineUtils {
 
         public float hitRateSafe() {
             int hits = 0;
-            int total = 0;
+            int fails = 0;
 
-            float threshold = (float) (THRESHOLD * 100);
+            float threshold = (float) THRESHOLD_RELATIVE;
+
             for (ResultPrediction prediction : resultPrediction) {
                 float pred = prediction.predDir();
                 float real = prediction.realDir();
-                if (real > threshold) {
-                    total++;
-                    if (pred > threshold) hits++; // Long
+
+                if (real > threshold) { // Long real
+                    if (pred > threshold) hits++;
+                    else fails++;
                 }
-                else if (real < -threshold) {
-                    total++;
-                    if (pred < -threshold) hits++; // Short
+                else if (real < -threshold) { // Short real
+                    if (pred < -threshold) hits++;
+                    else fails++;
                 }
+                // si está entre -threshold y +threshold no cuenta
             }
 
-            return total > 0 ? ((float) hits / total) * 100 : 0;
+            int total = hits + fails;
+            // A / (A + B) * 100
+            return total > 0 ? ((float) hits / total) * 100f : 0f;
         }
 
         public int @NotNull [] hitRateLong() {
             int[] hits = new int[3];
             for (ResultPrediction prediction : resultPrediction){
-                if (prediction.realDir() > THRESHOLD*100){
+                if (prediction.realDir() > THRESHOLD_RELATIVE){
                     computeDir(hits, prediction);
                 }
             }
@@ -282,7 +297,7 @@ public class EngineUtils {
         public int @NotNull [] hitRateShort() {
             int[] hits = new int[3];
             for (ResultPrediction prediction : resultPrediction){
-                if (prediction.realDir() < -THRESHOLD*100){
+                if (prediction.realDir() < -THRESHOLD_RELATIVE){
                     computeDir(hits, prediction);
                 }
             }
@@ -292,7 +307,7 @@ public class EngineUtils {
         public int @NotNull [] hitRateNeutral() {
             int[] hits = new int[3];
             for (ResultPrediction prediction : resultPrediction){
-                if (prediction.realDir() > -THRESHOLD*100 && prediction.realDir() < THRESHOLD*100) {
+                if (prediction.realDir() > -THRESHOLD_RELATIVE && prediction.realDir() < THRESHOLD_RELATIVE) {
                     computeDir(hits, prediction);
                 }
             }
@@ -300,8 +315,8 @@ public class EngineUtils {
         }
 
         private void computeDir(int[] hits, @NotNull ResultPrediction prediction) {
-            boolean signalLong = prediction.predDir() > THRESHOLD*100;
-            boolean signalShort = prediction.predDir() < -THRESHOLD*100;
+            boolean signalLong = prediction.predDir() > THRESHOLD_RELATIVE;
+            boolean signalShort = prediction.predDir() < -THRESHOLD_RELATIVE;
             if (signalLong) {
                 hits[0]++; // Long
             } else if (signalShort) {

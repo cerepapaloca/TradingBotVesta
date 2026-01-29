@@ -22,11 +22,14 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "BNBUSDC"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "ETHUSDC"/* "BNBUSDT"*/);
     @NotNull
-    public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
+    public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV_CHUNK;
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.LOCAL_NETWORK;
+
+    public static final int FINAL_MONTH = 12;
+    public static final int INIT_MONTH = 1;
 
 
     @Getter
@@ -90,16 +93,16 @@ public class Main {
                         ));
             }
             case "predict" -> {
-                String symbol = "BNBUSDC";
+                String symbol = "ETHUSDC";
                 PredictionEngine.makePrediction(symbol);
             }
             case "backtest" -> {
-                String symbol = "BNBUSDC";
-                IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol);
-                showDataBackTest(new BackTestEngine(Vesta.MARKETS.get(symbol), PredictionEngine.loadPredictionEngine("VestaIA")).run());
+                String symbol = "ETHUSDC";
+
+                showDataBackTest(new BackTestEngine(IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol), PredictionEngine.loadPredictionEngine("VestaIA")).run());
             }
             case "trading" -> {
-                String symbol = "BNBUSDC";
+                String symbol = "ETHUSDC";
                 new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
             }
         }

@@ -27,8 +27,8 @@ public class RobustNormalizer {
                 }
             }
 
-            // Calcular percentiles robustos
-            Collections.sort(values);
+//            // Calcular percentiles robustos
+//            Collections.sort(values);
             int n = values.size();
 
             float q25 = values.get((int) (n * 0.25));

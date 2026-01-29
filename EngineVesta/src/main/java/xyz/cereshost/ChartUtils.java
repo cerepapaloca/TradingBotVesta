@@ -64,315 +64,397 @@ public class ChartUtils {
             List<Float> values
     ) {}
 
-    public static class CandleChartUtils {
+    public static void showCandleChart(String title, List<Candle> candles, String symbol) {
+        if (candles == null || candles.isEmpty()) {
+            Vesta.error("No hay velas para mostrar");
+            return;
+        }
 
-        public static void showCandleChart(String title, List<Candle> candles, String symbol) {
-            if (candles == null || candles.isEmpty()) {
-                Vesta.error("No hay velas para mostrar");
-                return;
+        try {
+            // Preparar datos para JFreeChart
+            int itemCount = candles.size();
+            Date[] dates = new Date[itemCount];
+            double[] highs = new double[itemCount];
+            double[] lows = new double[itemCount];
+            double[] opens = new double[itemCount];
+            double[] closes = new double[itemCount];
+            double[] volumes = new double[itemCount];
+
+            for (int i = 0; i < itemCount; i++) {
+                Candle candle = candles.get(i);
+                dates[i] = new Date(candle.openTime());
+                opens[i] = candle.open();
+                highs[i] = candle.high();
+                lows[i] = candle.low();
+                closes[i] = candle.close();
+                volumes[i] = candle.volumeBase();
             }
 
-            try {
-                // Preparar datos para JFreeChart
-                int itemCount = candles.size();
-                Date[] dates = new Date[itemCount];
-                double[] highs = new double[itemCount];
-                double[] lows = new double[itemCount];
-                double[] opens = new double[itemCount];
-                double[] closes = new double[itemCount];
-                double[] volumes = new double[itemCount];
+            // Crear dataset de velas
+            OHLCDataset dataset = new DefaultHighLowDataset(
+                    symbol, dates, highs, lows, opens, closes, volumes
+            );
 
-                for (int i = 0; i < itemCount; i++) {
-                    Candle candle = candles.get(i);
-                    dates[i] = new Date(candle.openTime());
-                    opens[i] = candle.open();
-                    highs[i] = candle.high();
-                    lows[i] = candle.low();
-                    closes[i] = candle.close();
-                    volumes[i] = candle.volumeBase();
+            // Crear gráfico de velas
+            JFreeChart chart = ChartFactory.createCandlestickChart(
+                    title + " - " + symbol,
+                    "Fecha",
+                    "Precio",
+                    dataset,
+                    true
+            );
+
+            // Configurar eje de fechas
+            XYPlot plot = (XYPlot) chart.getPlot();
+            DateAxis axis = (DateAxis) plot.getDomainAxis();
+            axis.setDateFormatOverride(new SimpleDateFormat("dd/MM HH:mm"));
+
+            // Ajusta el zoon
+            double minPrice = Arrays.stream(lows).min().orElse(0);
+            double maxPrice = Arrays.stream(highs).max().orElse(0);
+
+            double padding = (maxPrice - minPrice) * 0.02; // pading
+
+            NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
+            rangeAxis.setRange(
+                    minPrice - padding,
+                    maxPrice + padding
+            );
+
+            // Mostrar en ventana
+            ChartPanel chartPanel = new ChartPanel(chart);
+            chartPanel.setPreferredSize(new Dimension(1200, 600));
+
+            JFrame frame = new JFrame("Visualización de Velas - " + symbol);
+            frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            frame.getContentPane().add(chartPanel);
+            frame.pack();
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+
+            Vesta.info("Mostrando gráfico de " + candles.size() + " velas para " + symbol);
+
+        } catch (Exception e) {
+            Vesta.error("Error mostrando gráfico: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Muestra la distribución de datos con dos salidas (TP y SL)
+     */
+    public static void showTPSLDistribution(String title, float[][] y, String symbol) {
+        try {
+            // Extraer TP y SL de los datos de salida
+            List<Float> tpValues = new ArrayList<>();
+            List<Float> slValues = new ArrayList<>();
+            int j = 0;
+            for (float[] floats : y) {
+                if (floats.length >= 2) {
+                    float tp = floats[0];
+                    float sl = floats[1];
+                    tpValues.add(tp);
+                    slValues.add(-sl);
                 }
-
-                // Crear dataset de velas
-                OHLCDataset dataset = new DefaultHighLowDataset(
-                        symbol, dates, highs, lows, opens, closes, volumes
-                );
-
-                // Crear gráfico de velas
-                JFreeChart chart = ChartFactory.createCandlestickChart(
-                        title + " - " + symbol,
-                        "Fecha",
-                        "Precio",
-                        dataset,
-                        true
-                );
-
-                // Configurar eje de fechas
-                XYPlot plot = (XYPlot) chart.getPlot();
-                DateAxis axis = (DateAxis) plot.getDomainAxis();
-                axis.setDateFormatOverride(new SimpleDateFormat("dd/MM HH:mm"));
-
-                // Ajusta el zoon
-                double minPrice = Arrays.stream(lows).min().orElse(0);
-                double maxPrice = Arrays.stream(highs).max().orElse(0);
-
-                double padding = (maxPrice - minPrice) * 0.02; // pading
-
-                NumberAxis rangeAxis = (NumberAxis) plot.getRangeAxis();
-                rangeAxis.setRange(
-                        minPrice - padding,
-                        maxPrice + padding
-                );
-
-                // Mostrar en ventana
-                ChartPanel chartPanel = new ChartPanel(chart);
-                chartPanel.setPreferredSize(new Dimension(1200, 600));
-
-                JFrame frame = new JFrame("Visualización de Velas - " + symbol);
-                frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-                frame.getContentPane().add(chartPanel);
-                frame.pack();
-                frame.setLocationRelativeTo(null);
-                frame.setVisible(true);
-
-                Vesta.info("Mostrando gráfico de " + candles.size() + " velas para " + symbol);
-
-            } catch (Exception e) {
-                Vesta.error("Error mostrando gráfico: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }
-
-        private static @NotNull XYSeriesCollection getXySeriesCollection(List<Float> actualPrices, List<Float> predictedPrices) {
-            org.jfree.data.xy.XYSeries actualSeries = new org.jfree.data.xy.XYSeries("Actual");
-            org.jfree.data.xy.XYSeries predictedSeries = new org.jfree.data.xy.XYSeries("Predicho");
-
-            for (int i = 0; i < actualPrices.size(); i++) {
-                actualSeries.add(i, actualPrices.get(i));
-                predictedSeries.add(i, predictedPrices.get(i));
             }
 
-            XYSeriesCollection dataset = new XYSeriesCollection();
-            dataset.addSeries(actualSeries);
-            dataset.addSeries(predictedSeries);
-            return dataset;
-        }
+            // Crear dataset para TP y SL
+            org.jfree.data.xy.XYSeries tpSeries = new org.jfree.data.xy.XYSeries("TP (Take Profit)");
+            org.jfree.data.xy.XYSeries slSeries = new org.jfree.data.xy.XYSeries("SL (Stop Loss)");
 
-        /**
-         * Muestra la distribución de datos con dos salidas (TP y SL)
-         */
-        public static void showDataDistribution(String title, float[][] y, String symbol) {
-            try {
-                // Extraer TP y SL de los datos de salida
-                List<Float> tpValues = new ArrayList<>();
-                List<Float> slValues = new ArrayList<>();
-                List<Float> ratioValues = new ArrayList<>();
-                int j = 0;
-                for (float[] floats : y) {
-                    if (floats.length >= 2) {
-                        float tp = floats[0];
-                        float sl = floats[1];
-                        tpValues.add(tp);
-                        slValues.add(sl);
-                        if (sl > 0) {
-                            ratioValues.add(tp / sl);
-                        }else {
-                            ratioValues.add(0f);
-                        }
+            for (int i = 0; i < tpValues.size(); i++) {
+                tpSeries.add(i, tpValues.get(i));
+                slSeries.add(i, slValues.get(i));
+            }
+
+            org.jfree.data.xy.XYSeriesCollection dataset = new org.jfree.data.xy.XYSeriesCollection();
+            dataset.addSeries(tpSeries);
+            dataset.addSeries(slSeries);
+
+            // Crear gráfico
+            JFreeChart chart = ChartFactory.createScatterPlot(
+                    title + " - " + symbol + " (Distribución de TP y SL)",
+                    "Índice de Muestra",
+                    "Valor (Log Return)",
+                    dataset
+            );
+
+            // Configurar colores
+            XYPlot plot = (XYPlot) chart.getPlot();
+            plot.getRenderer().setSeriesPaint(0, Color.green);  // TP en verde
+            plot.getRenderer().setSeriesPaint(1, Color.red);    // SL en rojo
+
+            // Mostrar en ventana
+            ChartPanel chartPanel = new ChartPanel(chart);
+            chartPanel.setPreferredSize(new Dimension(1200, 600));
+
+            JFrame frame = new JFrame("Distribución de Datos - " + symbol);
+            frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            frame.getContentPane().add(chartPanel);
+            frame.pack();
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+
+//                Vesta.info("Mostrando distribución de " + longValues.size() + " muestras para " + symbol);
+//                Vesta.info("TP promedio: " + longValues.stream().mapToDouble(f -> f).average().orElse(0));
+//                Vesta.info("SL promedio: " + neutralValues.stream().mapToDouble(f -> f).average().orElse(0));
+//                Vesta.info("Ratio TP/SL promedio: " + shortValues.stream().mapToDouble(f -> f).average().orElse(0));
+
+        } catch (Exception e) {
+            Vesta.error("Error mostrando distribución: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public static void showDirectionDistribution(String title, float[][] y, String symbol) {
+        try {
+            // Contar ocurrencias de cada dirección
+            int longCount = 0;
+            int neutralCount = 0;
+            int shortCount = 0;
+
+            // TP y SL promedios por dirección
+            double longTpSum = 0;
+            double longSlSum = 0;
+            double neutralTpSum = 0;
+            double neutralSlSum = 0;
+            double shortTpSum = 0;
+            double shortSlSum = 0;
+
+            for (float[] row : y) {
+                if (row.length >= 5) {
+                    // Las posiciones: 0=TP, 1=SL, 2=Long, 3=Neutral, 4=Short
+                    float tp = row[0];
+                    float sl = row[1];
+                    float probLong = row[2];
+                    float probNeutral = row[3];
+                    float probShort = row[4];
+
+                    // Determinar dirección predominante (one-hot encoding)
+                    if (probLong >= probNeutral && probLong >= probShort) {
+                        longCount++;
+                        longTpSum += tp;
+                        longSlSum += sl;
+                    } else if (probNeutral >= probLong && probNeutral >= probShort) {
+                        neutralCount++;
+                        neutralTpSum += tp;
+                        neutralSlSum += sl;
+                    } else if (probShort >= probLong && probShort >= probNeutral) {
+                        shortCount++;
+                        shortTpSum += tp;
+                        shortSlSum += sl;
                     }
                 }
-
-                // Crear dataset para TP y SL
-                org.jfree.data.xy.XYSeries tpSeries = new org.jfree.data.xy.XYSeries("TP (Take Profit)");
-                org.jfree.data.xy.XYSeries slSeries = new org.jfree.data.xy.XYSeries("SL (Stop Loss)");
-                org.jfree.data.xy.XYSeries ratioSeries = new org.jfree.data.xy.XYSeries("Ratio TP/SL");
-
-                for (int i = 0; i < tpValues.size(); i++) {
-                    tpSeries.add(i, tpValues.get(i) * 10000);
-                    slSeries.add(i, slValues.get(i) * 10000);
-                    if (i < ratioValues.size()) {
-                        ratioSeries.add(i, ratioValues.get(i));
-                    }
-                }
-
-                org.jfree.data.xy.XYSeriesCollection dataset = new org.jfree.data.xy.XYSeriesCollection();
-                dataset.addSeries(ratioSeries);
-                dataset.addSeries(tpSeries);
-                dataset.addSeries(slSeries);
-
-                // Crear gráfico
-                JFreeChart chart = ChartFactory.createScatterPlot(
-                        title + " - " + symbol + " (Distribución de TP y SL)",
-                        "Índice de Muestra",
-                        "Valor (Log Return)",
-                        dataset
-                );
-
-                // Configurar colores
-                XYPlot plot = (XYPlot) chart.getPlot();
-                plot.getRenderer().setSeriesPaint(0, Color.BLUE);   // Ratio en azul
-                plot.getRenderer().setSeriesPaint(1, Color.GREEN);  // TP en verde
-                plot.getRenderer().setSeriesPaint(2, Color.RED);    // SL en rojo
-
-                // Mostrar en ventana
-                ChartPanel chartPanel = new ChartPanel(chart);
-                chartPanel.setPreferredSize(new Dimension(1200, 600));
-
-                JFrame frame = new JFrame("Distribución de Datos - " + symbol);
-                frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-                frame.getContentPane().add(chartPanel);
-                frame.pack();
-                frame.setLocationRelativeTo(null);
-                frame.setVisible(true);
-
-                Vesta.info("Mostrando distribución de " + tpValues.size() + " muestras para " + symbol);
-                Vesta.info("TP promedio: " + tpValues.stream().mapToDouble(f -> f).average().orElse(0));
-                Vesta.info("SL promedio: " + slValues.stream().mapToDouble(f -> f).average().orElse(0));
-                Vesta.info("Ratio TP/SL promedio: " + ratioValues.stream().mapToDouble(f -> f).average().orElse(0));
-
-            } catch (Exception e) {
-                Vesta.error("Error mostrando distribución: " + e.getMessage());
-                e.printStackTrace();
             }
+
+            // Calcular promedios
+            double longTpAvg = longCount > 0 ? longTpSum / longCount : 0;
+            double longSlAvg = longCount > 0 ? longSlSum / longCount : 0;
+            double neutralTpAvg = neutralCount > 0 ? neutralTpSum / neutralCount : 0;
+            double neutralSlAvg = neutralCount > 0 ? neutralSlSum / neutralCount : 0;
+            double shortTpAvg = shortCount > 0 ? shortTpSum / shortCount : 0;
+            double shortSlAvg = shortCount > 0 ? shortSlSum / shortCount : 0;
+
+            // Crear dataset para el gráfico de barras
+            DefaultCategoryDataset countDataset = new DefaultCategoryDataset();
+            countDataset.addValue(longCount, "Cantidad", "Long");
+            countDataset.addValue(neutralCount, "Cantidad", "Neutral");
+            countDataset.addValue(shortCount, "Cantidad", "Short");
+
+            // Crear dataset para TP/SL por dirección
+            DefaultCategoryDataset tpSlDataset = new DefaultCategoryDataset();
+            tpSlDataset.addValue(longTpAvg * 10000, "TP (×10⁴)", "Long");
+            tpSlDataset.addValue(longSlAvg * 10000, "SL (×10⁴)", "Long");
+            tpSlDataset.addValue(neutralTpAvg * 10000, "TP (×10⁴)", "Neutral");
+            tpSlDataset.addValue(neutralSlAvg * 10000, "SL (×10⁴)", "Neutral");
+            tpSlDataset.addValue(shortTpAvg * 10000, "TP (×10⁴)", "Short");
+            tpSlDataset.addValue(shortSlAvg * 10000, "SL (×10⁴)", "Short");
+
+            // Crear gráfico de barras para cantidad
+            JFreeChart countChart = ChartFactory.createBarChart(
+                    title + " - Distribución de Direcciones - " + symbol,
+                    "Dirección",
+                    "Cantidad de Muestras",
+                    countDataset,
+                    PlotOrientation.VERTICAL,
+                    true,  // Incluir leyenda
+                    true,  // Tooltips
+                    false  // URLs
+            );
+
+            // Configurar colores para cantidad
+            CategoryPlot countPlot = countChart.getCategoryPlot();
+            countPlot.getRenderer().setSeriesPaint(0, new Color(65, 105, 225)); // Azul Royal
+            countPlot.setBackgroundPaint(Color.WHITE);
+            countPlot.setRangeGridlinePaint(Color.GRAY);
+
+            // Crear gráfico de barras para TP/SL
+            JFreeChart tpSlChart = ChartFactory.createBarChart(
+                    title + " - TP/SL Promedio por Dirección - " + symbol,
+                    "Dirección",
+                    "Valor Promedio (Log Return ×10⁴)",
+                    tpSlDataset,
+                    PlotOrientation.VERTICAL,
+                    true,  // Incluir leyenda
+                    true,  // Tooltips
+                    false  // URLs
+            );
+
+            // Configurar colores para TP/SL
+            CategoryPlot tpSlPlot = tpSlChart.getCategoryPlot();
+            tpSlPlot.getRenderer().setSeriesPaint(0, Color.green);
+            tpSlPlot.getRenderer().setSeriesPaint(1, Color.red);
+
+            // Crear panel con pestañas
+            JTabbedPane tabbedPane = new JTabbedPane();
+            tabbedPane.addTab("Distribución", new ChartPanel(countChart));
+            tabbedPane.addTab("TP/SL por Dirección", new ChartPanel(tpSlChart));
+
+            // Mostrar estadísticas en consola
+//                int totalSamples = longCount + neutralCount + shortCount;
+//                Vesta.info("\n📊 Estadísticas de Dirección para " + symbol + ":");
+//                Vesta.info("  Total muestras: " + totalSamples);
+//                Vesta.info("  Long: " + longCount + " (" + String.format("%.1f", (longCount * 100.0 / totalSamples)) + "%)");
+//                Vesta.info("  Neutral: " + neutralCount + " (" + String.format("%.1f", (neutralCount * 100.0 / totalSamples)) + "%)");
+//                Vesta.info("  Short: " + shortCount + " (" + String.format("%.1f", (shortCount * 100.0 / totalSamples)) + "%)");
+//                Vesta.info("\n📈 TP/SL Promedio (Log Return ×10⁴):");
+//                Vesta.info("  Long - TP: " + String.format("%.4f", longTpAvg * 10000) +
+//                        ", SL: " + String.format("%.4f", longSlAvg * 10000) +
+//                        ", Ratio: " + String.format("%.2f", longSlAvg > 0 ? longTpAvg / longSlAvg : 0));
+//                Vesta.info("  Neutral - TP: " + String.format("%.4f", neutralTpAvg * 10000) +
+//                        ", SL: " + String.format("%.4f", neutralSlAvg * 10000) +
+//                        ", Ratio: " + String.format("%.2f", neutralSlAvg > 0 ? neutralTpAvg / neutralSlAvg : 0));
+//                Vesta.info("  Short - TP: " + String.format("%.4f", shortTpAvg * 10000) +
+//                        ", SL: " + String.format("%.4f", shortSlAvg * 10000) +
+//                        ", Ratio: " + String.format("%.2f", shortSlAvg > 0 ? shortTpAvg / shortSlAvg : 0));
+
+            // Mostrar en ventana
+            JFrame frame = new JFrame("Análisis de Direcciones - " + symbol);
+            frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            frame.getContentPane().add(tabbedPane);
+            frame.setSize(1000, 700);
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+
+        } catch (Exception e) {
+            Vesta.error("Error mostrando distribución de direcciones: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Muestra la comparación de predicciones vs reales para TP y SL
+     */
+    public static void showPredictionComparison(
+            String title,
+            List<EngineUtils.ResultPrediction> results
+    ) {
+        if (results == null || results.isEmpty()) {
+            Vesta.error("No hay resultados para mostrar");
+            return;
         }
 
-        /**
-         * Muestra la comparación de predicciones vs reales para TP y SL
-         */
-        public static void showPredictionComparison(
-                String title,
-                List<EngineUtils.ResultPrediction> results
-        ) {
-            if (results == null || results.isEmpty()) {
-                Vesta.error("No hay resultados para mostrar");
-                return;
+        try {
+            // Separar datos para TP y SL
+            List<Float> actualTP = new ArrayList<>();
+            List<Float> predictedTP = new ArrayList<>();
+            List<Float> actualSL = new ArrayList<>();
+            List<Float> predictedSL = new ArrayList<>();
+            List<Float> tpError = new ArrayList<>();
+            List<Float> slError = new ArrayList<>();
+
+            JTabbedPane tabbedPane = new JTabbedPane();
+            results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::tpDiff));
+            for (EngineUtils.ResultPrediction r : results) {
+                actualTP.add(r.realTP());
+                predictedTP.add(r.predTP());
+                tpError.add(Math.abs(r.realTP() - r.predTP()));
+            }
+            results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::lsDiff));
+            for (EngineUtils.ResultPrediction r : results) {
+                actualSL.add(r.realSL());
+                predictedSL.add(r.predSL());
+                slError.add(Math.abs(r.realSL() - r.predSL()));
             }
 
-            try {
-                // Separar datos para TP y SL
-                List<Float> actualTP = new ArrayList<>();
-                List<Float> predictedTP = new ArrayList<>();
-                List<Float> actualSL = new ArrayList<>();
-                List<Float> predictedSL = new ArrayList<>();
-                List<Float> tpError = new ArrayList<>();
-                List<Float> slError = new ArrayList<>();
-                results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::tpDiff));
-                for (EngineUtils.ResultPrediction r : results) {
-                    actualTP.add(r.realTP());
-                    predictedTP.add(r.predTP());
-                    tpError.add(Math.abs(r.realTP() - r.predTP()));
-                }
-                results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::lsDiff));
-                for (EngineUtils.ResultPrediction r : results) {
-                    actualSL.add(r.realSL());
-                    predictedSL.add(r.predSL());
-                    slError.add(Math.abs(r.realSL() - r.predSL()));
-                }
-
-                // Crear un panel con 4 gráficos
-                JPanel panel = new JPanel(new GridLayout(2, 2));
-
-                // Gráfico 1: TP predicho vs real
-                XYSeriesCollection datasetTP = new XYSeriesCollection();
-                org.jfree.data.xy.XYSeries actualTPSeries = new org.jfree.data.xy.XYSeries("TP Real");
-                org.jfree.data.xy.XYSeries predictedTPSeries = new org.jfree.data.xy.XYSeries("TP Predicho");
-                for (int i = 0; i < actualTP.size(); i++) {
-                    actualTPSeries.add(i, actualTP.get(i));
-                    predictedTPSeries.add(i, predictedTP.get(i));
-                }
-                datasetTP.addSeries(actualTPSeries);
-                datasetTP.addSeries(predictedTPSeries);
-
-                JFreeChart chartTP = ChartFactory.createXYLineChart(
-                        "Take Profit (TP)",
-                        "Muestra",
-                        "Log Return",
-                        datasetTP
-                );
-                ((XYPlot) chartTP.getPlot()).getRenderer().setSeriesPaint(0, Color.GREEN);
-                ((XYPlot) chartTP.getPlot()).getRenderer().setSeriesPaint(1, Color.BLUE);
-                panel.add(new ChartPanel(chartTP));
-
-                // Gráfico 2: SL predicho vs real
-                XYSeriesCollection datasetSL = new XYSeriesCollection();
-                org.jfree.data.xy.XYSeries actualSLSeries = new org.jfree.data.xy.XYSeries("SL Real");
-                org.jfree.data.xy.XYSeries predictedSLSeries = new org.jfree.data.xy.XYSeries("SL Predicho");
-                for (int i = 0; i < actualSL.size(); i++) {
-                    actualSLSeries.add(i, actualSL.get(i));
-                    predictedSLSeries.add(i, predictedSL.get(i));
-                }
-                datasetSL.addSeries(actualSLSeries);
-                datasetSL.addSeries(predictedSLSeries);
-
-                JFreeChart chartSL = ChartFactory.createXYLineChart(
-                        "Stop Loss (SL)",
-                        "Muestra",
-                        "Log Return",
-                        datasetSL
-                );
-                ((XYPlot) chartSL.getPlot()).getRenderer().setSeriesPaint(0, Color.RED);
-                ((XYPlot) chartSL.getPlot()).getRenderer().setSeriesPaint(1, Color.ORANGE);
-                panel.add(new ChartPanel(chartSL));
-
-                // Gráfico 3: Error de predicción
-                XYSeriesCollection datasetError = new XYSeriesCollection();
-                org.jfree.data.xy.XYSeries tpErrorSeries = new org.jfree.data.xy.XYSeries("Error TP");
-                org.jfree.data.xy.XYSeries slErrorSeries = new org.jfree.data.xy.XYSeries("Error SL");
-                for (int i = 0; i < tpError.size(); i++) {
-                    tpErrorSeries.add(i, tpError.get(i));
-                    slErrorSeries.add(i, slError.get(i));
-                }
-                datasetError.addSeries(tpErrorSeries);
-                datasetError.addSeries(slErrorSeries);
-
-                JFreeChart chartError = ChartFactory.createXYLineChart(
-                        "Error de Predicción",
-                        "Muestra",
-                        "Error Absoluto",
-                        datasetError
-                );
-                ((XYPlot) chartError.getPlot()).getRenderer().setSeriesPaint(0, Color.magenta);
-                ((XYPlot) chartError.getPlot()).getRenderer().setSeriesPaint(1, Color.CYAN);
-                panel.add(new ChartPanel(chartError));
-
-                // Gráfico 4: Ratio TP/SL real vs predicho
-                XYSeriesCollection datasetRatio = new XYSeriesCollection();
-                org.jfree.data.xy.XYSeries actualRatioSeries = new org.jfree.data.xy.XYSeries("Ratio Real");
-                org.jfree.data.xy.XYSeries predictedRatioSeries = new org.jfree.data.xy.XYSeries("Ratio Predicho");
-                for (int i = 0; i < results.size(); i++) {
-                    EngineUtils.ResultPrediction r = results.get(i);
-                    float actualRatio = r.realSL() != 0 ? r.realTP() / r.realSL() : 0;
-                    float predictedRatio = r.predSL() != 0 ? r.predTP() / r.predSL() : 0;
-                    actualRatioSeries.add(i, actualRatio);
-                    predictedRatioSeries.add(i, predictedRatio);
-                }
-                datasetRatio.addSeries(actualRatioSeries);
-                datasetRatio.addSeries(predictedRatioSeries);
-
-                JFreeChart chartRatio = ChartFactory.createXYLineChart(
-                        "Ratio TP/SL",
-                        "Muestra",
-                        "Ratio",
-                        datasetRatio
-                );
-                ((XYPlot) chartRatio.getPlot()).getRenderer().setSeriesPaint(0, Color.MAGENTA);
-                ((XYPlot) chartRatio.getPlot()).getRenderer().setSeriesPaint(1, Color.YELLOW);
-                ChartPanel cp = new ChartPanel(chartRatio);
-                cp.setSize(800, 600);
-                panel.add(cp);
-                // Mostrar ventana
-                JFrame frame = new JFrame(title);
-                frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-                frame.getContentPane().add(new JScrollPane(panel));
-                frame.setSize(1600, 1200);
-                frame.setLocationRelativeTo(null);
-                frame.setVisible(true);
-
-                Vesta.info("Mostrando comparación de " + results.size() + " predicciones");
-
-            } catch (Exception e) {
-                Vesta.error("Error mostrando comparación: " + e.getMessage());
-                e.printStackTrace();
+            // Gráfico 1: TP predicho vs real
+            XYSeriesCollection datasetTP = new XYSeriesCollection();
+            org.jfree.data.xy.XYSeries actualTPSeries = new org.jfree.data.xy.XYSeries("TP Real");
+            org.jfree.data.xy.XYSeries predictedTPSeries = new org.jfree.data.xy.XYSeries("TP Predicho");
+            for (int i = 0; i < actualTP.size(); i++) {
+                actualTPSeries.add(i, actualTP.get(i));
+                predictedTPSeries.add(i, predictedTP.get(i));
             }
+            datasetTP.addSeries(actualTPSeries);
+            datasetTP.addSeries(predictedTPSeries);
+
+            JFreeChart chartTP = ChartFactory.createXYLineChart(
+                    "Take Profit (TP)",
+                    "Muestra",
+                    "Log Return",
+                    datasetTP
+            );
+            ((XYPlot) chartTP.getPlot()).getRenderer().setSeriesPaint(0, Color.GREEN);
+            ((XYPlot) chartTP.getPlot()).getRenderer().setSeriesPaint(1, Color.BLUE);
+
+            tabbedPane.addTab("TP Predicho/Real", new ChartPanel(chartTP));
+
+
+            // Gráfico 2: SL predicho vs real
+            XYSeriesCollection datasetSL = new XYSeriesCollection();
+            org.jfree.data.xy.XYSeries actualSLSeries = new org.jfree.data.xy.XYSeries("SL Real");
+            org.jfree.data.xy.XYSeries predictedSLSeries = new org.jfree.data.xy.XYSeries("SL Predicho");
+            for (int i = 0; i < actualSL.size(); i++) {
+                actualSLSeries.add(i, actualSL.get(i));
+                predictedSLSeries.add(i, predictedSL.get(i));
+            }
+            datasetSL.addSeries(actualSLSeries);
+            datasetSL.addSeries(predictedSLSeries);
+
+            JFreeChart chartSL = ChartFactory.createXYLineChart(
+                    "Stop Loss (SL)",
+                    "Muestra",
+                    "Log Return",
+                    datasetSL
+            );
+            ((XYPlot) chartSL.getPlot()).getRenderer().setSeriesPaint(0, Color.RED);
+            ((XYPlot) chartSL.getPlot()).getRenderer().setSeriesPaint(1, Color.ORANGE);
+            tabbedPane.addTab("SL Predicho/Real", new ChartPanel(chartSL));
+
+            // Gráfico 3: Error de predicción
+            XYSeriesCollection datasetError = new XYSeriesCollection();
+            org.jfree.data.xy.XYSeries tpErrorSeries = new org.jfree.data.xy.XYSeries("Error TP");
+            org.jfree.data.xy.XYSeries slErrorSeries = new org.jfree.data.xy.XYSeries("Error SL");
+            for (int i = 0; i < tpError.size(); i++) {
+                tpErrorSeries.add(i, tpError.get(i));
+                slErrorSeries.add(i, slError.get(i));
+            }
+            datasetError.addSeries(tpErrorSeries);
+            datasetError.addSeries(slErrorSeries);
+
+            JFreeChart chartError = ChartFactory.createXYLineChart(
+                    "Error de Predicción",
+                    "Muestra",
+                    "Error Absoluto",
+                    datasetError
+            );
+            ((XYPlot) chartError.getPlot()).getRenderer().setSeriesPaint(0, Color.magenta);
+            ((XYPlot) chartError.getPlot()).getRenderer().setSeriesPaint(1, Color.CYAN);
+            tabbedPane.addTab("Error TP/SL", new ChartPanel(chartError));
+
+            // Mostrar ventana
+            JFrame frame = new JFrame(title);
+            frame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            frame.getContentPane().add(tabbedPane);
+            frame.setSize(1600, 1200);
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
+
+            Vesta.info("Mostrando comparación de " + results.size() + " predicciones");
+
+        } catch (Exception e) {
+            Vesta.error("Error mostrando comparación: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

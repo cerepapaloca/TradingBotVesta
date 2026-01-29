@@ -5,7 +5,7 @@ import ai.djl.training.listener.TrainingListenerAdapter;
 import org.jfree.data.category.DefaultCategoryDataset;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.engine.WeightedDirectionLoss;
+import xyz.cereshost.engine.VestaLoss;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,6 +18,7 @@ public class MetricsListener extends TrainingListenerAdapter {
     private double lastMae = -1;
     private DefaultCategoryDataset datasetNormal = null;
     private DefaultCategoryDataset datasetLoss = null;
+    private DefaultCategoryDataset datasetDireccion = null;
     private final List<String> symbols = new ArrayList<>();
 
     public void MetricsListener(List<String> symbols) {
@@ -48,36 +49,39 @@ public class MetricsListener extends TrainingListenerAdapter {
                 )
         );
 
-        lastMae = mae;
-        lastTime = time;
-        WeightedDirectionLoss l = (WeightedDirectionLoss) trainer.getLoss();
-        if (datasetLoss == null || datasetNormal == null) {
-            datasetNormal = ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",
-                    List.of(new ChartUtils.DataPlot("Loss", List.of(loss)),
-                            new ChartUtils.DataPlot("MAE", List.of(mae))
-                    )
-            );
-            datasetLoss = ChartUtils.plot("Training Losses " + String.join(", ", symbols), "epochs",
-                    List.of(new ChartUtils.DataPlot("Loss D", List.of(l.getLossDir())),
-                            new ChartUtils.DataPlot("Loss TP", List.of(l.getLossTP())),
-                            new ChartUtils.DataPlot("Loss SL", List.of(l.getLossSL()))
-                    )
-            );
 
-        }
-        datasetNormal.addValue(loss, "Loss", String.valueOf(count));
-        datasetNormal.addValue(mae, "MAE", String.valueOf(count));
-        datasetLoss.addValue(l.getLossDir(), "Loss D", String.valueOf(count));
-        datasetLoss.addValue(l.getLossTP(), "Loss TP", String.valueOf(count));
-        datasetLoss.addValue(l.getLossSL(), "Loss SL", String.valueOf(count));
-        count++;
-    }
+        VestaEngine.EXECUTOR.execute(() -> {
+            lastMae = mae;
+            lastTime = time;
+            VestaLoss customLoss = (VestaLoss) trainer.getLoss();
+            VestaLoss.LossReport l = customLoss.awaitNextBatchData();
+            if (datasetLoss == null || datasetNormal == null) {
+                datasetNormal = ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",
+                        List.of(new ChartUtils.DataPlot("Loss", List.of(loss)),
+                                new ChartUtils.DataPlot("MAE", List.of(mae))
+                        )
+                );
+                datasetLoss = ChartUtils.plot("Training Losses TP/SL " + String.join(", ", symbols), "epochs",
+                        List.of(new ChartUtils.DataPlot("Loss TP", List.of(l.tp())),
+                                new ChartUtils.DataPlot("Loss SL", List.of(l.sl()))
+                        )
+                );
+                datasetDireccion = ChartUtils.plot("Training Losses Dirección" + String.join(", ", symbols), "epochs",
+                        List.of(new ChartUtils.DataPlot("Loss L", List.of(l.longL())),
+                                new ChartUtils.DataPlot("Loss S", List.of(l.shortL())),
+                                new ChartUtils.DataPlot("Loss N", List.of(l.neutralL()))
+                        )
+                );
 
-    public List<Float> getLoss() {
-        return trainLoss;
-    }
-
-    public List<Float> getMae() {
-        return trainMae;
+            }
+            datasetNormal.addValue(loss, "Loss", String.valueOf(count));
+            datasetNormal.addValue(mae, "MAE", String.valueOf(count));
+            datasetLoss.addValue(l.tp(), "Loss TP", String.valueOf(count));
+            datasetLoss.addValue(l.sl(), "Loss SL", String.valueOf(count));
+            datasetDireccion.addValue(l.longL(), "Loss L", String.valueOf(count));
+            datasetDireccion.addValue(l.shortL(), "Loss S", String.valueOf(count));
+            datasetDireccion.addValue(l.neutralL(), "Loss N", String.valueOf(count));
+            count++;
+        });
     }
 }

@@ -19,6 +19,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class TradingLoopBinance {
@@ -43,9 +44,9 @@ public class TradingLoopBinance {
         this.engine = engine;
         this.strategy = tradingStrategy;
         try {
-            IOdata.loadMarkets(DataSource.LOCAL_NETWORK_MINIMAL, symbol);
+
 //            BinanceApi binanceApi = new BinanceApi();
-            trading = new TradingBinance("", "", true, Vesta.MARKETS.get(symbol));
+            trading = new TradingBinance("", "", true, IOdata.loadMarkets(DataSource.LOCAL_NETWORK_MINIMAL, symbol));
             trading.setTradingLoopBinance(this);
         } catch (InterruptedException | IOException e) {
             throw new RuntimeException(e);
@@ -55,7 +56,7 @@ public class TradingLoopBinance {
     public boolean isClose = false;
 
     public void startCandleLoop() {
-        new Thread(() -> {
+        WORKERS.submit(() -> {
             while (Thread.currentThread().isInterrupted() && !isClose) {
                 try {
                     long serverTime = getBinanceServerTime() + OFFSET;
@@ -75,7 +76,7 @@ public class TradingLoopBinance {
                     LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(1));
                 }
             }
-        }).start();
+        });
     }
 
 
@@ -96,12 +97,12 @@ public class TradingLoopBinance {
     }
 
     private void performTick() throws InterruptedException {
-        Market market;
+        AtomicReference<Market> market = new AtomicReference<>(null);
         CountDownLatch latch = new CountDownLatch(2);
 
         executor.execute(() -> {
             try {
-                IOdata.loadMarkets(DataSource.BINANCE, symbol);
+                market.set(IOdata.loadMarkets(DataSource.BINANCE, symbol));
             } catch (InterruptedException | IOException e) {
                 stop(e);
             }
@@ -114,8 +115,8 @@ public class TradingLoopBinance {
         });
 
         latch.await();
-        market = Vesta.MARKETS.get(symbol);
-        List<Candle> allCandles = BuilderData.to1mCandles(market);
+
+        List<Candle> allCandles = BuilderData.to1mCandles(market.get());
         PredictionEngine.PredictionResult result = engine.predictNextPriceDetail(allCandles.subList(VestaEngine.LOOK_BACK, allCandles.size() - 1), symbol);
         trading.getOpens().forEach(Trading.OpenOperation::next);
         trading.updateState(symbol);

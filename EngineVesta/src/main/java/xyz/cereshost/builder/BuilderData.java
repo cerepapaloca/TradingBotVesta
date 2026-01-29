@@ -6,9 +6,11 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.ChartUtils;
 import xyz.cereshost.FinancialCalculation;
+import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 import xyz.cereshost.engine.PredictionEngine;
+import xyz.cereshost.file.IOdata;
 
 import java.util.*;
 
@@ -21,7 +23,7 @@ public class BuilderData {
         // Asegúrate de copiar las 3 columnas de Y
         int totalSamples = allX.stream().mapToInt(x -> x.length).sum();
         float[][][] Xcombined = new float[totalSamples][allX.get(0)[0].length][allX.get(0)[0][0].length];
-        float[][] ycombined = new float[totalSamples][3]; // <--- IMPORTANTE: 3 Columnas
+        float[][] ycombined = new float[totalSamples][5];
 
         int idx = 0;
         for(int k=0; k<allX.size(); k++){
@@ -38,38 +40,56 @@ public class BuilderData {
         return new Pair<>(Xcombined, ycombined);
     }
 
+    @SuppressWarnings("ConstantValue")
     public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols) {
         List<float[][][]> allX = new ArrayList<>();
         List<float[][]> allY = new ArrayList<>();
-
         for (String symbol : symbols) {
             try {
+                List<Candle> allCandlesForChart = new ArrayList<>();
+
                 Vesta.info("Procesando símbolo (Relativo): " + symbol);
-                List<Candle> candles = BuilderData.to1mCandles(Vesta.MARKETS.get(symbol));
-                ChartUtils.CandleChartUtils.showCandleChart("Mercado", candles, symbol);
+                int finalMonth = Main.FINAL_MONTH;
+                int initMonth = Main.INIT_MONTH;
 
-                candles.sort(Comparator.comparingLong(Candle::openTime));
+                // Procesar cada mes por separado SIN acumular
+                for (int i = initMonth; i <= finalMonth; i++) {
+                    Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, i);
+                    List<Candle> candlesThisMonth = BuilderData.to1mCandles(market);
 
-                // Necesitamos al menos LOOK_BACK + 2 (uno extra para el cálculo relativo inicial)
-                if (candles.size() <= LOOK_BACK + 2) {
-                    Vesta.error("Símbolo " + symbol + " insuficiente historial.");
-                    continue;
+                    // Acumular para gráfico
+                    if ((finalMonth - initMonth) < 6) allCandlesForChart.addAll(candlesThisMonth);
+
+                    // Verificar que este mes tenga suficientes datos
+                    if (candlesThisMonth.size() <= LOOK_BACK + 2) {
+                        Vesta.warning("Mes " + i + " insuficiente historial: " + candlesThisMonth.size() + " velas");
+                        continue;
+                    }
+
+                    // Construir datos SOLO con las velas de este mes
+                    Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 10);
+                    float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
+                    float[][] yraw = pair.getValue();
+
+                    if (Xraw.length > 0) {
+                        allX.add(Xraw);
+                        allY.add(yraw);
+                        System.gc();
+                        Vesta.info("📥 Mes " + i + " procesado: " + Xraw.length + " muestras (" + symbol + ")");
+                    }
                 }
-
-                Pair<float[][][], float[][]> pair = BuilderData.build(candles, LOOK_BACK, 10);
-                float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
-                float[][] yraw = pair.getValue();
-
-                if (Xraw.length > 0) {
-                    allX.add(Xraw);
-                    allY.add(yraw);
+                if (!allCandlesForChart.isEmpty()) {
+                    ChartUtils.CandleChartUtils.showCandleChart("Mercado", allCandlesForChart, symbol);
                 }
-
             } catch (Exception e) {
                 Vesta.error("Error construyendo data para " + symbol + ": " + e.getMessage());
                 e.printStackTrace();
             }
+
+
         }
+
+
 
         if (allX.isEmpty()) {
             throw new RuntimeException("No se generó data de entrenamiento válida.");
@@ -110,9 +130,9 @@ public class BuilderData {
         if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0][0]);
 
         float[][][] X = new float[samples][lookBack][features];
-        float[][] y = new float[samples][3];
+        float[][] y = new float[samples][5];
 
-        int[] direccionCount = new int[3];
+        int[] direccionCount = new int[5];
         double MIN_GAIN = 0.001;
         for (int i = 0; i < samples; i++) {
             for (int j = 0; j < lookBack; j++) {
@@ -139,7 +159,7 @@ public class BuilderData {
 
             boolean conditionMet = false;
 
-            if (totalMovementLog > PredictionEngine.THRESHOLD) {
+            if (totalMovementLog > PredictionEngine.THRESHOLD_PRICE) {
                 // --- Lógica LONG ---
                 double logTP = Math.log(bestPriceLong / entryPrice);
                 double logSL = Math.max(0.00001, Math.log(entryPrice / worstPriceLong)); // Evitamos división por cero
@@ -152,10 +172,14 @@ public class BuilderData {
                     y[i][0] = (float) Math.abs(logTP);
                     y[i][1] = (float) Math.abs(logSL);
                     y[i][2] = 1.0f; // LONG
+                    y[i][3] = 0f;
+                    y[i][4] = 0f;
+
+
                     direccionCount[0]++;
                     conditionMet = true;
                 }
-            }else if (totalMovementLog < -PredictionEngine.THRESHOLD) {
+            }else if (totalMovementLog < -PredictionEngine.THRESHOLD_PRICE) {
                 // --- Lógica SHORT ---
                 double logTP = Math.log(entryPrice / bestPriceShort);
                 double logSL = Math.max(0.00001, Math.log(worstPriceShort / entryPrice)); // Evitamos división por cero
@@ -164,10 +188,12 @@ public class BuilderData {
                 if (Double.isInfinite(logSL) || Double.isNaN(logSL)) logSL = 0;
 
                 // Filtros: Ganancia >= 0.1% Y Ratio RR >= 1:1 (TP >= SL)
-                if (logTP >= MIN_GAIN && logTP*2 >= logSL) {
+                if (logTP >= MIN_GAIN && logTP >= logSL) {
                     y[i][0] = (float) Math.abs(logTP);
                     y[i][1] = (float) Math.abs(logSL);
-                    y[i][2] = -1.0f; // SHORT
+                    y[i][2] = 0f;
+                    y[i][3] = 0f;
+                    y[i][4] = 1.0f;  // SHORT
                     direccionCount[1]++;
                     conditionMet = true;
                 }
@@ -183,7 +209,9 @@ public class BuilderData {
 
                 y[i][0] = (float) volatilityUp;
                 y[i][1] = (float) volatilityDown;
-                y[i][2] = 0.0f; // NEUTRAL
+                y[i][2] = 0f;
+                y[i][3] = 1.0f; // Neutro
+                y[i][4] = 0f;
                 direccionCount[2]++;
             }
         }
@@ -316,7 +344,7 @@ public class BuilderData {
 
             try {
                 // RSI
-                double rsi4 = checkDouble(rsi8Arr, idx);
+                double rsi4 = checkDouble(rsi4Arr, idx);
                 double rsi8 = checkDouble(rsi8Arr, idx);
                 double rsi16 = checkDouble(rsi16Arr, idx);
 
@@ -337,6 +365,7 @@ public class BuilderData {
                 candles.add(new Candle(
                         minute,
                         checkDouble(open), checkDouble(high), checkDouble(low), checkDouble(close),
+                        calculateCandleDirectionSmooth(open, close, 0.5/100),
                         checkDouble(tradeCount),
                         checkDouble(volumeBase),
                         checkDouble(quoteVolume),
@@ -385,6 +414,27 @@ public class BuilderData {
         return d;
     }
 
+    public static float calculateCandleDirectionSmooth(double open, double close, double maxChangePercent) {
+        if (Math.abs(open) < 0.0000001) return 0.0f;
+
+        double changePercent = (close - open) / open;
+
+        // Umbral de doji
+//        if (Math.abs(changePercent) < PredictionEngine.THRESHOLD/5) {
+//            return 0.0;
+//        }
+
+        // Normalizar al rango [-1, 1] considerando maxChangePercent
+        double normalized = changePercent / maxChangePercent;
+
+        // Limitar a [-2, 2] para que la sigmoide cubra bien el rango
+        normalized = Math.max(-2.0, Math.min(2.0, normalized));
+
+        // Aplicar sigmoide ajustada para [-1, 1]
+        // Usamos tanh que ya está en el rango [-1, 1]
+        return (float) Math.tanh(normalized);
+    }
+
 
     @Getter
     private static int features;
@@ -400,6 +450,7 @@ public class BuilderData {
         fList.add((float) Math.log(curr.low() / prevClose));
         fList.add((float) Math.log(curr.close() / prevClose));
 
+        fList.add(curr.direccion());
         fList.add((float) Math.log(curr.amountTrades()));
 
         // Volúmenes relativos
@@ -489,11 +540,11 @@ public class BuilderData {
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1, 1, 1,1,1,1,1),
+                1,1,1, 1, 1, 1, 1,1,1,1,1, 1),
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1, 1,1,1,1,1,1)
+                1,1,1, 1, 1, 1,1,1,1,1,1, 1)
         ).length + 2; // más 2 por que tiene sumar el feature del símbolo en el que esta y todos los símbolos que puede estar
     }
 

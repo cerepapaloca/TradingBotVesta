@@ -29,6 +29,7 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -48,137 +49,147 @@ public class IOdata {
         );
     }
 
-    public static long loadMarkets(DataSource data, List<String> symbols) throws InterruptedException, IOException {
-        CountDownLatch latch = new CountDownLatch(symbols.size());
+    public static Market loadMarkets(DataSource data, String s) throws InterruptedException, IOException {
+        return loadMarkets(data, s, -1);
+    }
+
+    public static Market loadMarkets(DataSource data, String s, int monthCVS) throws InterruptedException, IOException {
+        CountDownLatch latch = new CountDownLatch(1);
         AtomicLong lastUpdate = new AtomicLong();
-
+        AtomicReference<Market> marketFinal = new AtomicReference<>(null);
         String baseDir = "data";
-        for (String s : symbols){
-            switch (data) {
-                case LOCAL_NETWORK, LOCAL_NETWORK_MINIMAL -> {
-                    Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
-                    PacketHandler.sendPacket(new RequestMarketClient(s, data == DataSource.LOCAL_NETWORK), MarketDataServer.class).thenAccept(packet -> {
-                        Vesta.MARKETS.put(s, packet.getMarket());
-                        latch.countDown();
-                        lastUpdate.set(packet.getLastUpdate());
-                        Vesta.info("✅ Datos del mercado " + s + " recibidos (" + (symbols.size() - latch.getCount()) + "/" + symbols.size() + ")");
-                    });
-                }
-                case BINANCE -> {
-                    long timeTotal = System.currentTimeMillis();
-                    Vesta.info("📡 Solicitud de dato a binance del mercado: " + s);
-                    String raw = Utils.getRequest(Utils.BASE_URL_API + "klines" + "?symbol=" + s + "&interval=1m&limit=" + "1000");
-                    ObjectMapper mapper1 = new ObjectMapper();
-                    JsonNode root1;
-                    try {
-                        root1 = mapper1.readTree(raw);
-                    } catch (JsonProcessingException e) {
-                        throw new RuntimeException(e);
-                    }
-                    ArrayDeque<CandleSimple> deque = new ArrayDeque<>();
-                    Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + "mb)");
-                    for (int i = 0; i < 1000; i++) {
-                        JsonNode kline = root1.get(i);
+        switch (data) {
+            case LOCAL_NETWORK, LOCAL_NETWORK_MINIMAL -> {
 
-                        double baseVolume = kline.get(5).asDouble();
-                        double quoteVolume = kline.get(7).asDouble();  // USDT
-                        double takerBuyQuoteVolume = kline.get(10).asDouble(); // USDT agresivo
-
-                        double sellQuoteVolume = quoteVolume - takerBuyQuoteVolume;
-                        double deltaUSDT = takerBuyQuoteVolume - sellQuoteVolume;
-                        double buyRatio = takerBuyQuoteVolume / quoteVolume;
-                        deque.add(new CandleSimple(
-                                kline.get(0).asLong(),
-                                kline.get(1).asDouble(), // open
-                                kline.get(2).asDouble(), // high
-                                kline.get(3).asDouble(), // low
-                                kline.get(4).asDouble(), // close
-                                new Volumen(quoteVolume, baseVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
-                    }
-                    ObjectMapper mapper2 = new ObjectMapper();
-                    JsonNode root2;
-                    try {
-                        root2 = mapper2.readTree(Utils.getRequest(Utils.BASE_URL_API + "trades" + "?symbol=" + s + "&limit=" + 800));
-                    } catch (JsonProcessingException e) {
-                        throw new RuntimeException(e);
-                    }
-                    Deque<Trade> trades = new ArrayDeque<>();
-                    for (JsonNode trade : root2) {
-                        double quoteQty = trade.get("quoteQty").asDouble();
-                        double price = trade.get("price").asDouble();
-                        boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
-                        long id = trade.get("id").asLong();
-                        long time = trade.get("time").asLong();
-                        trades.add(new Trade(id, time, price, quoteQty, isBuyerMaker));
-                    }
-
-                    Market market = new Market(s);
-                    market.addCandles(deque);
-                    market.addTrade(trades);
-                    Vesta.MARKETS.put(s, market);
-                    Vesta.info("✅ Datos procesado de binance del mercado: %s (%.2fss)", s, (float) (System.currentTimeMillis() - timeTotal) / 1000);
+                Vesta.info("📡 Enviado solicitud de datos del mercado: " + s);
+                PacketHandler.sendPacket(new RequestMarketClient(s, data == DataSource.LOCAL_NETWORK), MarketDataServer.class).thenAccept(packet -> {
+                    marketFinal.set(packet.getMarket());
                     latch.countDown();
+                    lastUpdate.set(packet.getLastUpdate());
+                    Vesta.info("✅ Datos del mercado " + s + " recibidos de "+  s);
+                });
+            }
+            case BINANCE -> {
+                long timeTotal = System.currentTimeMillis();
+                Vesta.info("📡 Solicitud de dato a binance del mercado: " + s);
+                String raw = Utils.getRequest(Utils.BASE_URL_API + "klines" + "?symbol=" + s + "&interval=1m&limit=" + "1000");
+                ObjectMapper mapper1 = new ObjectMapper();
+                JsonNode root1;
+                try {
+                    root1 = mapper1.readTree(raw);
+                } catch (JsonProcessingException e) {
+                    throw new RuntimeException(e);
                 }
-                case CSV -> {
-                    int targetYear = 2025;
-                    int endtMonth = 12;
-                    int startMonth = 8;
-                    long timeTotal = System.currentTimeMillis();
-                    Vesta.info("📂 Verificando caché local para: " + s);
-                    Deque<CandleSimple> candles = new ArrayDeque<>();
-                    Deque<Trade> trades = new ArrayDeque<>();
+                ArrayDeque<CandleSimple> deque = new ArrayDeque<>();
+                Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + "mb)");
+                for (int i = 0; i < 1000; i++) {
+                    JsonNode kline = root1.get(i);
+
+                    double baseVolume = kline.get(5).asDouble();
+                    double quoteVolume = kline.get(7).asDouble();  // USDT
+                    double takerBuyQuoteVolume = kline.get(10).asDouble(); // USDT agresivo
+
+                    double sellQuoteVolume = quoteVolume - takerBuyQuoteVolume;
+                    double deltaUSDT = takerBuyQuoteVolume - sellQuoteVolume;
+                    double buyRatio = takerBuyQuoteVolume / quoteVolume;
+                    deque.add(new CandleSimple(
+                            kline.get(0).asLong(),
+                            kline.get(1).asDouble(), // open
+                            kline.get(2).asDouble(), // high
+                            kline.get(3).asDouble(), // low
+                            kline.get(4).asDouble(), // close
+                            new Volumen(quoteVolume, baseVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
+                }
+                ObjectMapper mapper2 = new ObjectMapper();
+                JsonNode root2;
+                try {
+                    root2 = mapper2.readTree(Utils.getRequest(Utils.BASE_URL_API + "trades" + "?symbol=" + s + "&limit=" + 800));
+                } catch (JsonProcessingException e) {
+                    throw new RuntimeException(e);
+                }
+                Deque<Trade> trades = new ArrayDeque<>();
+                for (JsonNode trade : root2) {
+                    double quoteQty = trade.get("quoteQty").asDouble();
+                    double price = trade.get("price").asDouble();
+                    boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
+                    long id = trade.get("id").asLong();
+                    long time = trade.get("time").asLong();
+                    trades.add(new Trade(id, time, price, quoteQty, isBuyerMaker));
+                }
+
+                Market market = new Market(s);
+                market.addCandles(deque);
+                market.addTrade(trades);
+                marketFinal.set(market);
+                Vesta.info("✅ Datos procesado de binance del mercado: %s (%.2fss)", s, (float) (System.currentTimeMillis() - timeTotal) / 1000);
+                latch.countDown();
+            }
+            case CSV, CSV_CHUNK -> {
+                int targetYear = 2025;
+                int endtMonth = Main.FINAL_MONTH;
+                int startMonth = Main.INIT_MONTH;
+                long timeTotal = System.currentTimeMillis();
+                Vesta.info("📂 Verificando caché local para: " + s);
+                Deque<CandleSimple> candles = new ArrayDeque<>();
+                Deque<Trade> trades = new ArrayDeque<>();
+                if (monthCVS == -1) {
                     for (int i = startMonth; i <= endtMonth; i++) {
                         File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, i);
                         candles.addAll(parseKlinesFromFile(klineFile));
                         File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, i);
                         trades.addAll(parseTradesFromFile(tradeFile));
                     }
-
-                    if (candles.isEmpty() || trades.isEmpty()) {
-                        Vesta.info("⚠️ Datos incompletos o corruptos para " + s);
-                        latch.countDown();
-                        return lastUpdate.get();
-                    }
-
-                    // 3. Lógica de CORTE (Sincronización de tiempos)
-                    long minTimeCandles = candles.getFirst().openTime();
-                    long maxTimeCandles = candles.getLast().openTime();
-
-                    long minTimeTrades = trades.getFirst().time();
-                    long maxTimeTrades = trades.getLast().time();
-
-                    long commonStart = Math.max(minTimeCandles, minTimeTrades);
-                    long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
-
-                    Vesta.info("✂️ Ajustando " + s + " a ventana común: " + commonStart + " - " + commonEnd);
-
-                    Deque<CandleSimple> finalCandles = candles.stream()
-                            .filter(c -> c.openTime() >= commonStart && c.openTime() <= commonEnd)
-                            .collect(Collectors.toCollection(ArrayDeque::new));
-                    candles.clear();
-                    System.gc();
-                    Deque<Trade> finalTrades = trades.stream()
-                            .filter(t -> t.time() >= commonStart && t.time() <= commonEnd)
-                            .collect(Collectors.toCollection(ArrayDeque::new));
-                    trades.clear(); // Esto puede pesar más 20GB de RAM
-                    System.gc();
-                    Market market = new Market(s);
-                    market.addCandles(finalCandles);
-                    market.addTrade(finalTrades);
-                    market.sortd();
-
-                    Vesta.MARKETS.put(s, market);
-                    lastUpdate.set(System.currentTimeMillis());
-
-                    Vesta.info("✅ Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
-                            s, finalCandles.size(), finalTrades.size(), (float) (System.currentTimeMillis() - timeTotal) / 1000);
-
-                    latch.countDown();
+                }else {
+                    File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, monthCVS);
+                    candles.addAll(parseKlinesFromFile(klineFile));
+                    File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, monthCVS);
+                    trades.addAll(parseTradesFromFile(tradeFile));
                 }
+
+                if (candles.isEmpty() || trades.isEmpty()) {
+                    Vesta.info("⚠️ Datos incompletos o corruptos para " + s);
+                    latch.countDown();
+                    return marketFinal.get();
+                }
+
+                // 3. Lógica de CORTE (Sincronización de tiempos)
+                long minTimeCandles = candles.getFirst().openTime();
+                long maxTimeCandles = candles.getLast().openTime();
+
+                long minTimeTrades = trades.getFirst().time();
+                long maxTimeTrades = trades.getLast().time();
+
+                long commonStart = Math.max(minTimeCandles, minTimeTrades);
+                long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
+
+                Vesta.info("✂️ Ajustando " + s + " a ventana común: " + commonStart + " - " + commonEnd);
+
+                Deque<CandleSimple> finalCandles = candles.stream()
+                        .filter(c -> c.openTime() >= commonStart && c.openTime() <= commonEnd)
+                        .collect(Collectors.toCollection(ArrayDeque::new));
+                candles = null;
+                Deque<Trade> finalTrades = trades.stream()
+                        .filter(t -> t.time() >= commonStart && t.time() <= commonEnd)
+                        .collect(Collectors.toCollection(ArrayDeque::new));
+                trades = null; // Esto puede pesar más 20GB de RAM
+                System.gc();
+                final Market market = new Market(s);
+                market.addCandles(finalCandles);
+                market.addTrade(finalTrades);
+                Vesta.info("🔒 Asegurando orden de los datos");
+                market.sortd();
+
+                marketFinal.set(market);
+                lastUpdate.set(System.currentTimeMillis());
+
+                Vesta.info("✅ Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
+                        s, finalCandles.size(), finalTrades.size(), (float) (System.currentTimeMillis() - timeTotal) / 1000);
+
+                latch.countDown();
             }
         }
         latch.await();
-        return lastUpdate.get();
+        return marketFinal.get();
     }
 
     private static File ensureFileCached(String baseDir, String symbol, String type, int year, int month) throws IOException {
@@ -288,9 +299,6 @@ public class IOdata {
     }
 
 
-    public static long loadMarkets(DataSource data, String... symbols) throws InterruptedException, IOException {
-        return loadMarkets(data, Arrays.asList(symbols));
-    }
 
     static {
         // Crear directorios si no existen

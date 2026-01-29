@@ -7,6 +7,8 @@ public record Candle(
         double low,
         double close,
 
+        float direccion,
+
         double amountTrades,
 
         double volumeBase,

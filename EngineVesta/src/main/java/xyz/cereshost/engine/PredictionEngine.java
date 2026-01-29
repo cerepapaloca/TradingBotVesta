@@ -28,7 +28,8 @@ import java.util.List;
 @Getter
 public class PredictionEngine {
 
-    public static final double THRESHOLD = 0.001;
+    public static final double THRESHOLD_PRICE = 0.001;
+    public static final double THRESHOLD_RELATIVE = 0.08;
 
     private final Model model;
     private final RobustNormalizer xNormalizer;
@@ -121,31 +122,27 @@ public class PredictionEngine {
 
             // Verificar la forma de la salida
             long[] shape = prediction.getShape().getShape();
-            if (shape[shape.length - 1] != 3) {
+            if (shape[shape.length - 1] != 5) {
                 throw new RuntimeException("El modelo debe tener 3 salidas (TP, SL, Dirección). Forma actual: " + prediction.getShape());
             }
 
             // Reorganizar el array plano en [batch_size, 2]
             int batch = (int) shape[0];
-            float[][] output2D = new float[batch][3];
+            float[][] output2D = new float[batch][5];
 
             for (int i = 0; i < batch; i++) {
-                for (int j = 0; j < 3; j++) {
-                    output2D[i][j] = normalizedOutput[i * 3 + j];
+                for (int j = 0; j < 5; j++) {
+                    output2D[i][j] = normalizedOutput[i * 5 + j];
                 }
             }
 
             // Des normalizar salidas
             float[][] denormalized = yNormalizer.inverseTransform(output2D);
-            float[] raw = denormalized[0];
-            // No tiene sentido que prediga en negativo
-            raw[0] = Math.max(raw[0], 0);
-            raw[1] = Math.max(raw[1], 0);
-            return raw;
+            return denormalized[0];
         } catch (Exception e) {
             Vesta.error("Error en predictRaw: " + e.getMessage());
             e.printStackTrace();
-            return new float[]{0f, 0f, 0f};
+            return new float[]{0f, 0f, 0f, 0f, 0f};
         }
     }
 
@@ -171,18 +168,19 @@ public class PredictionEngine {
 
         float upForce = rawPredictions[0];   // TP real
         float downForce = rawPredictions[1]; // SL real
-        float directionProb = rawPredictions[2]; // Probabilidad RAW (0 a 1) - NO TOCAR
-
-        // 3. Lógica de Negocio
-        float currentPrice = (float) subList.get(subList.size() - 1).close();
+        float probLong = rawPredictions[2]; // Long
+        float probNeutral = rawPredictions[3]; // Neutro
+        float probShort = rawPredictions[4]; // Short
         Trading.DireccionOperation direction;
+        // 3. Lógica de Negocio
+        float[] directionProbs = {probLong, probNeutral, probShort};
+        float directionValue = computeDirection(directionProbs);
+
+        boolean signalLong = directionValue > THRESHOLD_RELATIVE;
+        boolean signalShort = directionValue < -THRESHOLD_RELATIVE;
+
+        float currentPrice = (float) subList.get(subList.size() - 1).close();
         float tpLogReturn, slLogReturn;
-
-        // Filtro Híbrido: Fuerza + Probabilidad
-        // Solo operamos si la fuerza acompaña a la probabilidad
-        boolean signalLong = directionProb > THRESHOLD;
-        boolean signalShort = directionProb < -THRESHOLD;
-
         if (signalLong) {
             direction = Trading.DireccionOperation.LONG;
             tpLogReturn = upForce;
@@ -242,6 +240,92 @@ public class PredictionEngine {
         }
     }
 
+    public static float computeDirection(float[] probs, float temperature) {
+        if (probs.length != 3) {
+            throw new IllegalArgumentException("El array debe tener 3 probabilidades: [long, neutral, short]");
+        }
+
+        float probLong = probs[0];
+        float probNeutral = probs[1];
+        float probShort = probs[2];
+
+        // 1. Calcular fuerza bruta: diferencia entre long y short
+        float rawForce = probLong - probShort;
+
+        // 2. Calcular factor de certidumbre basado en neutralidad y dispersión
+        // - Si neutral es alta, certidumbre baja
+        // - Si hay empate entre las 3, certidumbre muy baja
+        float maxProb = Math.max(Math.max(probLong, probNeutral), probShort);
+        float dispersion = 0f;
+
+        // Calcular dispersión (entropía simple)
+        if (maxProb > 0) {
+            float[] normalized = new float[3];
+            float sum = probLong + probNeutral + probShort;
+            if (sum > 0) {
+                normalized[0] = probLong / sum;
+                normalized[1] = probNeutral / sum;
+                normalized[2] = probShort / sum;
+
+                // Entropía simple (no logarítmica para velocidad)
+                dispersion = 0f;
+                for (float p : normalized) {
+                    if (p > 0) {
+                        dispersion += p * (1 - p); // Varianza por categoría
+                    }
+                }
+                dispersion /= 3.0f; // Normalizar a [0, 0.25]
+            }
+        }
+
+        // 3. Certidumbre combina: baja neutralidad + baja dispersión
+        float certainty = (1 - probNeutral) * (1 - dispersion * 4); // Escalar dispersion a [0,1]
+        certainty = Math.max(0, Math.min(1, certainty));
+
+        // 4. Aplicar función sigmoide ajustada por temperatura
+        // Con temperatura=1: sigmoide estándar
+        // Temperatura >1: más plana (conservadora)
+        // Temperatura <1: más pronunciada (decisiva)
+        float scaledForce = rawForce * temperature;
+
+        // Sigmoide ajustada para mantener escala [-1, 1]
+        float sigmoid;
+        if (scaledForce >= 0) {
+            sigmoid = 2 / (1 + (float)Math.exp(-scaledForce)) - 1;
+        } else {
+            sigmoid = -2 / (1 + (float)Math.exp(scaledForce)) + 1;
+        }
+
+        // 5. Combinar: dirección = sigmoide * certidumbre
+        float direction = sigmoid * certainty;
+
+        // 6. Umbral de neutralidad: si está muy empatado, forzar a 0
+        float maxDiff = Math.abs(probLong - probNeutral);
+        maxDiff = Math.max(maxDiff, Math.abs(probNeutral - probShort));
+        maxDiff = Math.max(maxDiff, Math.abs(probLong - probShort));
+
+        // Si la máxima diferencia es pequeña (<0.3), considerar empate
+        if (maxDiff < 0.3f) {
+            // Reducir gradualmente hacia 0 según qué tan empatado esté
+            direction *= (maxDiff / 0.3f);
+        }
+
+        // 7. Para casos extremadamente empatados como [0.3, 0.2, 0.2]
+        float totalDiff = Math.abs(probLong - probNeutral) +
+                Math.abs(probNeutral - probShort) +
+                Math.abs(probLong - probShort);
+
+        if (totalDiff < 0.5f) {
+            direction *= 0.1f; // Casi forzar a neutral
+        }
+
+        return Math.max(-1, Math.min(1, (float) Math.tanh(direction)*2));
+    }
+
+    public static float computeDirection(float[] probs) {
+        return computeDirection(probs, 100f);
+    }
+
     @Contract("_ -> new")
     public static @NotNull PredictionEngine loadPredictionEngine(String modelName) throws IOException {
 
@@ -263,12 +347,12 @@ public class PredictionEngine {
     // --- Main para probar ---
     public static void makePrediction(String symbol) {
         try {
-            long lastUpdate = IOdata.loadMarkets(DataSource.BINANCE, symbol);
+            Market market = IOdata.loadMarkets(DataSource.BINANCE, symbol);
             Vesta.info("🖥️ Iniciando prediction para " + symbol);
             PredictionEngine engine = PredictionEngine.loadPredictionEngine("VestaIA");
 
             try {
-                Market market = Vesta.MARKETS.get(symbol);
+
                 if (market == null) {
                     Vesta.error("Mercado no encontrado: " + symbol);
                     return;
@@ -292,8 +376,6 @@ public class PredictionEngine {
 
                 // Mostrar resultados
                 Vesta.info("\n🔮 Análisis de Predicción para " + symbol + ":");
-                Vesta.info("  Delay en la predicción de los datos: %s",
-                        new DecimalFormat("###,##0.00s").format((System.currentTimeMillis() - lastUpdate)/1000));
                 Vesta.info("  Precio Actual:            %s", df.format(result.currentPrice()));
 
                 Vesta.info("\n  📈 TAKE PROFIT (TP):");
