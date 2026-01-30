@@ -23,7 +23,7 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 public class BuilderData {
 
     @SuppressWarnings("ConstantValue")
-    public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols) {
+    public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols, int maxMonth) {
         List<float[][][]> allX = new ArrayList<>();
         List<float[][]> allY = new ArrayList<>();
         for (String symbol : symbols) {
@@ -31,7 +31,7 @@ public class BuilderData {
                 List<Candle> allCandlesForChart = new ArrayList<>();
 
                 Vesta.info("Procesando símbolo (Relativo): " + symbol);
-                int maxMonth = Main.MAX_MONTH_TRAINING;
+
 
                 // Procesar cada mes por separado SIN acumular
                 List<Integer> months = IntStream.rangeClosed(1, maxMonth)
@@ -54,7 +54,7 @@ public class BuilderData {
                                 return new MonthResult(null, null, candlesThisMonth, false);
                             }
 
-                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 10);
+                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 25);
                             float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                             float[][] yraw = pair.getValue();
 
@@ -325,6 +325,13 @@ public class BuilderData {
         double[] bandwidthArr = bollingerBandsResult.bandwidth();
         double[] percentBArr = bollingerBandsResult.percentB();
 
+        // ATR
+        double[] atr14 = FinancialCalculation.computeATRWilder(simpleByMinute.values().stream().toList(), 14);
+
+
+        // Volumen Normalizado
+        Map<String, double[]> vn = FinancialCalculation.computeVolumeNormalizations(simpleByMinute.values().stream().toList(), 14, atr14);
+
         for (long minute = startMinute; minute <= endMinute; minute += 60_000L) {
             // OHLC + VOLUMEN
             CandleSimple cs = simpleByMinute.get(minute);
@@ -409,6 +416,9 @@ public class BuilderData {
                 double bandwidth = checkDouble(bandwidthArr, idx);
                 double percentB = checkDouble(percentBArr, idx);
 
+                // ATR
+                double atr = checkDouble(atr14, idx);
+
                 candles.add(new Candle(
                         minute,
                         checkDouble(open), checkDouble(high), checkDouble(low), checkDouble(close),
@@ -418,6 +428,11 @@ public class BuilderData {
                         checkDouble(quoteVolume),
                         checkDouble(buyQV),
                         checkDouble(sellQV),
+
+                        checkDouble(vn.get("ratio")[idx]),
+                        checkDouble(vn.get("zscore")[idx]),
+                        checkDouble(vn.get("perAtr")[idx]),
+
                         checkDouble(deltaUSDT),
                         checkDouble(buyRatio),
                         checkDouble(bidLiq),
@@ -436,7 +451,8 @@ public class BuilderData {
                         middleBand,
                         lowerBand,
                         bandwidth,
-                        percentB
+                        percentB,
+                        atr
                 ));
             } catch (IllegalArgumentException ignored) {
                 remove++;
@@ -501,7 +517,9 @@ public class BuilderData {
         fList.add((float) Math.log(curr.amountTrades()));
 
         // Volúmenes relativos
-        fList.add((float) Math.log(curr.volumeBase() / prevClose));
+        fList.add((float) curr.volRatioToMean());
+        fList.add((float) curr.volZscore());
+        fList.add((float) curr.volPerAtr());
 //        fList.add((float) Math.log(curr.quoteVolume() / prevClose));
         fList.add((float) Math.log(curr.buyQuoteVolume() / prevClose));
         fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
@@ -549,6 +567,9 @@ public class BuilderData {
 
         fList.add(bbBandwidth);
         fList.add(bbPos);
+
+        fList.add((float) curr.atr14());
+
         float[] f = new float[fList.size()];
         for (int i = 0; i < fList.size(); i++) {
             f[i] = fList.get(i);
@@ -587,11 +608,13 @@ public class BuilderData {
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1, 1, 1,1,1,1,1, 1),
+                1,1,1, 1, 1, 1, 1,1,1,1,1,
+                        1, 1 ,1 ,1, 1),
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
-                1,1,1, 1, 1, 1,1,1,1,1,1, 1)
+                1,1,1, 1, 1, 1,1,1,1,1,1, 1,
+                        1,1,1, 1)
         ).length + 2; // más 2 por que tiene sumar el feature del símbolo en el que esta y todos los símbolos que puede estar
     }
 

@@ -1,20 +1,25 @@
 package xyz.cereshost.engine;
 
 import ai.djl.Device;
-import ai.djl.engine.StandardCapabilities;
 import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
+import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.index.NDIndex;
+import ai.djl.ndarray.types.Shape;
 import ai.djl.training.Trainer;
-import ai.djl.util.Pair;
+import ai.djl.training.dataset.ArrayDataset;
+import ai.djl.training.dataset.Dataset;
+import ai.djl.translate.TranslateException;
 import lombok.experimental.UtilityClass;
-import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.common.Vesta;
 
+import java.io.IOException;
+import java.nio.FloatBuffer;
 import java.util.*;
 
-import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_PRICE;
 import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_RELATIVE;
 
 @UtilityClass
@@ -42,25 +47,43 @@ public class EngineUtils {
 //        }
 //    }
 
-    /**
-     * Mezcla los datos aleatoriamente (actualizado para float[][])
-     */
-//    public void shuffleData(float[][][] X, float[][] y) {
-//        Random rand = new Random(42);
-//        for (int i = X.length - 1; i > 0; i--) {
-//            int j = rand.nextInt(i + 1);
-//
-//            // Intercambiar X
-//            float[][] tempX = X[i];
-//            X[i] = X[j];
-//            X[j] = tempX;
-//
-//            // Intercambiar y (ahora con dos columnas)
-//            float[] tempY = y[i];
-//            y[i] = y[j];
-//            y[j] = tempY;
-//        }
-//    }
+    public static List<Dataset> splitIntoDatasets(
+            NDArray X,
+            NDArray y,
+            int splits,
+            int batchSize,
+            Device device
+    ) throws IOException, TranslateException {
+
+        long samples = X.getShape().get(0);
+        long splitSize = samples / splits;
+
+        List<Dataset> datasets = new ArrayList<>();
+
+        for (int i = 0; i < splits; i++) {
+            long start = i * splitSize;
+            long end = (i == splits - 1) ? samples : start + splitSize;
+
+            NDArray Xpart = X.get(
+                    new NDIndex(start + ":" + end + ",:,:")
+            );
+            NDArray ypart = y.get(
+                    new NDIndex(start + ":" + end)
+            );
+
+            Dataset ds = new ArrayDataset.Builder()
+                    .setData(Xpart)
+                    .optLabels(ypart)
+                    .setSampling(batchSize, true)
+                    .optDevice(device)
+                    .build();
+
+            ds.prepare();
+            datasets.add(ds);
+        }
+
+        return datasets;
+    }
 
     /**
      * Aplanar array 3D a 1D
@@ -97,124 +120,193 @@ public class EngineUtils {
         }
     }
 
-//    /**
-//     * Combina múltiples datasets en uno solo (actualizado para float[][])
-//     */
-//    @Contract("_, _ -> new")
-//    public static @NotNull Pair<float[][][], float[][]> combineDatasets(@NotNull List<float[][][]> allX, List<float[][]> allY) {
-//        int totalSamples = 0;
-//        for (float[][][] X : allX) {
-//            totalSamples += X.length;
-//        }
-//
-//        int lookback = allX.get(0)[0].length;
-//        int features = allX.get(0)[0][0].length;
-//
-//        float[][][] Xcombined = new float[totalSamples][lookback][features];
-//        float[][] ycombined = new float[totalSamples][3]; // Aumentado a 3 columnas
-//
-//        int currentIndex = 0;
-//        for (int s = 0; s < allX.size(); s++) {
-//            float[][][] X = allX.get(s);
-//            float[][] y = allY.get(s);
-//
-//            for (int i = 0; i < X.length; i++) {
-//                Xcombined[currentIndex] = X[i];
-//                ycombined[currentIndex][0] = y[i][0]; // Fuerza Alcista
-//                ycombined[currentIndex][1] = y[i][1]; // Fuerza Bajista
-//                ycombined[currentIndex][2] = y[i][2]; // Dirección (0 o 1)
-//                currentIndex++;
-//            }
-//        }
-//        return new Pair<>(Xcombined, ycombined);
-//    }
+    public static float[] flatten3DArraySlice(
+            float[][][] array,
+            int offset,
+            int chunkSize
+    ) {
+        if (array == null || array.length == 0 || offset >= array.length) {
+            return new float[0];
+        }
+
+        int totalSamples = array.length;
+        int lookback = array[0].length;
+        int features = array[0][0].length;
+
+        // Calcular cuántas muestras podemos extraer realmente sin salirnos del array
+        int actualSamples = Math.min(chunkSize, totalSamples - offset);
+        if (actualSamples <= 0) return new float[0];
+
+        float[] flat = new float[actualSamples * lookback * features];
+        int idx = 0;
+
+        for (int i = offset; i < offset + actualSamples; i++) {
+            for (int t = 0; t < lookback; t++) {
+                System.arraycopy(array[i][t], 0, flat, idx, features);
+                idx += features;
+            }
+        }
+        return flat;
+    }
+
+    public static NDArray create3D(
+            NDManager manager,
+            float[][][] data
+    ) {
+        int samples  = data.length;
+        int lookback = data[0].length;
+        int features = data[0][0].length;
+
+        FloatBuffer buffer = FloatBuffer.allocate(samples * lookback * features);
+
+        for (float[][] datum : data) {
+            for (int t = 0; t < lookback; t++) {
+                buffer.put(datum[t]);
+            }
+        }
+
+        buffer.rewind();
+        return manager.create(buffer, new Shape(samples, lookback, features));
+    }
+
+    public static NDArray concat3DArrayToNDArray(
+            float[][][] sourceArray,
+            NDManager manager,
+            int chunkSize // Tamaño del bloque, ej: 512 o 1024
+    ) {
+        if (sourceArray == null || sourceArray.length == 0) {
+            return manager.create(new Shape(0, 0, 0));
+        }
+
+        int totalSamples = sourceArray.length;
+        int lookback = sourceArray[0].length;
+        int features = sourceArray[0][0].length;
+
+        List<NDArray> ndList = new ArrayList<>();
+
+        // Recorremos el array original en saltos de 'chunkSize'
+        for (int offset = 0; offset < totalSamples; offset += chunkSize) {
+
+            // 1. Extraemos y aplanamos la "rebanada" usando el método anterior
+            float[] flatSlice = flatten3DArraySlice(sourceArray, offset, chunkSize);
+
+            // 2. Calculamos cuántos samples hay realmente en este trozo (el último puede ser más pequeño)
+            int currentSamples = flatSlice.length / (lookback * features);
+
+            // 3. Creamos el NDArray para este trozo específico
+            NDArray ndChunk = manager.create(flatSlice, new Shape(currentSamples, lookback, features));
+
+            // 4. Lo añadimos a la lista para concatenación
+            ndList.add(ndChunk);
+        }
+
+        // 5. Unimos todos los trozos en un solo NDArray en el eje 0 (Samples)
+        NDArray result = NDArrays.concat(new NDList(ndList), 0);
+
+        // Opcional: Cerrar los NDArrays intermedios para liberar memoria nativa rápido
+        for (NDArray chunk : ndList) {
+            if (chunk != result) chunk.close();
+        }
+
+        return result;
+    }
 
     /**
      * Evalúa el modelo con lógica de 3 salidas: Regresión (UP/DOWN) + Clasificación (DIR)
      */
-    public static ResultsEvaluate evaluateModel(Trainer trainer, NDArray X_test, NDArray y_test,
-                                                MultiSymbolNormalizer yNormalizer) {
-
-        NDList predictions = trainer.evaluate(new NDList(X_test));
-        NDArray yPred = predictions.singletonOrThrow();
-
-        // Convertir a float arrays para manipulación manual
-        float[] yTestFlat = y_test.toFloatArray();
-        float[] yPredFlat = yPred.toFloatArray();
-
-        long[] shape = y_test.getShape().getShape();
-        int batchSize = (int) shape[0];
-
-        // Ahora tenemos 5 salidas en predicciones, pero el target sigue teniendo 3
-        int targetCols = 3;  // [TP, SL, dirección_continua]
-        int predCols = 5;    // [TP, SL, LONG_prob, NEUTRAL_prob, SHORT_prob]
+    public static ResultsEvaluate evaluateModel(
+            Trainer trainer,
+            NDArray X_test,
+            NDArray y_test,
+            MultiSymbolNormalizer yNormalizer,
+            int chunkSize // Recomendado: 512 o 1024
+    ) {
+        long totalSamples = X_test.getShape().get(0);
+        int targetCols = (int) y_test.getShape().get(1); // Dinámico: usualmente 5 [TP, SL, L, N, S]
+        int predCols = 5; // Formato Vesta: [TP, SL, ProbL, ProbN, ProbS]
 
         double totalMaeUP = 0;
         double totalMaeDOWN = 0;
         double totalMaeDir = 0;
+        List<ResultPrediction> allResults = new ArrayList<>();
 
-        List<ResultPrediction> results = new ArrayList<>();
+        // Procesar por bloques
+        for (int start = 0; start < totalSamples; start += chunkSize) {
+            int end = (int) Math.min(start + chunkSize, totalSamples);
+            int currentBatchSize = end - start;
 
-        for (int i = 0; i < batchSize; i++) {
-            // Índices para los arrays planos
-            int targetIdx = i * targetCols;
-            int predIdx = i * predCols;
+            // 1. Slicing de los datos de prueba (Sin copiar memoria si es posible)
+            try (NDArray xChunk = X_test.get(new NDIndex("{}:{}", start, end));
+                 NDArray yChunk = y_test.get(new NDIndex("{}:{}", start, end))) {
 
-            // 1. Extraer valores del target (3 columnas)
-            float rawRealTP = yTestFlat[targetIdx];
-            float rawRealSL = yTestFlat[targetIdx + 1];
-            float rawRealLong = yTestFlat[targetIdx + 2];
-            float rawRealNeutral = yTestFlat[targetIdx + 3];
-            float rawRealShort = yTestFlat[targetIdx + 24];
+                // 2. Inferencia del bloque
+                NDList predictions = trainer.evaluate(new NDList(xChunk));
+                NDArray yPred = predictions.singletonOrThrow();
 
-            float rawRealDir = PredictionEngine.computeDirection(
-                    new float[]{rawRealLong, rawRealNeutral, rawRealShort}
-            );
+                // 3. Conversión a arrays planos para procesamiento rápido en CPU
+                float[] yTestFlat = yChunk.toFloatArray();
+                float[] yPredFlat = yPred.toFloatArray();
 
-            // 2. Extraer predicciones (5 columnas)
-            float rawPredTP = yPredFlat[predIdx];
-            float rawPredSL = yPredFlat[predIdx + 1];
-            float rawPredLong = yPredFlat[predIdx + 2];    // Probabilidad LONG
-            float rawPredNeutral = yPredFlat[predIdx + 3]; // Probabilidad NEUTRAL
-            float rawPredShort = yPredFlat[predIdx + 4];   // Probabilidad SHORT
+                // 4. Procesar cada muestra dentro del chunk
+                for (int i = 0; i < currentBatchSize; i++) {
+                    int targetIdx = i * targetCols;
+                    int predIdx = i * predCols;
 
-            // 3. Convertir probabilidades a dirección continua [-1, 1]
-            float predDirection = PredictionEngine.computeDirection(
-                    new float[]{rawPredLong, rawPredNeutral, rawPredShort}
-            );
+                    // Extraer Target (ajusta los índices según tu estructura real)
+                    float rawRealTP = yTestFlat[targetIdx];
+                    float rawRealSL = yTestFlat[targetIdx + 1];
 
-            // 4. Crear arrays temporales para desnormalización
-            // Target: [TP, SL] (2 columnas)
-            float[][] targetArray = new float[][]{{rawRealTP, rawRealSL}};
-            float[][] predArray = new float[][]{{rawPredTP, rawPredSL}};
+                    // Calculamos dirección real usando los flags (Long, Neutral, Short)
+                    float rawRealDir = PredictionEngine.computeDirection(new float[]{
+                            yTestFlat[targetIdx + 2],
+                            yTestFlat[targetIdx + 3],
+                            yTestFlat[targetIdx + 4]
+                    });
 
-            // 5. Desnormalizar TP y SL
-            float[][] denormTarget = yNormalizer.inverseTransform(targetArray);
-            float[][] denormPred = yNormalizer.inverseTransform(predArray);
+                    // Extraer Predicción
+                    float rawPredTP = yPredFlat[predIdx];
+                    float rawPredSL = yPredFlat[predIdx + 1];
+                    float predDirection = PredictionEngine.computeDirection(new float[]{
+                            yPredFlat[predIdx + 2],
+                            yPredFlat[predIdx + 3],
+                            yPredFlat[predIdx + 4]
+                    });
 
-            float realTP = denormTarget[0][0];
-            float realSL = denormTarget[0][1];
-            float predTP = denormPred[0][0];
-            float predSL = denormPred[0][1];
+                    // 5. Desnormalización (TP y SL)
+                    float[][] denormTarget = yNormalizer.inverseTransform(new float[][]{{rawRealTP, rawRealSL}});
+                    float[][] denormPred = yNormalizer.inverseTransform(new float[][]{{rawPredTP, rawPredSL}});
 
-            // 6. Métricas
-            totalMaeUP += Math.abs(realTP - predTP);
-            totalMaeDOWN += Math.abs(realSL - predSL);
-            totalMaeDir += Math.abs(rawRealDir - predDirection); // MAE de dirección
+                    float realTP = denormTarget[0][0];
+                    float realSL = denormTarget[0][1];
+                    float predTP = denormPred[0][0];
+                    float predSL = denormPred[0][1];
 
-            // 7. Crear ResultPrediction con el nuevo formato
-            results.add(new ResultPrediction(
-                    predTP, predSL, predDirection, // Predicciones
-                    realTP, realSL, rawRealDir,    // Valores reales
-                    i
-            ));
+                    // 6. Acumular Métricas
+                    totalMaeUP += Math.abs(realTP - predTP);
+                    totalMaeDOWN += Math.abs(realSL - predSL);
+                    totalMaeDir += Math.abs(rawRealDir - predDirection);
+
+                    // 7. Guardar resultado individual
+                    allResults.add(new ResultPrediction(
+                            predTP, predSL, predDirection,
+                            realTP, realSL, rawRealDir,
+                            start + i // Índice global
+                    ));
+                }
+
+                // Liberar predicción del chunk
+                predictions.close();
+            }
         }
 
-        double avgMaeUP = totalMaeUP / batchSize;
-        double avgMaeDOWN = totalMaeDOWN / batchSize;
-        double avgMaeDir = totalMaeDir / batchSize;
+        // 8. Consolidar promedios finales
+        double avgMaeUP = totalMaeUP / totalSamples;
+        double avgMaeDOWN = totalMaeDOWN / totalSamples;
+        double avgMaeDir = totalMaeDir / totalSamples;
 
-        return new ResultsEvaluate("VestaIA", avgMaeUP, avgMaeDOWN, results);
+        Vesta.info("Evaluación Finalizada -> MAE TP: %.6f, MAE SL: %.6f, MAE Dir: %.6f", avgMaeUP, avgMaeDOWN, avgMaeDir);
+
+        return new ResultsEvaluate("VestaIA_Chunked", avgMaeUP, avgMaeDOWN, allResults);
     }
 
     public record ResultsEvaluate(

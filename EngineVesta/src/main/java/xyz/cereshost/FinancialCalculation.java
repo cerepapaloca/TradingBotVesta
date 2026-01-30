@@ -2,10 +2,10 @@ package xyz.cereshost;
 
 import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.common.market.Candle;
+import xyz.cereshost.common.market.CandleSimple;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 @UtilityClass
 public class FinancialCalculation {
@@ -253,4 +253,132 @@ public class FinancialCalculation {
     }
 
     public record BollingerBandsResult(double[] upperBand, double[] middleBand, double[] lowerBand, double[] bandwidth, double[] percentB) {};
+
+    /**
+     * Calcula ATR usando el método Wilder (suavizado) para un periodo dado.
+     * Retorna un array double[] con la ATR por índice (misma longitud que candles).
+     * Para los primeros elementos donde no hay ATR suficiente se devuelve 0.
+     */
+    public static double[] computeATRWilder(List<CandleSimple> candles, int period) {
+        int n = candles.size();
+        double[] atr = new double[n];
+        if (n == 0) return atr;
+
+        // 1) calcular TRs
+        double[] tr = new double[n];
+        tr[0] = candles.get(0).high() - candles.get(0).low(); // primer TR como high-low
+        for (int i = 1; i < n; i++) {
+            CandleSimple cur = candles.get(i);
+            CandleSimple prev = candles.get(i - 1);
+            double highLow = cur.high() - cur.low();
+            double highPrevClose = Math.abs(cur.high() - prev.close());
+            double lowPrevClose = Math.abs(cur.low() - prev.close());
+            tr[i] = Math.max(highLow, Math.max(highPrevClose, lowPrevClose));
+        }
+
+        // 2) ATR inicial: simple moving average de los primeros 'period' TRs
+        if (n <= period) {
+            // si no hay suficientes periodos, usar SMA de lo que haya
+            double sum = 0;
+            for (int i = 0; i < n; i++) sum += tr[i];
+            double sma = (n > 0) ? sum / n : 0;
+            for (int i = 0; i < n; i++) atr[i] = sma;
+            return atr;
+        }
+
+        double sumFirst = 0;
+        for (int i = 1; i <= period; i++) { // normalmente se empieza desde el índice 1
+            sumFirst += tr[i];
+        }
+        double prevAtr = sumFirst / period;
+        // asignar ATR para el índice period (alineación común)
+        atr[period] = prevAtr;
+
+        // 3) Wilder smoothing
+        for (int i = period + 1; i < n; i++) {
+            double curAtr = (prevAtr * (period - 1) + tr[i]) / period;
+            atr[i] = curAtr;
+            prevAtr = curAtr;
+        }
+
+        // Para índices < period puedes opcionalmente rellenar con la primera ATR calculada
+        for (int i = 0; i < period; i++) {
+            atr[i] = atr[period]; // o 0 si prefieres
+        }
+
+        return atr;
+    }
+
+    /**
+     * Calcula rolling mean y std (Welford o ventana simple) sobre el volumen base.
+     * Returns double[][] where [0] = means, [1] = stds (same length as candles).
+     * For the first <window elements we fill with the first computed mean/std or 0.
+     */
+    public static double[][] computeRollingMeanStd(List<CandleSimple> candles, int window) {
+        int n = candles.size();
+        double[] means = new double[n];
+        double[] stds = new double[n];
+        if (n == 0) return new double[][]{means, stds};
+
+        Deque<Double> windowVals = new ArrayDeque<>(window);
+        double sum = 0;
+        double sumSq = 0;
+
+        for (int i = 0; i < n; i++) {
+            double v = candles.get(i).volumen().baseVolume();
+            windowVals.addLast(v);
+            sum += v;
+            sumSq += v * v;
+            if (windowVals.size() > window) {
+                double old = windowVals.removeFirst();
+                sum -= old;
+                sumSq -= old * old;
+            }
+            int k = windowVals.size();
+            double mean = (k > 0) ? sum / k : 0;
+            double variance = (k > 1) ? Math.max(0, (sumSq - (sum * sum) / k) / (k - 1)) : 0;
+            double std = Math.sqrt(variance);
+            means[i] = mean;
+            stds[i] = std;
+        }
+        return new double[][]{means, stds};
+    }
+
+    public static Map<String, double[]> computeVolumeNormalizations(List<CandleSimple> candles, int window, double[] atrArray) {
+        int n = candles.size();
+        double[][] meanStd = computeRollingMeanStd(candles, window);
+        double[] means = meanStd[0];
+        double[] stds = meanStd[1];
+
+        double[] ratio = new double[n];
+        double[] zscore = new double[n];
+        double[] perAtr = new double[n];
+
+        for (int i = 0; i < n; i++) {
+            double v = candles.get(i).volumen().baseVolume();
+            double mean = means[i];
+            double std = stds[i];
+            // ratio to mean (avoid divide by zero)
+            ratio[i] = (mean > 0) ? v / mean : 0.0;
+            // z-score (if std 0 use 0), clip to [-3,3]
+            double z = (std > 0) ? (v - mean) / std : 0.0;
+            if (Double.isFinite(z)) {
+                z = Math.max(-3.0, Math.min(3.0, z));
+            } else {
+                z = 0.0;
+            }
+            zscore[i] = z;
+            // volume per ATR (ATR may be 0)
+            double atr = (atrArray != null && i < atrArray.length) ? atrArray[i] : 0.0;
+            perAtr[i] = (atr > 0) ? v / atr : 0.0;
+        }
+
+        Map<String, double[]> map = new HashMap<>();
+        map.put("ratio", ratio);
+        map.put("zscore", zscore);
+        map.put("perAtr", perAtr);
+        return map;
+    }
+
+
 }

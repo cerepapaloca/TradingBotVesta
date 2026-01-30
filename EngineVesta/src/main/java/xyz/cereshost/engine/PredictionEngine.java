@@ -10,18 +10,15 @@ import ai.djl.util.Pair;
 import lombok.Getter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.DataSource;
 import xyz.cereshost.builder.BuilderData;
 import xyz.cereshost.builder.MultiSymbolNormalizer;
 import xyz.cereshost.builder.RobustNormalizer;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
-import xyz.cereshost.common.market.Market;
 import xyz.cereshost.file.IOdata;
 import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
-import java.text.DecimalFormat;
 import java.util.Comparator;
 import java.util.List;
 
@@ -112,10 +109,10 @@ public class PredictionEngine {
             throw new RuntimeException("Historial insuficiente. Se necesitan " + (lookBack + 1) + " velas.");
         }
 
-        List<Candle> subList = candles.subList(candles.size() - (lookBack + 1), candles.size());
+        List<Candle> subList = candles.subList((int) (candles.size() - (lookBack + 1)), candles.size());
 
         // Construir entrada
-        float[][][] X = new float[1][lookBack][features - 2];
+        float[][][] X = new float[1][Math.toIntExact(lookBack)][Math.toIntExact(features - 2)];
         for (int j = 0; j < lookBack; j++) {
             X[0][j] = BuilderData.extractFeatures(subList.get(j + 1), subList.get(j));
         }

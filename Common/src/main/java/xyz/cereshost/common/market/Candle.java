@@ -16,6 +16,10 @@ public record Candle(
         double buyQuoteVolume,
         double sellQuoteVolume,
 
+        double volRatioToMean,
+        double volZscore,
+        double volPerAtr,
+
         double deltaUSDT,
         double buyRatio,
 
@@ -40,5 +44,7 @@ public record Candle(
         double middleBand,
         double lowerBand,
         double bandwidth,
-        double percentB
+        double percentB,
+
+        double atr14
 ) {}

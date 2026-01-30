@@ -27,7 +27,6 @@ import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import xyz.cereshost.ChartUtils;
 import xyz.cereshost.MAEEvaluator;
 import xyz.cereshost.Main;
 import xyz.cereshost.MetricsListener;
@@ -40,13 +39,16 @@ import xyz.cereshost.file.IOdata;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.BiFunction;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 45;
-    public static final int EPOCH = 30;
+    public static final int LOOK_BACK = 75;
+    public static final int EPOCH = 50;
 
     public static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
     public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(6);
@@ -76,17 +78,13 @@ public class VestaEngine {
             }
         });
 
-        Pair<float[][][], float[][]> combined = BuilderData.fullBuild(symbols);
+        Pair<float[][][], float[][]> combined = BuilderData.fullBuild(symbols,  Main.MAX_MONTH_TRAINING);
 
-
-        //Pair<float[][][], float[]> deduped = EngineUtils.clearData(combined.getKey(), combined.getValue());
         float[][][] xCombined = combined.getKey();
         float[][] yCombined = combined.getValue();
 
-        //EngineUtils.shuffleData(xCombined, yCombined);
-
-        ChartUtils.showTPSLDistribution("Datos Combinados", yCombined, "Todos");
-        ChartUtils.showDirectionDistribution("Datos Combinados", yCombined, "Todos");
+//        ChartUtils.showTPSLDistribution("Datos Combinados", yCombined, "Todos");
+//        ChartUtils.showDirectionDistribution("Datos Combinados", yCombined, "Todos");
 
 
         Vesta.info("Datos combinados:");
@@ -108,33 +106,49 @@ public class VestaEngine {
         // Borra por que no se va a usar más
         Vesta.MARKETS.clear();
         // Helper local para slice 3D arrays (copia el primer eje [start, end))
+        final float[][][] finalXCombined = xCombined;
         java.util.function.BiFunction<long[], long[], float[][][]> slice3D = (long[] range, long[] dummy) -> {
             long start = range[0];
             long end = range[1];
             int len = (int) (end - start);
             float[][][] out = new float[len][][];
             for (long i = start; i < end; i++) {
-                out[(int) (i - start)] = xCombined[(int) i];
+                out[(int) (i - start)] = finalXCombined[(int) i];
             }
             return out;
         };
         splitSample split = getSplitSample(slice3D, trainSize, valSize, samples, yCombined);
+        combined = null;
+        xCombined = null;
+        yCombined = null;
         Normalize result = getNormalize(split);
         // Verificar NaN sólo en arrays normalizados (por si acaso)
         EngineUtils.cleanNaNValues(result.X_train_norm());
         EngineUtils.cleanNaNValues(result.X_val_norm());
         EngineUtils.cleanNaNValues(result.X_test_norm());
 
+        TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2"))
+                .optOptimizer(Optimizer.adamW()
+                        .optLearningRateTracker(Tracker.cosine()
+                                .setBaseValue(3e-4f)
+                                .optFinalValue(1e-6f)
+                                .setMaxUpdates((int) (EPOCH*0.75))
+                                .build())
+                        //.optLearningRateTracker(Tracker.fixed(0.003f))
+                        .optWeightDecays(0.001f)
+                        .optClipGrad(2.8f)
+                        .build())
+                .optDevices(Engine.getInstance().getDevices())
+                .addEvaluator(new MAEEvaluator())
+                .optExecutorService(EXECUTOR_TRAINING)
+                .addTrainingListeners(TrainingListener.Defaults.logging())
+                .addTrainingListeners(new MetricsListener());
+
         try (PtModel model = (PtModel) Model.newInstance(Main.NAME_MODEL, device, "PyTorch")) {
             PtNDManager manager = (PtNDManager) model.getNDManager();
-            // Aplanar 3D -> 1D para crear NDArray con Shape(samples, lookback, features)
-            float[] XtrainFlat = EngineUtils.flatten3DArray(result.X_train_norm());
-            float[] XvalFlat   = EngineUtils.flatten3DArray(result.X_val_norm());
-            float[] XtestFlat  = EngineUtils.flatten3DArray(result.X_test_norm());
-
-            NDArray X_train = manager.create(XtrainFlat, new Shape(trainSize, lookback, features));
-            NDArray X_val   = manager.create(XvalFlat,   new Shape(valSize,   lookback, features));
-            NDArray X_test  = manager.create(XtestFlat,  new Shape(testSize,  lookback, features));
+            NDArray X_train = EngineUtils.concat3DArrayToNDArray(result.X_train_norm(), manager, 1024);
+            NDArray X_val   = EngineUtils.concat3DArrayToNDArray(result.X_val_norm(), manager, 1024);
+            NDArray X_test  = EngineUtils.concat3DArrayToNDArray(result.X_test_norm(), manager, 1024);
 
             // y -> shape (N, 1)
             NDArray y_train = manager.create(result.y_train_norm());
@@ -151,23 +165,6 @@ public class VestaEngine {
 
             model.setBlock(getSequentialBlock());
             // Configuración de entrenamiento (igual a tu código)
-            MetricsListener metrics = new MetricsListener();
-            TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2"))
-                    .optOptimizer(Optimizer.adamW()
-                            .optLearningRateTracker(Tracker.cosine()
-                                    .setBaseValue(3e-4f)
-                                    .optFinalValue(1e-6f)
-                                    .setMaxUpdates((int) (EPOCH*0.75))
-                                    .build())
-                            //.optLearningRateTracker(Tracker.fixed(0.003f))
-                            .optWeightDecays(0.001f)
-                            .optClipGrad(2.8f)
-                            .build())
-                    //.optDevices(Engine.getInstance().getDevices())
-                    .addEvaluator(new MAEEvaluator())
-                    .optExecutorService(EXECUTOR_TRAINING)
-                    .addTrainingListeners(TrainingListener.Defaults.logging())
-                    .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
             int batchSize = 64;// 256;
@@ -187,10 +184,8 @@ public class VestaEngine {
 
             valDataset.prepare();
             Trainer trainer = model.newTrainer(config);
-            trainer.initialize(new Shape(symbols.size(), LOOK_BACK, features));
+            trainer.initialize(new Shape(batchSize, LOOK_BACK, features));
 
-            // Limpiar RAM
-            System.gc();
 
             // Entrenar
             Vesta.info("Iniciando entrenamiento con " + EPOCH + " epochs...");
@@ -222,10 +217,7 @@ public class VestaEngine {
                 // Como entrenaste combinando símbolos, lo ideal es probar en uno representativo o iterar.
                 // Aquí probamos con el primer símbolo de la lista para obtener el ROI
                 String testSymbol = symbols.get(0);
-                EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, result.yNormalizer());
-
-
-
+                EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, result.yNormalizer(), 1024);
 
                 BackTestEngine.BackTestResult simResult;
                 Market market = futureMarket.get();
@@ -235,6 +227,7 @@ public class VestaEngine {
                     Vesta.error("No se encontró mercado para backtest: " + testSymbol);
                     simResult = null;
                 }
+                manager.close();
                 return new TrainingTestsResults(evaluate, simResult);
             }else {
                 return null;

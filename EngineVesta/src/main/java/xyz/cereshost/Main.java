@@ -29,7 +29,7 @@ public class Main {
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.LOCAL_NETWORK;
 
-    public static final int MAX_MONTH_TRAINING = 12 + 4;
+    public static final int MAX_MONTH_TRAINING = 1;
 
 
     @Getter
