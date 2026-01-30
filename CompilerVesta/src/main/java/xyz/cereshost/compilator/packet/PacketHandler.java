@@ -1,4 +1,4 @@
-package xyz.cereshost.packet;
+package xyz.cereshost.compilator.packet;
 
 import lombok.Getter;
 import org.jetbrains.annotations.NotNull;

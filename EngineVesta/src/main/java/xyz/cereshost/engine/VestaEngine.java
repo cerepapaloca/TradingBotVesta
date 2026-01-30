@@ -26,6 +26,7 @@ import ai.djl.training.tracker.Tracker;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.ChartUtils;
 import xyz.cereshost.MAEEvaluator;
 import xyz.cereshost.Main;
@@ -39,24 +40,21 @@ import xyz.cereshost.file.IOdata;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.*;
 import java.util.function.BiFunction;
 
 public class VestaEngine {
 
     public static final int LOOK_BACK = 45;
-    public static final int EPOCH = 10;
+    public static final int EPOCH = 30;
 
     public static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
+    public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(6);
     public static final ExecutorService EXECUTOR_TRAINING = Executors.newScheduledThreadPool(8);
     /**
      * Entrena un modelo con múltiples símbolos combinados
      */
-    public static TrainingTestsResults trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException, InterruptedException {
-
+    public static @Nullable TrainingTestsResults trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException, InterruptedException, ExecutionException {
         ai.djl.engine.Engine torch = ai.djl.engine.Engine.getEngine("PyTorch");
         if (torch == null) {
             Vesta.error("PyTorch no está disponible. Engines disponibles:");
@@ -69,8 +67,17 @@ public class VestaEngine {
         Device device = Engine.getInstance().getDevices()[0];
         Vesta.info("Usando dispositivo: " + device);
         Vesta.info("Entrenando con " + symbols.size() + " símbolos: " + symbols);
+        CompletableFuture<Market> futureMarket = new CompletableFuture<>();
+        EXECUTOR_TRAINING.submit(() -> {
+            try {
+                futureMarket.complete(IOdata.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols.get(0)));
+            } catch (InterruptedException | IOException e) {
+                e.printStackTrace();
+            }
+        });
 
         Pair<float[][][], float[][]> combined = BuilderData.fullBuild(symbols);
+
 
         //Pair<float[][][], float[]> deduped = EngineUtils.clearData(combined.getKey(), combined.getValue());
         float[][][] xCombined = combined.getKey();
@@ -78,8 +85,8 @@ public class VestaEngine {
 
         //EngineUtils.shuffleData(xCombined, yCombined);
 
-        ChartUtils.CandleChartUtils.showTPSLDistribution("Datos Combinados", yCombined, "Todos");
-        ChartUtils.CandleChartUtils.showDirectionDistribution("Datos Combinados", yCombined, "Todos");
+        ChartUtils.showTPSLDistribution("Datos Combinados", yCombined, "Todos");
+        ChartUtils.showDirectionDistribution("Datos Combinados", yCombined, "Todos");
 
 
         Vesta.info("Datos combinados:");
@@ -112,27 +119,27 @@ public class VestaEngine {
             return out;
         };
         splitSample split = getSplitSample(slice3D, trainSize, valSize, samples, yCombined);
-        Normalize result = getNormalize(split.X_train_arr(), split.X_val_arr(), split.X_test_arr(), split.y_train_arr(), split.y_val_arr(), split.y_test_arr());
+        Normalize result = getNormalize(split);
         // Verificar NaN sólo en arrays normalizados (por si acaso)
-        EngineUtils.cleanNaNValues(result.X_train_norm().get());
-        EngineUtils.cleanNaNValues(result.X_val_norm().get());
-        EngineUtils.cleanNaNValues(result.X_test_norm().get());
+        EngineUtils.cleanNaNValues(result.X_train_norm());
+        EngineUtils.cleanNaNValues(result.X_val_norm());
+        EngineUtils.cleanNaNValues(result.X_test_norm());
 
         try (PtModel model = (PtModel) Model.newInstance(Main.NAME_MODEL, device, "PyTorch")) {
             PtNDManager manager = (PtNDManager) model.getNDManager();
             // Aplanar 3D -> 1D para crear NDArray con Shape(samples, lookback, features)
-            float[] XtrainFlat = EngineUtils.flatten3DArray(result.X_train_norm().get());
-            float[] XvalFlat   = EngineUtils.flatten3DArray(result.X_val_norm().get());
-            float[] XtestFlat  = EngineUtils.flatten3DArray(result.X_test_norm().get());
+            float[] XtrainFlat = EngineUtils.flatten3DArray(result.X_train_norm());
+            float[] XvalFlat   = EngineUtils.flatten3DArray(result.X_val_norm());
+            float[] XtestFlat  = EngineUtils.flatten3DArray(result.X_test_norm());
 
             NDArray X_train = manager.create(XtrainFlat, new Shape(trainSize, lookback, features));
             NDArray X_val   = manager.create(XvalFlat,   new Shape(valSize,   lookback, features));
             NDArray X_test  = manager.create(XtestFlat,  new Shape(testSize,  lookback, features));
 
             // y -> shape (N, 1)
-            NDArray y_train = manager.create(result.y_train_norm().get());
-            NDArray y_val   = manager.create(result.y_val_norm().get());
-            NDArray y_test  = manager.create(result.y_test_norm().get());
+            NDArray y_train = manager.create(result.y_train_norm());
+            NDArray y_val   = manager.create(result.y_val_norm());
+            NDArray y_test  = manager.create(result.y_test_norm());
 
             Vesta.info("\nDatos finales preparados:");
             Vesta.info("  X_train shape: " + X_train.getShape());
@@ -145,36 +152,39 @@ public class VestaEngine {
             model.setBlock(getSequentialBlock());
             // Configuración de entrenamiento (igual a tu código)
             MetricsListener metrics = new MetricsListener();
-            TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2", 3, 3))
+            TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2"))
                     .optOptimizer(Optimizer.adamW()
                             .optLearningRateTracker(Tracker.cosine()
-                                    .setBaseValue(0.000_01f)
-                                    .optFinalValue(0.000_000_5f)
+                                    .setBaseValue(3e-4f)
+                                    .optFinalValue(1e-6f)
                                     .setMaxUpdates((int) (EPOCH*0.75))
                                     .build())
-                            //.optLearningRateTracker(Tracker.fixed(0.0005f))
-                            .optWeightDecays(0.01f)
+                            //.optLearningRateTracker(Tracker.fixed(0.003f))
+                            .optWeightDecays(0.001f)
                             .optClipGrad(2.8f)
                             .build())
-                    .optDevices(Engine.getInstance().getDevices())
+                    //.optDevices(Engine.getInstance().getDevices())
                     .addEvaluator(new MAEEvaluator())
                     .optExecutorService(EXECUTOR_TRAINING)
                     .addTrainingListeners(TrainingListener.Defaults.logging())
                     .addTrainingListeners(metrics);
 
             // Crear datasets con los NDArray ya normalizados (shuffle sólo en train)
-            int batchSize = 64;
+            int batchSize = 64;// 256;
             Dataset trainDataset = new ArrayDataset.Builder()
                     .setData(X_train)
                     .optLabels(y_train)
                     .setSampling(batchSize, true)
+                    .optDevice(device)
                     .build();
+            trainDataset.prepare();
             Dataset valDataset = new ArrayDataset.Builder()
                     .setData(X_val)
                     .optLabels(y_val)
+                    .optDevice(device)
                     .setSampling(batchSize, false)
                     .build();
-            trainDataset.prepare();
+
             valDataset.prepare();
             Trainer trainer = model.newTrainer(config);
             trainer.initialize(new Shape(symbols.size(), LOOK_BACK, features));
@@ -215,10 +225,10 @@ public class VestaEngine {
                 EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, result.yNormalizer());
 
 
-                Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, testSymbol);
+
 
                 BackTestEngine.BackTestResult simResult;
-
+                Market market = futureMarket.get();
                 if (market != null) {
                     simResult = new BackTestEngine(market, predEngine).run();
                 } else {
@@ -232,167 +242,188 @@ public class VestaEngine {
         }
     }
 
-    private static @NotNull splitSample getSplitSample(BiFunction<long[], long[], float[][][]> slice3D, long trainSize, long valSize, long samples, float[][] yCombined) throws InterruptedException {
-        CountDownLatch latch1 = new CountDownLatch(6);
+    private static @NotNull splitSample getSplitSample(BiFunction<long[], long[], float[][][]> slice3D, long trainSize, long valSize, long samples, float[][] yCombined) throws InterruptedException, ExecutionException {
         // Crear splits en arrays Java antes de normalizar
-        AtomicReference<float[][][]> X_train_arr = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            X_train_arr.set(slice3D.apply(new long[]{0, trainSize}, null));
-            latch1.countDown();
-        });
-        AtomicReference<float[][][]> X_val_arr = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            X_val_arr.set(slice3D.apply(new long[]{trainSize, trainSize + valSize}, null));
-            latch1.countDown();
-        });
-        AtomicReference<float[][][]> X_test_arr = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            X_test_arr.set(slice3D.apply(new long[]{trainSize + valSize, samples}, null));
-            latch1.countDown();
-        });
+        CompletableFuture<float[][][]> X_train_arr = new CompletableFuture<>();
+        CompletableFuture<float[][][]> X_val_arr = new CompletableFuture<>();
+        CompletableFuture<float[][][]> X_test_arr = new CompletableFuture<>();
 
-        AtomicReference<float[][]> y_train_arr = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            y_train_arr.set(java.util.Arrays.copyOfRange(yCombined, 0, (int) trainSize));
-            latch1.countDown();
-        });
-        AtomicReference<float[][]> y_val_arr = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            y_val_arr.set(java.util.Arrays.copyOfRange(yCombined,(int) trainSize, (int) (trainSize + valSize)));
-            latch1.countDown();
-        });
-        AtomicReference<float[][]> y_test_arr = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            y_test_arr.set(java.util.Arrays.copyOfRange(yCombined,(int)  (trainSize + valSize),(int) samples));
-            latch1.countDown();
-        });
-        latch1.await();
-        splitSample split = new splitSample(X_train_arr, X_val_arr, X_test_arr, y_train_arr, y_val_arr, y_test_arr);
-        return split;
+        EXECUTOR.submit(() -> X_train_arr.complete(slice3D.apply(new long[]{0, trainSize}, null)));
+        EXECUTOR.submit(() -> X_val_arr.complete(slice3D.apply(new long[]{trainSize, trainSize + valSize}, null)));
+        EXECUTOR.submit(() -> X_test_arr.complete(slice3D.apply(new long[]{trainSize + valSize, samples}, null)));
+
+        CompletableFuture<float[][]> y_train_arr = new CompletableFuture<>();
+        CompletableFuture<float[][]> y_val_arr = new CompletableFuture<>();
+        CompletableFuture<float[][]> y_test_arr = new CompletableFuture<>();
+
+        EXECUTOR.submit(() -> y_train_arr.complete(java.util.Arrays.copyOfRange(yCombined, 0, (int) trainSize)));
+        EXECUTOR.submit(() -> y_val_arr.complete(java.util.Arrays.copyOfRange(yCombined,(int) trainSize, (int) (trainSize + valSize))));
+        EXECUTOR.submit(() -> y_test_arr.complete(java.util.Arrays.copyOfRange(yCombined,(int)  (trainSize + valSize),(int) samples)));
+
+        return new splitSample(X_train_arr.get(), X_val_arr.get(), X_test_arr.get(), y_train_arr.get(), y_val_arr.get(), y_test_arr.get());
     }
 
-    private record splitSample(AtomicReference<float[][][]> X_train_arr, AtomicReference<float[][][]> X_val_arr, AtomicReference<float[][][]> X_test_arr, AtomicReference<float[][]> y_train_arr, AtomicReference<float[][]> y_val_arr, AtomicReference<float[][]> y_test_arr) {
+    private record splitSample(float[][][] X_train_arr, float[][][] X_val_arr, float[][][] X_test_arr, float[][] y_train_arr, float[][] y_val_arr, float[][] y_test_arr) {
     }
 
-    private static @NotNull Normalize getNormalize(AtomicReference<float[][][]> X_train_arr,
-                                                   AtomicReference<float[][][]> X_val_arr,
-                                                   AtomicReference<float[][][]> X_test_arr,
-                                                   AtomicReference<float[][]> y_train_arr,
-                                                   AtomicReference<float[][]> y_val_arr,
-                                                   AtomicReference<float[][]> y_test_arr
-    ) throws InterruptedException {
+    private static @NotNull Normalize getNormalize(splitSample split) throws InterruptedException, ExecutionException {
+
+        float[][][] X_train_arr = split.X_train_arr;
+        float[][][] X_val_arr = split.X_val_arr;
+        float[][][] X_test_arr = split.X_test_arr;
+        float[][] y_train_arr = split.y_train_arr;
+        float[][] y_val_arr = split.y_val_arr;
+        float[][] y_test_arr = split.y_test_arr;
         // Normalizadores: FIT sólo con TRAIN
         RobustNormalizer xNormalizer = new RobustNormalizer();
-        xNormalizer.fit(X_train_arr.get()); // fit con train solamente
+        xNormalizer.fit(X_train_arr); // fit con train solamente
 
         MultiSymbolNormalizer yNormalizer = new MultiSymbolNormalizer();
-        yNormalizer.fit(y_train_arr.get()); // fit con train solamente
+        yNormalizer.fit(y_train_arr); // fit con train solamente
 
-        CountDownLatch latch2 = new CountDownLatch(6);
         // Transformar train/val/test
-        AtomicReference<float[][][]> X_train_norm = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            X_train_norm.set(xNormalizer.transform(X_train_arr.get()));
-            latch2.countDown();
-        });
-        AtomicReference<float[][][]> X_val_norm = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            X_val_norm.set(xNormalizer.transform(X_val_arr.get()));
-            latch2.countDown();
-        });
-        AtomicReference<float[][][]> X_test_norm = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            X_test_norm.set(xNormalizer.transform(X_test_arr.get()));
-            latch2.countDown();
-        });
+        CompletableFuture<float[][][]> X_train_norm = new CompletableFuture<>();
+        CompletableFuture<float[][][]> X_val_norm = new CompletableFuture<>();
+        CompletableFuture<float[][][]> X_test_norm = new CompletableFuture<>();
 
-        AtomicReference<float[][]> y_train_norm = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            y_train_norm.set(yNormalizer.transform(y_train_arr.get()));
-            latch2.countDown();
-        });
-        AtomicReference<float[][]> y_val_norm = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            y_val_norm.set(yNormalizer.transform(y_val_arr.get()));
-            latch2.countDown();
-        });
-        AtomicReference<float[][]> y_test_norm = new AtomicReference<>(null);
-        EXECUTOR.submit(() -> {
-            y_test_norm.set(yNormalizer.transform(y_test_arr.get()));
-            latch2.countDown();
-        });
-        latch2.await();
-        return new Normalize(xNormalizer, yNormalizer, X_train_norm, X_val_norm, X_test_norm, y_train_norm, y_val_norm, y_test_norm);
+        EXECUTOR.submit(() -> X_train_norm.complete(xNormalizer.transform(X_train_arr)));
+        EXECUTOR.submit(() -> X_val_norm.complete(xNormalizer.transform(X_val_arr)));
+        EXECUTOR.submit(() -> X_test_norm.complete(xNormalizer.transform(X_test_arr)));
+
+        CompletableFuture<float[][]> y_train_norm = new CompletableFuture<>();
+        CompletableFuture<float[][]> y_val_norm = new CompletableFuture<>();
+        CompletableFuture<float[][]> y_test_norm = new CompletableFuture<>();
+
+        EXECUTOR.submit(() -> y_train_norm.complete(yNormalizer.transform(y_train_arr)));
+        EXECUTOR.submit(() -> y_val_norm.complete(yNormalizer.transform(y_val_arr)));
+        EXECUTOR.submit(() -> y_test_norm.complete(yNormalizer.transform(y_test_arr)));
+        return new Normalize(xNormalizer, yNormalizer, X_train_norm.get(), X_val_norm.get(), X_test_norm.get(), y_train_norm.get(), y_val_norm.get(), y_test_norm.get());
     }
 
-    private record Normalize(RobustNormalizer xNormalizer, MultiSymbolNormalizer yNormalizer, AtomicReference<float[][][]> X_train_norm, AtomicReference<float[][][]> X_val_norm, AtomicReference<float[][][]> X_test_norm, AtomicReference<float[][]> y_train_norm, AtomicReference<float[][]> y_val_norm, AtomicReference<float[][]> y_test_norm) {
+    private record Normalize(RobustNormalizer xNormalizer, MultiSymbolNormalizer yNormalizer, float[][][] X_train_norm, float[][][] X_val_norm, float[][][] X_test_norm, float[][] y_train_norm, float[][] y_val_norm, float[][] y_test_norm) {
     }
 
     public record TrainingTestsResults(EngineUtils.ResultsEvaluate evaluate, BackTestEngine.BackTestResult backtest) {}
 
+    @SuppressWarnings("DuplicatedCode")
     public static SequentialBlock getSequentialBlock() {
         SequentialBlock mainBlock = new SequentialBlock();
         float delta = 0.7f; // Controla qué tan suave es el centro
         float deltaSq = delta * delta;
 
         mainBlock.add(GRU.builder()
-                        .setStateSize(64)
-                        .setNumLayers(2)
+                        .setStateSize(128)
+                        .setNumLayers(3)
                         .optReturnState(false)
                         .optBatchFirst(true)
                         .optDropRate(0.3f)
                         .build())
                 .add(ndList -> new NDList(ndList.singletonOrThrow().get(":, -1, :")))
-                .add(Linear.builder().setUnits(64).build());
+                .add(Linear.builder().setUnits(128).build());
+
+        // Branch aggregator: recibirá outputs de TP, SL y DIRECCION (que a su vez es la concatenacion de 3 sub-brazos)
         ParallelBlock branches = new ParallelBlock(list -> {
             NDArray tp = list.get(0).singletonOrThrow();
             NDArray sl = list.get(1).singletonOrThrow();
             NDArray dir = list.get(2).singletonOrThrow();
             return new NDList(
-                    NDArrays.concat(new NDList(tp, sl, dir), 1) // ✅ axis = 1
+                    NDArrays.concat(new NDList(tp, sl, dir), 1) // axis = 1
             );
         });
 
-        // TP
-        branches.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(1).build())
-                .add(new LambdaBlock(ndArrays -> {
-                    NDArray x = ndArrays.singletonOrThrow();
-                    return new NDList(x.pow(2).add(deltaSq).sqrt().sub(delta));
-                }))
-        );
-
-        // SL
-        branches.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(1).build())
-                .add(new LambdaBlock(ndArrays -> {
-                    NDArray x = ndArrays.singletonOrThrow();
-                    return new NDList(x.pow(2).add(deltaSq).sqrt().sub(delta));
-                }))
-        );
-
-        // Dirección
+        // TP (igual que antes)
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(64).build())
                 .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(3).build()) // Long Neutro Short
+                .add(Linear.builder().setUnits(16).build())
+                .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
                     NDArray x = ndArrays.singletonOrThrow();
                     return new NDList(x.pow(2).add(deltaSq).sqrt().sub(delta));
                 }))
-                .add(new LambdaBlock(ndArrays -> new NDList(softmax(ndArrays.singletonOrThrow()))))
         );
 
+        // SL (igual que antes)
+        branches.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Linear.builder().setUnits(16).build())
+                .add(Linear.builder().setUnits(1).build())
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow();
+                    return new NDList(x.pow(2).add(deltaSq).sqrt().sub(delta));
+                }))
+        );
+
+        // -------------------------
+        // DIRECCION: 3 sub-brazos pequeños -> concat -> smoothing -> softmax
+        // -------------------------
+        // Sub-parallel: cada sub-brazo toma la misma entrada (el embedding de 64/32) y produce 1 escalar.
+        ParallelBlock dirSub = new ParallelBlock(subList -> {
+            // subList contiene los outputs de cada sub-brazo (cada uno será [B,1])
+            NDArray a = subList.get(0).singletonOrThrow();
+            NDArray b = subList.get(1).singletonOrThrow();
+            NDArray c = subList.get(2).singletonOrThrow();
+            // concatenamos a lo largo de la dimensión de features para obtener [B,3]
+            return new NDList(NDArrays.concat(new NDList(a, b, c), 1));
+        });
+
+        // Sub-brazo 1 (Long)
+        dirSub.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(1).build())
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow();
+                    return new NDList(x); // ya es escalar por muestra
+                }))
+        );
+
+        // Sub-brazo 2 (Neutral)
+        dirSub.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(1).build())
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow();
+                    return new NDList(x);
+                }))
+        );
+
+        // Sub-brazo 3 (Short)
+        dirSub.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(1).build())
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow();
+                    return new NDList(x);
+                }))
+        );
+
+        // Ahora el bloque de Dirección que aplica unos Dense previos, luego el dirSub (que concatena los 3 escalares),
+        // luego el "smoothing" que tenías, y por último softmax para obtener probabilidades mutuamente excluyentes.
+        branches.add(new SequentialBlock()
+                .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(64).build())
+                .add(dirSub) // produce [B,3]
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow(); // [B,3]
+                    // suavizado (la misma formula que tenías)
+                    NDArray smoothed = x.pow(2).add(deltaSq).sqrt().sub(delta);
+                    return new NDList(smoothed);
+                }))
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray x = ndArrays.singletonOrThrow();
+                    return new NDList(softmax(x)); // softmax sobre la última dimensión
+                }))
+        );
 
         mainBlock.add(branches);
         return mainBlock;
     }
 
-
+    // Tu función softmax (la dejo igual)
     public static NDArray softmax(NDArray input) {
         // Para estabilidad numérica: restar el máximo
         NDArray max = input.max(new int[]{-1}, true);

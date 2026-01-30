@@ -3,6 +3,7 @@ package xyz.cereshost;
 import ai.djl.training.Trainer;
 import ai.djl.training.listener.TrainingListenerAdapter;
 import org.jfree.data.category.DefaultCategoryDataset;
+import org.jfree.data.xy.XYSeriesCollection;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.engine.VestaLoss;
@@ -16,9 +17,9 @@ public class MetricsListener extends TrainingListenerAdapter {
 
     private long lastTime = -1;
     private double lastMae = -1;
-    private DefaultCategoryDataset datasetNormal = null;
-    private DefaultCategoryDataset datasetLoss = null;
-    private DefaultCategoryDataset datasetDireccion = null;
+    private XYSeriesCollection datasetNormal = null;
+    private XYSeriesCollection datasetLoss = null;
+    private XYSeriesCollection datasetDireccion = null;
     private final List<String> symbols = new ArrayList<>();
 
     public void MetricsListener(List<String> symbols) {
@@ -74,13 +75,13 @@ public class MetricsListener extends TrainingListenerAdapter {
                 );
 
             }
-            datasetNormal.addValue(loss, "Loss", String.valueOf(count));
-            datasetNormal.addValue(mae, "MAE", String.valueOf(count));
-            datasetLoss.addValue(l.tp(), "Loss TP", String.valueOf(count));
-            datasetLoss.addValue(l.sl(), "Loss SL", String.valueOf(count));
-            datasetDireccion.addValue(l.longL(), "Loss L", String.valueOf(count));
-            datasetDireccion.addValue(l.shortL(), "Loss S", String.valueOf(count));
-            datasetDireccion.addValue(l.neutralL(), "Loss N", String.valueOf(count));
+            datasetNormal.getSeries("Loss").add(count, loss);
+            datasetNormal.getSeries("MAE").add(count, mae);
+            datasetLoss.getSeries("Loss TP").add(count, l.tp());
+            datasetLoss.getSeries("Loss SL").add(count, l.sl());
+            datasetDireccion.getSeries( "Loss L").add(count, l.longL());
+            datasetDireccion.getSeries("Loss S").add(count, l.shortL());
+            datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
             count++;
         });
     }

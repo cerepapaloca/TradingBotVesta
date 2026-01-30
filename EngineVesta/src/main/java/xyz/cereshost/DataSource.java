@@ -4,6 +4,5 @@ public enum DataSource {
     LOCAL_NETWORK,
     LOCAL_NETWORK_MINIMAL,
     BINANCE,
-    CSV,
-    CSV_CHUNK
+    CSV
 }

@@ -8,7 +8,6 @@ import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.strategy.AlfaStrategy;
-import xyz.cereshost.strategy.BetaStrategy;
 import xyz.cereshost.strategy.TradingStrategy;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.trading.TradingBackTest;
@@ -20,8 +19,8 @@ import java.util.List;
 @Getter
 public class BackTestEngine {
 
-    private final BackTestStats stats = new BackTestStats();
-    private final List<ExtraDataPlot> extraStats = new ArrayList<>();
+    private final BackTestStats stats;
+    private final List<CompleteTrade> extraStats = new ArrayList<>();
     private final TradingBackTest operations = new TradingBackTest(this);
     private final Market market;
     private final PredictionEngine engine;
@@ -34,6 +33,7 @@ public class BackTestEngine {
         this.market = market;
         this.engine = engine;
         this.strategy = strategy;
+        this.stats = new BackTestStats(market);
 
     }
 
@@ -95,7 +95,7 @@ public class BackTestEngine {
             operations.getOpens().forEach(Trading.OpenOperation::next);
             operations.computeCloses();
         }
-        stats.getExtraDataPlot().addAll(extraStats);
+        stats.getTradesComplete().addAll(extraStats);
         return new BackTestResult(
                 initialBalance, balance, balance - initialBalance, stats.getRoi(),
                 stats.totalTrades, stats.wins, stats.losses, stats.maxDrawdownPercent,
@@ -122,11 +122,21 @@ public class BackTestEngine {
         // F. Registrar estadísticas
         TradeResult resultObj = new TradeResult(netPnL, pnlPercent, closeOperation.getExitPrice(), closeOperation.getReason(), closeOperation.getEntryTime(), closeOperation.getExitTime());
         stats.addTrade(resultObj, balance);
-        extraStats.add(new ExtraDataPlot((float) pnlPercent,
+        extraStats.add(new CompleteTrade(
+                openOperation.getEntryPrice(),
+                openOperation.getTpPrice(),
+                openOperation.getSlPrice(),
+                (float) openOperation.getTpPercent(),
+                (float) openOperation.getSlPercent(),
+                openOperation.getDireccion(),
+                closeOperation.getExitPrice(),
+                closeOperation.getReason(),
+                closeOperation.getEntryTime(),
+                closeOperation.getExitTime(),
+                netPnL,
                 (float) balance,
                 (float) (openOperation.getTpPercent() / openOperation.getSlPercent()),
-                (float) openOperation.getTpPercent(),
-                (float) openOperation.getSlPercent()
+                (float) pnlPercent
         ));
     }
 
@@ -227,6 +237,7 @@ public class BackTestEngine {
     @Getter
     @Setter
     public static class BackTestStats {
+        private final Market market;
         private int totalTrades = 0;
         private int wins = 0;
         private int losses = 0;
@@ -242,7 +253,11 @@ public class BackTestEngine {
         double initialBalance = 0.0;
 
         private List<TradeResult> trades = new ArrayList<>();
-        private List<ExtraDataPlot> extraDataPlot = new ArrayList<>();
+        private List<CompleteTrade> TradesComplete = new ArrayList<>();
+
+        public BackTestStats(Market market) {
+            this.market = market;
+        }
 
         public int getTrades(Trading.ExitReason reason) {
             int i = 0;
@@ -250,24 +265,24 @@ public class BackTestEngine {
             return i;
         }
 
-        public double getRoiTPAvgLong(){
-            int total = 0;
+        public double getRoiTPMinLong(){
             double roi = 0;
             for (TradeResult tr : trades) if (tr.reason().equals(Trading.ExitReason.LONG_TAKE_PROFIT)) {
-                total++;
-                roi += tr.pnlPercent();
+                if (roi > tr.pnlPercent()){
+                    roi = tr.pnlPercent();
+                }
             }
-            return (roi/ (double) total)*100;
+            return roi*100;
         }
 
-        public double getRoiTPAvgShort(){
-            int total = 0;
+        public double getRoiTPMinShort(){
             double roi = 0;
             for (TradeResult tr : trades) if (tr.reason().equals(Trading.ExitReason.SHORT_TAKE_PROFIT)) {
-                total++;
-                roi += tr.pnlPercent();
+                if (roi > tr.pnlPercent()){
+                    roi = tr.pnlPercent();
+                }
             }
-            return (roi/ (double) total)*100;
+            return roi*100;
         }
 
 
@@ -332,9 +347,38 @@ public class BackTestEngine {
             }
             return roi*100;
         }
+
+        public double getRatioAvg() {
+            return TradesComplete.stream().mapToDouble(CompleteTrade::ratio).average().orElse(0);
+        }
+
+        public double getRatioMin(){
+            return TradesComplete.stream().mapToDouble(CompleteTrade::ratio).min().orElse(0);
+        }
+
+        public double getRatioMax(){
+            return TradesComplete.stream().mapToDouble(CompleteTrade::ratio).max().orElse(0);
+        }
     }
 
     public record TradeResult(double pnl, double pnlPercent, double exitPrice, Trading.ExitReason reason, long entryTime, long exitTime) {}
+
+    public record CompleteTrade(
+            double entryPrice,
+            double tpPrice,
+            double slPrice,
+            float tpPercent,
+            float slPercent,
+            Trading.DireccionOperation direction,
+            double exitPrice,
+            Trading.ExitReason exitReason,
+            long entryTime,
+            long exitTime,
+            double pnl,
+            float balance,
+            float ratio,
+            float pnlPercent
+    ) {}
 
     // Mantener compatibilidad con tu código existente
     public record BackTestResult(
@@ -349,5 +393,4 @@ public class BackTestEngine {
             BackTestStats stats
     ) {}
 
-    public record ExtraDataPlot(float pnlPercent, float balance, float ratio, float tpPercent, float slPercent) {}
 }

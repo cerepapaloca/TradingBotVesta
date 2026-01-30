@@ -1,4 +1,4 @@
-package xyz.cereshost.utils;
+package xyz.cereshost.compilator.utils;
 
 public interface TaskReturn<R> {
 

@@ -1,4 +1,4 @@
-package xyz.cereshost.file;
+package xyz.cereshost.compilator.file;
 
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;

@@ -20,47 +20,47 @@ import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_RELATIVE;
 @UtilityClass
 public class EngineUtils {
 
-    public static void checkEngines() {
-        Vesta.info("=== Verificando Engines DJL ===");
-
-        for (String engineName : ai.djl.engine.Engine.getAllEngines()) {
-            Vesta.info("\nEngine: " + engineName);
-            ai.djl.engine.Engine engine = ai.djl.engine.Engine.getEngine(engineName);
-            if (engine != null) {
-                Vesta.info("  Version: " + engine.getVersion());
-                Vesta.info("  Dispositivos disponibles:");
-
-                for (Device device : engine.getDevices()) {
-                    Vesta.info("    - " + device +
-                            " (GPU: " + device.isGpu() +
-                            ", ID: " + device.getDeviceId() +
-                            ", C: " + engine.hasCapability(StandardCapabilities.CUDA) + ")");
-                }
-            } else {
-                Vesta.info("  No disponible");
-            }
-        }
-    }
+//    public static void checkEngines() {
+//        Vesta.info("=== Verificando Engines DJL ===");
+//
+//        for (String engineName : ai.djl.engine.Engine.getAllEngines()) {
+//            Vesta.info("\nEngine: " + engineName);
+//            ai.djl.engine.Engine engine = ai.djl.engine.Engine.getEngine(engineName);
+//            if (engine != null) {
+//                Vesta.info("  Version: " + engine.getVersion());
+//                Vesta.info("  Dispositivos disponibles:");
+//
+//                for (Device device : engine.getDevices()) {
+//                    Vesta.info("    - " + device +
+//                            " (GPU: " + device.isGpu() +
+//                            ", ID: " + device.getDeviceId() +
+//                            ", C: " + engine.hasCapability(StandardCapabilities.CUDA) + ")");
+//                }
+//            } else {
+//                Vesta.info("  No disponible");
+//            }
+//        }
+//    }
 
     /**
      * Mezcla los datos aleatoriamente (actualizado para float[][])
      */
-    public void shuffleData(float[][][] X, float[][] y) {
-        Random rand = new Random(42);
-        for (int i = X.length - 1; i > 0; i--) {
-            int j = rand.nextInt(i + 1);
-
-            // Intercambiar X
-            float[][] tempX = X[i];
-            X[i] = X[j];
-            X[j] = tempX;
-
-            // Intercambiar y (ahora con dos columnas)
-            float[] tempY = y[i];
-            y[i] = y[j];
-            y[j] = tempY;
-        }
-    }
+//    public void shuffleData(float[][][] X, float[][] y) {
+//        Random rand = new Random(42);
+//        for (int i = X.length - 1; i > 0; i--) {
+//            int j = rand.nextInt(i + 1);
+//
+//            // Intercambiar X
+//            float[][] tempX = X[i];
+//            X[i] = X[j];
+//            X[j] = tempX;
+//
+//            // Intercambiar y (ahora con dos columnas)
+//            float[] tempY = y[i];
+//            y[i] = y[j];
+//            y[j] = tempY;
+//        }
+//    }
 
     /**
      * Aplanar array 3D a 1D
@@ -97,37 +97,37 @@ public class EngineUtils {
         }
     }
 
-    /**
-     * Combina múltiples datasets en uno solo (actualizado para float[][])
-     */
-    @Contract("_, _ -> new")
-    public static @NotNull Pair<float[][][], float[][]> combineDatasets(@NotNull List<float[][][]> allX, List<float[][]> allY) {
-        int totalSamples = 0;
-        for (float[][][] X : allX) {
-            totalSamples += X.length;
-        }
-
-        int lookback = allX.get(0)[0].length;
-        int features = allX.get(0)[0][0].length;
-
-        float[][][] Xcombined = new float[totalSamples][lookback][features];
-        float[][] ycombined = new float[totalSamples][3]; // Aumentado a 3 columnas
-
-        int currentIndex = 0;
-        for (int s = 0; s < allX.size(); s++) {
-            float[][][] X = allX.get(s);
-            float[][] y = allY.get(s);
-
-            for (int i = 0; i < X.length; i++) {
-                Xcombined[currentIndex] = X[i];
-                ycombined[currentIndex][0] = y[i][0]; // Fuerza Alcista
-                ycombined[currentIndex][1] = y[i][1]; // Fuerza Bajista
-                ycombined[currentIndex][2] = y[i][2]; // Dirección (0 o 1)
-                currentIndex++;
-            }
-        }
-        return new Pair<>(Xcombined, ycombined);
-    }
+//    /**
+//     * Combina múltiples datasets en uno solo (actualizado para float[][])
+//     */
+//    @Contract("_, _ -> new")
+//    public static @NotNull Pair<float[][][], float[][]> combineDatasets(@NotNull List<float[][][]> allX, List<float[][]> allY) {
+//        int totalSamples = 0;
+//        for (float[][][] X : allX) {
+//            totalSamples += X.length;
+//        }
+//
+//        int lookback = allX.get(0)[0].length;
+//        int features = allX.get(0)[0][0].length;
+//
+//        float[][][] Xcombined = new float[totalSamples][lookback][features];
+//        float[][] ycombined = new float[totalSamples][3]; // Aumentado a 3 columnas
+//
+//        int currentIndex = 0;
+//        for (int s = 0; s < allX.size(); s++) {
+//            float[][][] X = allX.get(s);
+//            float[][] y = allY.get(s);
+//
+//            for (int i = 0; i < X.length; i++) {
+//                Xcombined[currentIndex] = X[i];
+//                ycombined[currentIndex][0] = y[i][0]; // Fuerza Alcista
+//                ycombined[currentIndex][1] = y[i][1]; // Fuerza Bajista
+//                ycombined[currentIndex][2] = y[i][2]; // Dirección (0 o 1)
+//                currentIndex++;
+//            }
+//        }
+//        return new Pair<>(Xcombined, ycombined);
+//    }
 
     /**
      * Evalúa el modelo con lógica de 3 salidas: Regresión (UP/DOWN) + Clasificación (DIR)
@@ -163,9 +163,9 @@ public class EngineUtils {
             // 1. Extraer valores del target (3 columnas)
             float rawRealTP = yTestFlat[targetIdx];
             float rawRealSL = yTestFlat[targetIdx + 1];
-            float rawRealLong = yTestFlat[targetIdx + 2]; // Dirección continua [-1, 1]
-            float rawRealNeutral = yTestFlat[targetIdx + 3]; // Dirección continua [-1, 1]
-            float rawRealShort = yTestFlat[targetIdx + 24]; // Dirección continua [-1, 1]
+            float rawRealLong = yTestFlat[targetIdx + 2];
+            float rawRealNeutral = yTestFlat[targetIdx + 3];
+            float rawRealShort = yTestFlat[targetIdx + 24];
 
             float rawRealDir = PredictionEngine.computeDirection(
                     new float[]{rawRealLong, rawRealNeutral, rawRealShort}
@@ -225,18 +225,18 @@ public class EngineUtils {
     ) {
         public float hitRateSimple(){
             int hits = 0;
-            int nohits = 0;
+            int fails = 0;
             for (ResultPrediction prediction : resultPrediction) {
-                if (prediction.predDir() == 0) continue;
+                if (prediction.predDir() == 0 || prediction.realDir() == 0) continue;
                 // ley de los signos
                 if (prediction.realDir() * prediction.predDir() > 0) {
                     hits++;
                 }else {
-                    nohits++;
+                    fails++;
                 }
 
             }
-            int total = nohits + hits;
+            int total = fails + hits;
             return total > 0 ? ((float) hits / total) *100 : 0;
         }
 
@@ -267,7 +267,6 @@ public class EngineUtils {
             for (ResultPrediction prediction : resultPrediction) {
                 float pred = prediction.predDir();
                 float real = prediction.realDir();
-
                 if (real > threshold) { // Long real
                     if (pred > threshold) hits++;
                     else fails++;
@@ -314,6 +313,34 @@ public class EngineUtils {
             return hits;
         }
 
+        public float hitRateConfident(float minConfidence) {
+            int hits = 0;
+            int total = 0;
+
+            // Usamos el threshold para definir qué es un acierto real
+            float threshold = (float) THRESHOLD_RELATIVE;
+
+            for (ResultPrediction prediction : resultPrediction) {
+                float pred = prediction.predDir();
+                float real = prediction.realDir();
+
+                // 1. FILTRO DE CONFIANZA:
+                // Solo evaluamos si el valor absoluto de la predicción supera el mínimo (ej: 0.7)
+                if (Math.abs(pred) >= minConfidence) {
+                    total++;
+
+                    // 2. VERIFICACIÓN DE ACIERTO:
+                    // Debe coincidir el signo y el real debe haber superado el umbral
+                    if (pred > 0 && real > threshold) {
+                        hits++; // Acierto Long seguro
+                    } else if (pred < 0 && real < -threshold) {
+                        hits++; // Acierto Short seguro
+                    }
+                }
+            }
+            return total > 0 ? ((float) hits / total) * 100f : 0f;
+        }
+
         private void computeDir(int[] hits, @NotNull ResultPrediction prediction) {
             boolean signalLong = prediction.predDir() > THRESHOLD_RELATIVE;
             boolean signalShort = prediction.predDir() < -THRESHOLD_RELATIVE;
@@ -345,76 +372,4 @@ public class EngineUtils {
             return realDir - predDir;
         }
     }
-
-    /**
-     * Limpia datos (actualizado para float[][])
-     */
-    public static Pair<float[][][], float[][]> clearData(float[][][] X, float[][] y) {
-        final float EPS = 1e-9f;
-
-        Map<String, Integer> seen = new HashMap<>();
-        List<float[][]> uniqueX = new ArrayList<>();
-        List<float[]> uniqueY = new ArrayList<>(); // Cambiado a float[]
-
-        int removedDuplicates = 0;
-        int removedBadValue = 0;
-
-        for (int i = 0; i < X.length; i++) {
-            float tp = y[i][0];
-            float sl = y[i][1];
-
-            // 1) filtrar NaN / Inf / valores inválidos
-            if (Float.isNaN(tp) || Float.isInfinite(tp) ||
-                    Float.isNaN(sl) || Float.isInfinite(sl)) {
-                removedBadValue++;
-                Vesta.warning("Eliminando muestra con TP/SL inválido en índice " + i);
-                continue;
-            }
-
-            // 2) filtrar valores negativos o cero
-            if (tp <= 0 || sl <= 0) {
-                removedBadValue++;
-                Vesta.warning("Eliminando muestra con TP/SL <= 0 en índice " + i);
-                continue;
-            }
-
-            // 3) detectar duplicados
-            String hash = Arrays.deepToString(X[i]);
-            if (!seen.containsKey(hash)) {
-                seen.put(hash, i);
-                uniqueX.add(X[i]);
-                uniqueY.add(new float[]{tp, sl});
-            } else {
-                removedDuplicates++;
-                Vesta.warning("Eliminando duplicado en índice " + i);
-            }
-        }
-
-        // Convertir de vuelta a arrays
-        float[][][] Xunique = new float[uniqueX.size()][][];
-        float[][] yunique = new float[uniqueY.size()][2];
-
-        for (int i = 0; i < Xunique.length; i++) {
-            Xunique[i] = uniqueX.get(i);
-            yunique[i][0] = uniqueY.get(i)[0];
-            yunique[i][1] = uniqueY.get(i)[1];
-        }
-
-        Vesta.info("Datos limpiados: " + Xunique.length + " muestras válidas");
-        Vesta.info("Eliminados " + removedDuplicates + " duplicados");
-        Vesta.info("Eliminadas " + removedBadValue + " muestras con valores inválidos");
-
-        return new Pair<>(Xunique, yunique);
-    }
-
-    public record SimulationResult(
-            double initialBalance,
-            double finalBalance,
-            double netPnL,
-            double roiPercent,
-            int totalTrades,
-            int winTrades,
-            int lossTrades,
-            double maxDrawdown
-    ) {}
 }

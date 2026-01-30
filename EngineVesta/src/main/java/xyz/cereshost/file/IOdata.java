@@ -27,7 +27,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -124,30 +124,26 @@ public class IOdata {
                 Vesta.info("✅ Datos procesado de binance del mercado: %s (%.2fss)", s, (float) (System.currentTimeMillis() - timeTotal) / 1000);
                 latch.countDown();
             }
-            case CSV, CSV_CHUNK -> {
-                int targetYear = 2025;
-                int endtMonth = Main.FINAL_MONTH;
-                int startMonth = Main.INIT_MONTH;
+            case CSV -> {
+                // Normalizar monthCVS a >= 1
+                int monthIndex = Math.max(1, monthCVS);
+                // offset: 0 -> most recent (Dec 2025), 1 -> one month back (Nov 2025), ...
+                int offset = monthIndex - 1;
+
+                int targetYear = 2025 - (offset / 12);
+                int targetMonth = 12 - (offset % 12);
+
                 long timeTotal = System.currentTimeMillis();
-                Vesta.info("📂 Verificando caché local para: " + s);
+                Vesta.info("%d/%02d (idx=%d) 📂 Verificando caché local para: %s", targetYear, targetMonth, monthIndex, s);
                 Deque<CandleSimple> candles = new ArrayDeque<>();
                 Deque<Trade> trades = new ArrayDeque<>();
-                if (monthCVS == -1) {
-                    for (int i = startMonth; i <= endtMonth; i++) {
-                        File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, i);
-                        candles.addAll(parseKlinesFromFile(klineFile));
-                        File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, i);
-                        trades.addAll(parseTradesFromFile(tradeFile));
-                    }
-                }else {
-                    File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, monthCVS);
-                    candles.addAll(parseKlinesFromFile(klineFile));
-                    File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, monthCVS);
-                    trades.addAll(parseTradesFromFile(tradeFile));
-                }
+                File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, targetMonth);
+                candles.addAll(parseKlinesFromFile(klineFile));
+                File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, targetMonth);
+                trades.addAll(parseTradesFromFile(tradeFile));
 
                 if (candles.isEmpty() || trades.isEmpty()) {
-                    Vesta.info("⚠️ Datos incompletos o corruptos para " + s);
+                    Vesta.info("⚠️ Datos incompletos o corruptos para %s en %d/%02d (idx=%d)", s, targetYear, targetMonth, monthIndex);
                     latch.countDown();
                     return marketFinal.get();
                 }
@@ -162,28 +158,28 @@ public class IOdata {
                 long commonStart = Math.max(minTimeCandles, minTimeTrades);
                 long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
 
-                Vesta.info("✂️ Ajustando " + s + " a ventana común: " + commonStart + " - " + commonEnd);
+                Vesta.info("%d/%02d (idx=%d) ✂️ Ajustando %s a ventana común: %d - %d", targetYear, targetMonth, monthIndex, s, commonStart, commonEnd);
 
                 Deque<CandleSimple> finalCandles = candles.stream()
                         .filter(c -> c.openTime() >= commonStart && c.openTime() <= commonEnd)
                         .collect(Collectors.toCollection(ArrayDeque::new));
-                candles = null;
+                candles.clear();
                 Deque<Trade> finalTrades = trades.stream()
                         .filter(t -> t.time() >= commonStart && t.time() <= commonEnd)
                         .collect(Collectors.toCollection(ArrayDeque::new));
-                trades = null; // Esto puede pesar más 20GB de RAM
+                trades.clear(); // Esto puede pesar más 20GB de RAM
                 System.gc();
                 final Market market = new Market(s);
                 market.addCandles(finalCandles);
                 market.addTrade(finalTrades);
-                Vesta.info("🔒 Asegurando orden de los datos");
+                Vesta.info("%d/%02d (idx=%d) 🔒 Asegurando orden de los datos", targetYear, targetMonth, monthIndex);
                 market.sortd();
 
                 marketFinal.set(market);
                 lastUpdate.set(System.currentTimeMillis());
 
-                Vesta.info("✅ Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
-                        s, finalCandles.size(), finalTrades.size(), (float) (System.currentTimeMillis() - timeTotal) / 1000);
+                Vesta.info("%d/%02d (idx=%d) ✅ Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
+                        targetYear, targetMonth, monthIndex, s, finalCandles.size(), finalTrades.size(), (float) (System.currentTimeMillis() - timeTotal) / 1000);
 
                 latch.countDown();
             }
@@ -191,6 +187,7 @@ public class IOdata {
         latch.await();
         return marketFinal.get();
     }
+
 
     private static File ensureFileCached(String baseDir, String symbol, String type, int year, int month) throws IOException {
         String monthStr = String.format("%02d", month);

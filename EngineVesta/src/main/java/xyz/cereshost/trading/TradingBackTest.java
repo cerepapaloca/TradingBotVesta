@@ -85,10 +85,12 @@ public class TradingBackTest implements Trading {
     public void computeCloses() {
         lastOpenOperation.clear();
         for (CloseOperation closeOperation : closeOperations) {
-            backTestEngine.computeClose(closeOperation, openOperations.get(closeOperation.getUuidOpenOperation()));
-            openOperations.remove(closeOperation.getUuidOpenOperation());
+            OpenOperationBackTest open = openOperations.get(closeOperation.getUuidOpenOperation());
+            if (open != null) {
+                backTestEngine.computeClose(closeOperation, open);
+                openOperations.remove(closeOperation.getUuidOpenOperation());
+            }
         }
-        // Se borra las operaciones que fueron procesadas
         closeOperations.clear();
     }
 

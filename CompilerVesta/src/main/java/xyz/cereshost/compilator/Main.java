@@ -1,13 +1,13 @@
-package xyz.cereshost;
+package xyz.cereshost.compilator;
 
 import lombok.Getter;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
-import xyz.cereshost.endpoint.BinanceAPI;
-import xyz.cereshost.file.IOdata;
-import xyz.cereshost.packet.PacketHandler;
-import xyz.cereshost.packet.RequestMarketListener;
+import xyz.cereshost.compilator.endpoint.BinanceAPI;
+import xyz.cereshost.compilator.file.IOdata;
+import xyz.cereshost.compilator.packet.PacketHandler;
+import xyz.cereshost.compilator.packet.RequestMarketListener;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

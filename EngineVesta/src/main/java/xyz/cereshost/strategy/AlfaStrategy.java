@@ -22,9 +22,9 @@ public class AlfaStrategy implements TradingStrategy {
             return;
         }
 
-        if ((pred.getRatio() > 1 && pred.getRatio() < 2) && (pred.getTpPercent() > 0.15 && pred.getTpPercent() < 0.4)) {
+        if ((pred.getRatio() > 1 && pred.getRatio() < 4) && (pred.getTpPercent() > 0.15 && pred.getTpPercent() < 0.4)) {
             if (operations.openSize() == 0) {
-                operations.open(pred.getTpPercent(), pred.getSlPercent() + 0.2, pred.direction(), operations.getAvailableBalance(), 1);
+                operations.open(pred.getTpPercent(), pred.getSlPercent(), pred.direction(), operations.getAvailableBalance(), 1);
             }else{
                 operations.log("Operación ya abierta");
             }

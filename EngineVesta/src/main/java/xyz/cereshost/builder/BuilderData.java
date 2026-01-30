@@ -10,35 +10,17 @@ import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
 import xyz.cereshost.engine.PredictionEngine;
+import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.file.IOdata;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.IntStream;
 
 import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
-
-    public static Pair<float[][][], float[][]> combineDatasets(@NotNull List<float[][][]> allX, List<float[][]> allY) {
-        // ... código estándar de combinación ...
-        // Asegúrate de copiar las 3 columnas de Y
-        int totalSamples = allX.stream().mapToInt(x -> x.length).sum();
-        float[][][] Xcombined = new float[totalSamples][allX.get(0)[0].length][allX.get(0)[0][0].length];
-        float[][] ycombined = new float[totalSamples][5];
-
-        int idx = 0;
-        for(int k=0; k<allX.size(); k++){
-            float[][] y = allY.get(k);
-            float[][][] X = allX.get(k);
-            for(int i=0; i<X.length; i++){
-                Xcombined[idx] = X[i];
-                ycombined[idx][0] = y[i][0];
-                ycombined[idx][1] = y[i][1];
-                ycombined[idx][2] = y[i][2]; // Copiar dirección sin tocar
-                idx++;
-            }
-        }
-        return new Pair<>(Xcombined, ycombined);
-    }
 
     @SuppressWarnings("ConstantValue")
     public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols) {
@@ -49,37 +31,73 @@ public class BuilderData {
                 List<Candle> allCandlesForChart = new ArrayList<>();
 
                 Vesta.info("Procesando símbolo (Relativo): " + symbol);
-                int finalMonth = Main.FINAL_MONTH;
-                int initMonth = Main.INIT_MONTH;
+                int maxMonth = Main.MAX_MONTH_TRAINING;
 
                 // Procesar cada mes por separado SIN acumular
-                for (int i = initMonth; i <= finalMonth; i++) {
-                    Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, i);
-                    List<Candle> candlesThisMonth = BuilderData.to1mCandles(market);
+                List<Integer> months = IntStream.rangeClosed(1, maxMonth)
+                        .boxed()
+                        .toList();
 
-                    // Acumular para gráfico
-                    if ((finalMonth - initMonth) < 6) allCandlesForChart.addAll(candlesThisMonth);
+                // Crear lista de futuros para procesar cada mes de forma asincrónica
+                List<CompletableFuture<MonthResult>> futures = new ArrayList<>();
 
-                    // Verificar que este mes tenga suficientes datos
-                    if (candlesThisMonth.size() <= LOOK_BACK + 2) {
-                        Vesta.warning("Mes " + i + " insuficiente historial: " + candlesThisMonth.size() + " velas");
-                        continue;
-                    }
+                for (int month = maxMonth; month > 0; month--) {
+                    final int currentMonth = month;
+                    CompletableFuture<MonthResult> future = CompletableFuture.supplyAsync(() -> {
+                        try {
+                            Vesta.info("🖥️ Comenzado carga de datos del mes %d", currentMonth);
+                            Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, currentMonth);
+                            List<Candle> candlesThisMonth = BuilderData.to1mCandles(market);
 
-                    // Construir datos SOLO con las velas de este mes
-                    Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 10);
-                    float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
-                    float[][] yraw = pair.getValue();
+                            if (candlesThisMonth.size() <= LOOK_BACK + 2) {
+                                Vesta.warning("Mes " + currentMonth + " insuficiente historial: " + candlesThisMonth.size() + " velas");
+                                return new MonthResult(null, null, candlesThisMonth, false);
+                            }
 
-                    if (Xraw.length > 0) {
-                        allX.add(Xraw);
-                        allY.add(yraw);
+                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 10);
+                            float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
+                            float[][] yraw = pair.getValue();
+
+                            return new MonthResult(Xraw, yraw, candlesThisMonth, true);
+                        } catch (Exception e) {
+                            Vesta.error("Error procesando mes " + currentMonth + " para " + symbol + ": " + e.getMessage());
+                            return new MonthResult(null, null, Collections.emptyList(), false);
+                        }
+                    }, VestaEngine.EXECUTOR_BUILD);
+
+                    futures.add(future);
+                }
+
+                // Esperar a que todos los futuros completen y procesar en orden
+                for (int i = 0; i < futures.size(); i++) {
+                    try {
+                        MonthResult result = futures.get(i).get(); // Bloquea para mantener orden
+                        int month = months.get(i);
+
+                        if (result.hasData) {
+                            if (maxMonth < 6) {
+                                allCandlesForChart.addAll(result.candles);
+                            }
+
+                            if (result.X != null && result.X.length > 0) {
+                                allX.add(result.X);
+                                allY.add(result.y);
+                                Vesta.info("✅ Mes " + month + " procesado: " + result.X.length + " muestras (" + symbol + ")");
+                            }
+                        }
                         System.gc();
-                        Vesta.info("📥 Mes " + i + " procesado: " + Xraw.length + " muestras (" + symbol + ")");
+                    } catch (InterruptedException | ExecutionException e) {
+                        Vesta.error("Error procesando mes " + months.get(i) + " para " + symbol + ": " + e.getMessage());
+                        Thread.currentThread().interrupt();
                     }
                 }
+
                 if (!allCandlesForChart.isEmpty()) {
-                    ChartUtils.CandleChartUtils.showCandleChart("Mercado", allCandlesForChart, symbol);
+                    ChartUtils.showCandleChart("Mercado", allCandlesForChart, symbol);
+                }
+
+                if (!allCandlesForChart.isEmpty()) {
+                    ChartUtils.showCandleChart("Mercado", allCandlesForChart, symbol);
                 }
             } catch (Exception e) {
                 Vesta.error("Error construyendo data para " + symbol + ": " + e.getMessage());
@@ -118,13 +136,27 @@ public class BuilderData {
         return new Pair<>(X_final, y_final);
     }
 
+    @Getter
+    private static class MonthResult {
+        final float[][][] X;
+        final float[][] y;
+        final List<Candle> candles;
+        final boolean hasData;
+
+        MonthResult(float[][][] X, float[][] y, List<Candle> candles, boolean hasData) {
+            this.X = X;
+            this.y = y;
+            this.candles = candles;
+            this.hasData = hasData;
+        }
+    }
+
     /**
      * Construye tensores basados EXCLUSIVAMENTE en cambios relativos (Log Returns)
      */
     @Contract("_, _, _ -> new")
     public static @NotNull Pair<float[][][], float[][]> build(@NotNull List<Candle> candles, int lookBack, int futureWindow) {
         int n = candles.size();
-        // Ahora restamos futureWindow para asegurar que siempre haya datos hacia adelante
         int samples = n - lookBack - futureWindow;
 
         if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0][0]);
@@ -132,90 +164,105 @@ public class BuilderData {
         float[][][] X = new float[samples][lookBack][features];
         float[][] y = new float[samples][5];
 
-        int[] direccionCount = new int[5];
-        double MIN_GAIN = 0.001;
+        int[] direccionCount = new int[3]; // 0: Long, 1: Short, 2: Neutral
+
+        // El umbral mínimo de beneficio (THRESHOLD_PRICE ej: 0.001 = 0.1%)
+        double MIN_GAIN = PredictionEngine.THRESHOLD_PRICE;
+
         for (int i = 0; i < samples; i++) {
+            // 1. Extraer Features (X)
             for (int j = 0; j < lookBack; j++) {
                 X[i][j] = extractFeatures(candles.get(i + j + 1), candles.get(i + j));
             }
 
+            // 2. Definir punto de entrada (Cierre de la última vela del lookback)
             double entryPrice = candles.get(i + lookBack).close();
 
-            double bestPriceLong = -Double.MAX_VALUE;
-            double worstPriceLong = Double.MAX_VALUE;
-            double bestPriceShort = Double.MAX_VALUE;
-            double worstPriceShort = -Double.MAX_VALUE;
+            // Variables para encontrar el mejor trade posible en la ventana futura
+            double bestLogTP_Long = 0;
+            double bestLogSL_Long = 0;
+            boolean longWasValid = false;
+
+            double bestLogTP_Short = 0;
+            double bestLogSL_Short = 0;
+            boolean shortWasValid = false;
+
+            // --- ESCANEO DEL FUTURO (Smart Labeling) ---
+            double highestInWindow = -1;
+            double lowestInWindow = Double.MAX_VALUE;
 
             for (int f = 1; f <= futureWindow; f++) {
                 Candle future = candles.get(i + lookBack + f);
-                bestPriceLong = Math.max(bestPriceLong, future.close());
-                worstPriceLong = Math.min(worstPriceLong, future.low());
-                bestPriceShort = Math.min(bestPriceShort, future.close());
-                worstPriceShort = Math.max(worstPriceShort, future.high());
-            }
 
-            double finalCloseInWindow = candles.get(i + lookBack + futureWindow).close();
-            double totalMovementLog = Math.log(finalCloseInWindow / entryPrice);
+                // Actualizar extremos alcanzados hasta este momento en el futuro
+                if (future.high() > highestInWindow) highestInWindow = future.high();
+                if (future.low() < lowestInWindow) lowestInWindow = future.low();
 
-            boolean conditionMet = false;
+                // Evaluar potencial LONG en esta vela futura
+                double currentMaxGain = Math.log(future.high() / entryPrice);
+                if (currentMaxGain >= MIN_GAIN) {
+                    double theoreticalSL = currentMaxGain / 2.0; // Queremos ratio 1:2
+                    double maxDrawdown = Math.log(entryPrice / lowestInWindow);
 
-            if (totalMovementLog > PredictionEngine.THRESHOLD_PRICE) {
-                // --- Lógica LONG ---
-                double logTP = Math.log(bestPriceLong / entryPrice);
-                double logSL = Math.max(0.00001, Math.log(entryPrice / worstPriceLong)); // Evitamos división por cero
-
-                if (Double.isInfinite(logTP) || Double.isNaN(logTP)) logTP = 0;
-                if (Double.isInfinite(logSL) || Double.isNaN(logSL)) logSL = 0;
-
-                // Filtros: Ganancia >= 0.1% Y Ratio RR >= 1:1 (TP >= SL)
-                if (logTP >= MIN_GAIN && logTP >= logSL) {
-                    y[i][0] = (float) Math.abs(logTP);
-                    y[i][1] = (float) Math.abs(logSL);
-                    y[i][2] = 1.0f; // LONG
-                    y[i][3] = 0f;
-                    y[i][4] = 0f;
-
-
-                    direccionCount[0]++;
-                    conditionMet = true;
+                    // Si el drawdown hasta ahora no ha superado el SL teórico, el trade es válido
+                    if (maxDrawdown < theoreticalSL) {
+                        if (currentMaxGain > bestLogTP_Long) {
+                            bestLogTP_Long = currentMaxGain;
+                            bestLogSL_Long = theoreticalSL;
+                            longWasValid = true;
+                        }
+                    }
                 }
-            }else if (totalMovementLog < -PredictionEngine.THRESHOLD_PRICE) {
-                // --- Lógica SHORT ---
-                double logTP = Math.log(entryPrice / bestPriceShort);
-                double logSL = Math.max(0.00001, Math.log(worstPriceShort / entryPrice)); // Evitamos división por cero
 
-                if (Double.isInfinite(logTP) || Double.isNaN(logTP)) logTP = 0;
-                if (Double.isInfinite(logSL) || Double.isNaN(logSL)) logSL = 0;
+                // Evaluar potencial SHORT en esta vela futura
+                double currentMaxFall = Math.log(entryPrice / future.low());
+                if (currentMaxFall >= MIN_GAIN) {
+                    double theoreticalSL = currentMaxFall / 2.0; // Ratio 1:2
+                    double maxRunup = Math.log(highestInWindow / entryPrice);
 
-                // Filtros: Ganancia >= 0.1% Y Ratio RR >= 1:1 (TP >= SL)
-                if (logTP >= MIN_GAIN && logTP >= logSL) {
-                    y[i][0] = (float) Math.abs(logTP);
-                    y[i][1] = (float) Math.abs(logSL);
-                    y[i][2] = 0f;
-                    y[i][3] = 0f;
-                    y[i][4] = 1.0f;  // SHORT
-                    direccionCount[1]++;
-                    conditionMet = true;
+                    // Si la subida en contra no ha superado el SL teórico, el trade es válido
+                    if (maxRunup < theoreticalSL) {
+                        if (currentMaxFall > bestLogTP_Short) {
+                            bestLogTP_Short = currentMaxFall;
+                            bestLogSL_Short = theoreticalSL;
+                            shortWasValid = true;
+                        }
+                    }
                 }
             }
 
-            // Si no cumple el THRESHOLD o no pasó los filtros de RR/Ganancia Mínima -> NEUTRAL
-            if (!conditionMet) {
-                double volatilityUp = Math.abs(Math.log(bestPriceLong / entryPrice));
-                double volatilityDown = Math.abs(Math.log(worstPriceLong / entryPrice));
-
-                if (Double.isInfinite(volatilityUp) || Double.isNaN(volatilityUp)) volatilityUp = 0;
-                if (Double.isInfinite(volatilityDown) || Double.isNaN(volatilityDown)) volatilityDown = 0;
-
-                y[i][0] = (float) volatilityUp;
-                y[i][1] = (float) volatilityDown;
+            // 3. ASIGNACIÓN DE ETIQUETAS (Y)
+            // Decidimos cuál fue la mejor oportunidad (Long vs Short)
+            if (longWasValid && (!shortWasValid || bestLogTP_Long > bestLogTP_Short)) {
+                y[i][0] = (float) bestLogTP_Long;
+                y[i][1] = (float) bestLogSL_Long;
+                y[i][2] = 1.0f; // Long
+                y[i][3] = 0f;
+                y[i][4] = 0f;
+                direccionCount[0]++;
+            }
+            else if (shortWasValid && (!longWasValid || bestLogTP_Short > bestLogTP_Long)) {
+                y[i][0] = (float) bestLogTP_Short;
+                y[i][1] = (float) bestLogSL_Short;
                 y[i][2] = 0f;
-                y[i][3] = 1.0f; // Neutro
+                y[i][3] = 0f;
+                y[i][4] = 1.0f; // Short
+                direccionCount[1]++;
+            }
+            else {
+                // NEUTRAL: O no hubo movimiento suficiente, o la volatilidad sacó ambos SL
+                y[i][0] = (float) Math.abs(Math.log(highestInWindow / entryPrice)); // Volatilidad como TP
+                y[i][1] = (float) Math.abs(Math.log(entryPrice / lowestInWindow));  // Volatilidad como SL
+                y[i][2] = 0f;
+                y[i][3] = 1.0f; // Neutral
                 y[i][4] = 0f;
                 direccionCount[2]++;
             }
         }
-        Vesta.info("Direcciones: " +  direccionCount[0] + "L " +  direccionCount[1] + "S " + direccionCount[2] + "N");
+
+        Vesta.info("Build completado -> L: %d | S: %d | N: %d",
+                direccionCount[0], direccionCount[1], direccionCount[2]);
+
         return new Pair<>(X, y);
     }
 

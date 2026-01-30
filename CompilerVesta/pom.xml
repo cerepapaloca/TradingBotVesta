@@ -33,7 +33,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>xyz.cereshost.Main</mainClass>
+                            <mainClass>xyz.cereshost.compilator.Main</mainClass>
                         </manifest>
                     </archive>
                 </configuration>

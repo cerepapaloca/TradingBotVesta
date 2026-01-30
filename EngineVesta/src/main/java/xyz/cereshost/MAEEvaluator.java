@@ -13,6 +13,9 @@ public class MAEEvaluator extends Evaluator {
     // Guardamos: key -> (totalElements, totalAbsError)
     private final ConcurrentHashMap<String, Pair<Long, Double>> accum = new ConcurrentHashMap<>();
 
+    private NDArray lastResult = null;
+    private String lastPredictionId = "";
+
     public MAEEvaluator() {
         this("mae");
     }
@@ -41,6 +44,10 @@ public class MAEEvaluator extends Evaluator {
     public void updateAccumulator(String key, NDList labels, NDList predictions) {
         NDArray label = labels.singletonOrThrow();
         NDArray pred = predictions.singletonOrThrow();
+
+        if (pred.getUid().equals(lastPredictionId) && lastResult != null) {
+            return;
+        }
 
         // media de abs error en este batch (escalar)
         NDArray meanAbs = evaluate(labels, predictions);

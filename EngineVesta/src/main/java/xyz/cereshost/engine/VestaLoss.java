@@ -1,6 +1,7 @@
 package xyz.cereshost.engine;
 
 import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
 import ai.djl.training.loss.Loss;
 import lombok.SneakyThrows;
@@ -11,18 +12,15 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class VestaLoss extends Loss {
-    private final float directionWeight;
-    private final float classificationWeight;
+
     public record LossReport(
             float total, float tp, float sl, float longL, float neutralL, float shortL
     ) {}
 
     private volatile CompletableFuture<LossReport> dataRequest = null;
 
-    public VestaLoss(String name, float directionWeight, float classificationWeight) {
+    public VestaLoss(String name) {
         super(name);
-        this.directionWeight = directionWeight;
-        this.classificationWeight = classificationWeight;
     }
 
     private NDArray lastResult = null;
@@ -43,33 +41,21 @@ public class VestaLoss extends Loss {
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
 
-        NDArray lossTP = trueParts.get(0).sub(predParts.get(0)).abs().mean();
-        NDArray lossSL = trueParts.get(1).sub(predParts.get(1)).abs().mean();
+        CompletableFuture<NDArray> lossTP = CompletableFuture.supplyAsync(() -> trueParts.get(0).sub(predParts.get(0)).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
+        CompletableFuture<NDArray> lossSL = CompletableFuture.supplyAsync(() -> trueParts.get(1).sub(predParts.get(1)).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
 
-        CountDownLatch latch = new CountDownLatch(3);
-        AtomicReference<NDArray> lLong = new AtomicReference<>();
-        VestaEngine.EXECUTOR_TRAINING.submit(() -> {
-            lLong.set(binaryCrossEntropy(trueParts.get(2), predParts.get(2)).mul(1));
-            latch.countDown();
-        });
-        AtomicReference<NDArray> lNeutral = new AtomicReference<>();
-        VestaEngine.EXECUTOR_TRAINING.submit(() -> {
-            lNeutral.set(binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul(1));
-            latch.countDown();
-        });
-        AtomicReference<NDArray> lShort = new AtomicReference<>();
-        VestaEngine.EXECUTOR_TRAINING.submit(() -> {
-            lShort.set(binaryCrossEntropy(trueParts.get(4), predParts.get(4)).mul(1));
-            latch.countDown();
-        });
-        latch.await();
+        CompletableFuture<NDArray> lLong = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(2), predParts.get(2)).mul(1.0f), VestaEngine.EXECUTOR_TRAINING);
+        CompletableFuture<NDArray> lNeutral = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul( 1.0f), VestaEngine.EXECUTOR_TRAINING);
+        CompletableFuture<NDArray> lShort = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(4), predParts.get(4)).mul(1.0f), VestaEngine.EXECUTOR_TRAINING);
 
         // 3. PLUS DE PENALIZACIÓN (Inversión de tendencia)
-        NDArray crossError = trueParts.get(2).mul(predParts.get(4))  // Long real * Predicción Short
-                .add(trueParts.get(4).mul(predParts.get(2)))        // Short real * Predicción Long
-                .mul(2).mean(); // Peso de castigo alto (10) por ser el error más peligroso
+        CompletableFuture<NDArray> crossError = CompletableFuture.supplyAsync(() ->
+                trueParts.get(2).mul(predParts.get(4))  // Long real * Predicción Short
+                        .add(trueParts.get(4).mul(predParts.get(2)))        // Short real * Predicción Long
+                        .mul(2f).mean(), VestaEngine.EXECUTOR_TRAINING);
 
-        NDArray totalLoss = lossTP.add(lossSL).add(lLong.get()).add(lNeutral.get()).add(lShort.get()).add(crossError);
+
+        NDArray totalLoss = lossTP.get().add(lossSL.get()).add(lLong.get()).add(lNeutral.get()).add(lShort.get()).add(crossError.get());
 
         // 2. ¿Alguien está esperando datos? (Sincronización Inteligente)
         // Solo entramos aquí si llamaste a awaitNextBatchData()
@@ -78,8 +64,8 @@ public class VestaLoss extends Loss {
             // Solo aquí pagamos el costo de sincronización GPU -> CPU
             request.complete(new LossReport(
                     totalLoss.getFloat(),
-                    lossTP.getFloat(),
-                    lossSL.getFloat(),
+                    lossTP.get().getFloat(),
+                    lossSL.get().getFloat(),
                     lLong.get().getFloat(),
                     lNeutral.get().getFloat(),
                     lShort.get().getFloat()
