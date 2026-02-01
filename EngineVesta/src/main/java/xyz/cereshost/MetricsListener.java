@@ -37,14 +37,14 @@ public class MetricsListener extends TrainingListenerAdapter {
         float mae = result.getTrainEvaluation("mae");
         trainLoss.add(loss);
         trainMae.add(mae);
-        double progress = (double) trainer.getTrainingResult().getEpoch() / VestaEngine.EPOCH;
+        double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH*Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB);
         long time = System.currentTimeMillis();
         long delta = Math.abs(lastTime - time);
         Vesta.info(
                 String.format("Progreso=%.2f Tiempo=%.2fs -T=%sm MAEr=%.4f [%s]\n",
                         (progress)*100,
                         (double) delta/1000,
-                        (int) (((VestaEngine.EPOCH - trainer.getTrainingResult().getEpoch())*delta)/1000)/60,
+                        (int) ((((VestaEngine.EPOCH*Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB) - trainer.getTrainingResult().getEpoch())*delta)/1000)/60,
                         lastMae - mae,
                         "#".repeat((int) (progress*100)) + " " .repeat((int) (Math.abs(progress-1)*100))
                 )

@@ -140,6 +140,12 @@
             <artifactId>jfreechart</artifactId>
             <version>1.5.6</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.ta4j</groupId>
+            <artifactId>ta4j-core</artifactId>
+            <version>0.22.1</version>
+        </dependency>
     </dependencies>
 
     <build>

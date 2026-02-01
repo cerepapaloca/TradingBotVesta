@@ -11,10 +11,12 @@ import ai.djl.training.Trainer;
 import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.training.dataset.Dataset;
 import ai.djl.translate.TranslateException;
+import ai.djl.util.Pair;
 import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.builder.MultiSymbolNormalizer;
+import xyz.cereshost.builder.YNormalizer;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
 import java.nio.FloatBuffer;
@@ -218,7 +220,7 @@ public class EngineUtils {
             Trainer trainer,
             NDArray X_test,
             NDArray y_test,
-            MultiSymbolNormalizer yNormalizer,
+            YNormalizer yNormalizer,
             int chunkSize // Recomendado: 512 o 1024
     ) {
         long totalSamples = X_test.getShape().get(0);
@@ -290,6 +292,12 @@ public class EngineUtils {
                     allResults.add(new ResultPrediction(
                             predTP, predSL, predDirection,
                             realTP, realSL, rawRealDir,
+                            yPredFlat[predIdx + 2],
+                            yTestFlat[targetIdx + 2],
+                            yPredFlat[predIdx + 3],
+                            yTestFlat[targetIdx + 3],
+                            yPredFlat[predIdx + 4],
+                            yTestFlat[targetIdx + 4],
                             start + i // Índice global
                     ));
                 }
@@ -319,9 +327,9 @@ public class EngineUtils {
             int hits = 0;
             int fails = 0;
             for (ResultPrediction prediction : resultPrediction) {
-                if (prediction.predDir() == 0 || prediction.realDir() == 0) continue;
+                if (prediction.getPredDirection() == Trading.DireccionOperation.NEUTRAL || prediction.getRealDirection() == Trading.DireccionOperation.NEUTRAL) continue;
                 // ley de los signos
-                if (prediction.realDir() * prediction.predDir() > 0) {
+                if (prediction.getPredDirection() == prediction.getRealDirection()) {
                     hits++;
                 }else {
                     fails++;
@@ -336,14 +344,10 @@ public class EngineUtils {
             int hits = 0;
             int total = 0;
 
-            float threshold = (float) THRESHOLD_RELATIVE;
-
             for (ResultPrediction prediction : resultPrediction) {
-                float pred = prediction.predDir();
-                float real = prediction.realDir();
-                if (pred > threshold && real > 0) hits++;// Long
-                else if (pred < -threshold && real < 0) hits++; // Short
-                else if (pred <= threshold && pred >= -threshold && real == 0) hits++; // Neutral
+                if (prediction.getPredDirection() == prediction.getRealDirection()) {
+                    hits++;
+                }
                 total++;
             }
 
@@ -375,7 +379,7 @@ public class EngineUtils {
             return total > 0 ? ((float) hits / total) * 100f : 0f;
         }
 
-        public int @NotNull [] hitRateLong() {
+        public int @NotNull [] hitRateLongOneFloat() {
             int[] hits = new int[3];
             for (ResultPrediction prediction : resultPrediction){
                 if (prediction.realDir() > THRESHOLD_RELATIVE){
@@ -385,7 +389,7 @@ public class EngineUtils {
             return hits;
         }
 
-        public int @NotNull [] hitRateShort() {
+        public int @NotNull [] hitRateShortOneFloat() {
             int[] hits = new int[3];
             for (ResultPrediction prediction : resultPrediction){
                 if (prediction.realDir() < -THRESHOLD_RELATIVE){
@@ -395,11 +399,25 @@ public class EngineUtils {
             return hits;
         }
 
-        public int @NotNull [] hitRateNeutral() {
+        public int @NotNull [] hitRateNeutralOneFloat() {
             int[] hits = new int[3];
             for (ResultPrediction prediction : resultPrediction){
                 if (prediction.realDir() > -THRESHOLD_RELATIVE && prediction.realDir() < THRESHOLD_RELATIVE) {
                     computeDir(hits, prediction);
+                }
+            }
+            return hits;
+        }
+
+        public int[] hitRate(Trading.DireccionOperation direccion){
+            int[] hits = new int[3];
+            for (ResultPrediction prediction : resultPrediction){
+                if (prediction.getRealDirection() == direccion) {
+                    switch (prediction.getPredDirection()) {
+                        case LONG -> hits[0]++;
+                        case SHORT -> hits[1]++;
+                        case NEUTRAL -> hits[2]++;
+                    }
                 }
             }
             return hits;
@@ -450,6 +468,9 @@ public class EngineUtils {
     public record ResultPrediction(
             float predTP, float predSL, float predDir,
             float realTP, float realSL, float realDir,
+            float predLongSing, float realLongSing,
+            float predNeutralSing, float realNeutralSing,
+            float predShortSing, float realShortSing,
             long timestamp
     ) {
         public float lsDiff() {
@@ -463,5 +484,96 @@ public class EngineUtils {
         public float dirDiff() {
             return realDir - predDir;
         }
+
+        public Trading.DireccionOperation getRealDirection() {
+            return getDireccion(realLongSing, realNeutralSing, realShortSing);
+        }
+
+        public Trading.DireccionOperation getPredDirection() {
+            return getDireccion(predLongSing, predNeutralSing, predShortSing);
+        }
+    }
+
+    public static Trading.DireccionOperation getDireccion(float... sings) {
+
+        int maxIndex = 0;
+        float maxValue = sings[0];
+
+        for (int i = 1; i < sings.length; i++) {
+            if (sings[i] > maxValue) {
+                maxValue = sings[i];
+                maxIndex = i;
+            }
+        }
+        return switch (maxIndex) {
+            case 0 -> Trading.DireccionOperation.LONG;
+            case 1 -> Trading.DireccionOperation.NEUTRAL;
+            case 2 -> Trading.DireccionOperation.SHORT;
+            default -> throw new IllegalStateException("Unexpected value: " + maxIndex);
+        };
+    }
+
+    private static float[][][] extractSplit3D(float[][][] data, int startIndex, int endIndex) {
+        int resultSize = endIndex - startIndex;
+        float[][][] result = new float[resultSize][][];
+        System.arraycopy(data, startIndex, result, 0, resultSize);
+        return result;
+    }
+
+    private static float[][] extractSplit2D(float[][] data, int startIndex, int endIndex) {
+        int resultSize = endIndex - startIndex;
+        float[][] result = new float[resultSize][];
+        System.arraycopy(data, startIndex, result, 0, resultSize);
+        return result;
+    }
+
+    public static Pair<float[][][], float[][]> getSingleSplitWithLabels(
+            float[][][] xData, float[][] yData, int numSplits, int splitIndex) {
+
+        // Verificar que ambos arrays tienen la misma longitud
+        if (xData.length != yData.length) {
+            throw new IllegalArgumentException(
+                    "xData y yData deben tener la misma longitud. xData: " +
+                            xData.length + ", yData: " + yData.length
+            );
+        }
+
+        Pair<Integer, Integer> indices = calculateSplitIndices(xData.length, numSplits, splitIndex);
+
+        float[][][] xSplit = extractSplit3D(xData, indices.getKey(), indices.getValue());
+        float[][] ySplit = extractSplit2D(yData, indices.getKey(), indices.getValue());
+
+        return new Pair<>(xSplit, ySplit);
+    }
+
+    private static Pair<Integer, Integer> calculateSplitIndices(int totalSamples, int numSplits, int splitIndex) {
+        if (numSplits <= 0) {
+            throw new IllegalArgumentException("numSplits debe ser mayor a 0");
+        }
+
+        if (splitIndex < 0 || splitIndex >= numSplits) {
+            throw new IllegalArgumentException("splitIndex debe estar entre 0 y " + (numSplits - 1));
+        }
+
+        int splitSize = totalSamples / numSplits;
+        int remainder = totalSamples % numSplits;
+
+        int startIndex;
+        int endIndex;
+
+        if (splitIndex < remainder) {
+            // Este split tiene un elemento extra
+            startIndex = splitIndex * (splitSize + 1);
+            endIndex = startIndex + (splitSize + 1);
+        } else {
+            // Este split tiene tamaño normal
+            startIndex = remainder * (splitSize + 1) + (splitIndex - remainder) * splitSize;
+            endIndex = startIndex + splitSize;
+        }
+
+        // Asegurar que no excedamos los límites
+        endIndex = Math.min(endIndex, totalSamples);
+
+        return new Pair<>(startIndex, endIndex);
     }
 }

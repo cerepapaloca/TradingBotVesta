@@ -1,14 +1,28 @@
 package xyz.cereshost.builder;
 
-import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-@Getter
-public class MultiSymbolNormalizer {
+/**
+ * Normalizador para Y en tu esquema:
+ * - Y shape esperado: [samples][5] con columnas:
+ *   0: TP (regresión)
+ *   1: SL (regresión)
+ *   2: Long (one-hot)
+ *   3: Neutral (one-hot)
+ *   4: Short (one-hot)
+ *
+ * - fit(y): calcula mediana y MAD para TP/SL (columnas 0 y 1)
+ * - transform(y): normaliza columnas 0 y 1, deja columnas 2..4 intactas
+ * - inverseTransform(yNorm): reconstruye TP/SL a escala original
+ *
+ * Nota: MAD = median(|x - median|)
+ */
+public class YNormalizer {
+
     private float[] medians;
     private float[] mads;
     private float[] mins; // Nuevo: para almacenar los mínimos por columna

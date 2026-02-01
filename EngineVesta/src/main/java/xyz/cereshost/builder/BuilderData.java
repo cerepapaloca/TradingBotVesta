@@ -4,15 +4,28 @@ import ai.djl.util.Pair;
 import lombok.Getter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.ta4j.core.*;
+import org.ta4j.core.indicators.ATRIndicator;
+import org.ta4j.core.indicators.MACDIndicator;
+import org.ta4j.core.indicators.RSIIndicator;
+import org.ta4j.core.indicators.bollinger.*;
+import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
+import org.ta4j.core.indicators.volume.NVIIndicator;
+import org.ta4j.core.num.DecimalNum;
+import org.ta4j.core.num.DoubleNum;
+import org.ta4j.core.num.Num;
 import xyz.cereshost.ChartUtils;
 import xyz.cereshost.FinancialCalculation;
 import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.*;
+import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.file.IOdata;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -22,7 +35,6 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
-    @SuppressWarnings("ConstantValue")
     public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols, int maxMonth) {
         List<float[][][]> allX = new ArrayList<>();
         List<float[][]> allY = new ArrayList<>();
@@ -54,7 +66,7 @@ public class BuilderData {
                                 return new MonthResult(null, null, candlesThisMonth, false);
                             }
 
-                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 25);
+                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 30);
                             float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                             float[][] yraw = pair.getValue();
 
@@ -90,10 +102,6 @@ public class BuilderData {
                         Vesta.error("Error procesando mes " + months.get(i) + " para " + symbol + ": " + e.getMessage());
                         Thread.currentThread().interrupt();
                     }
-                }
-
-                if (!allCandlesForChart.isEmpty()) {
-                    ChartUtils.showCandleChart("Mercado", allCandlesForChart, symbol);
                 }
 
                 if (!allCandlesForChart.isEmpty()) {
@@ -273,11 +281,29 @@ public class BuilderData {
         int idx = 0;
 
         // CandleSimple por minuto
+        BaseBarSeries series = new BaseBarSeriesBuilder().build();
         NavigableMap<Long, CandleSimple> simpleByMinute = new TreeMap<>();
         for (CandleSimple cs : market.getCandleSimples()) {
             long minute = (cs.openTime() / 60_000) * 60_000;
             simpleByMinute.put(minute, cs);
+            try {
+                series.addBar(new BaseBar(Duration.ofSeconds(60),
+                        Instant.ofEpochMilli(cs.openTime()),
+                        Instant.ofEpochMilli(cs.openTime() + 60_000),
+                        DecimalNum.valueOf(cs.open()),
+                        DecimalNum.valueOf(cs.high()),
+                        DecimalNum.valueOf(cs.low()),
+                        DecimalNum.valueOf(cs.close()),
+                        DecimalNum.valueOf(cs.volumen().baseVolume()),
+                        DecimalNum.valueOf(cs.volumen().quoteVolume()),
+                        0
+                ));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
+
+        ClosePriceIndicator indicator = new ClosePriceIndicator(series);
 
         // Depth por minuto
         NavigableMap<Long, Depth> depthByMinute = new TreeMap<>();
@@ -303,34 +329,30 @@ public class BuilderData {
             closes.add(cs.close());
         }
 
-        double[] rsi4Arr = FinancialCalculation.computeRSI(closes, 4);
-        double[] rsi8Arr = FinancialCalculation.computeRSI(closes, 8);
-        double[] rsi16Arr = FinancialCalculation.computeRSI(closes, 16);
+
+        RSIIndicator rsi4 = new RSIIndicator(indicator, 4);
+        RSIIndicator rsi8 = new RSIIndicator(indicator, 8);
+        RSIIndicator rsi16 = new RSIIndicator(indicator, 16);
 
 
         // MACD
+        //MACDIndicator macd = new MACDIndicator(indicator, 12, 26);
         FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 12, 26, 9);
         double[] macdArr = macdRes.macd();
         double[] signalArr = macdRes.signal();
         double[] histArr = macdRes.histogram();
 
         // NVI
-        double[] nviArr = FinancialCalculation.computeNVI(closes, simpleByMinute.values().stream().map(c -> c.volumen().quoteVolume()).toList(), 1000.0);
+        NVIIndicator nvi = new NVIIndicator(series);
 
         // Bollinger
-        FinancialCalculation.BollingerBandsResult bollingerBandsResult = FinancialCalculation.computeBollingerBands(closes, 20, 2);
-        double[] upperBandArr = bollingerBandsResult.upperBand();
-        double[] middleBandArr = bollingerBandsResult.middleBand();
-        double[] lowerBandArr = bollingerBandsResult.lowerBand();
-        double[] bandwidthArr = bollingerBandsResult.bandwidth();
-        double[] percentBArr = bollingerBandsResult.percentB();
+        BollingerBandFacade facadeBand = new BollingerBandFacade(indicator, 20, 2);
 
         // ATR
-        double[] atr14 = FinancialCalculation.computeATRWilder(simpleByMinute.values().stream().toList(), 14);
-
+        ATRIndicator atr14 = new ATRIndicator(series, 14);
 
         // Volumen Normalizado
-        Map<String, double[]> vn = FinancialCalculation.computeVolumeNormalizations(simpleByMinute.values().stream().toList(), 14, atr14);
+        Map<String, double[]> vn = FinancialCalculation.computeVolumeNormalizations(simpleByMinute.values().stream().toList(), 14, atr14.stream().map(Num::doubleValue).toList());
 
         for (long minute = startMinute; minute <= endMinute; minute += 60_000L) {
             // OHLC + VOLUMEN
@@ -397,31 +419,16 @@ public class BuilderData {
             double depthImbalance = (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
 
             try {
-                // RSI
-                double rsi4 = checkDouble(rsi4Arr, idx);
-                double rsi8 = checkDouble(rsi8Arr, idx);
-                double rsi16 = checkDouble(rsi16Arr, idx);
 
                 // MACD
                 double macdVal = checkDouble(macdArr, idx);
                 double macdSignal = checkDouble(signalArr, idx);
                 double macdHist = checkDouble(histArr, idx);
 
-                // NVI
-                double nvi = checkDouble(nviArr, idx);
-
-                double upperBand = checkDouble(upperBandArr, idx);
-                double middleBand = checkDouble(middleBandArr, idx);
-                double lowerBand = checkDouble(lowerBandArr, idx);
-                double bandwidth = checkDouble(bandwidthArr, idx);
-                double percentB = checkDouble(percentBArr, idx);
-
-                // ATR
-                double atr = checkDouble(atr14, idx);
-
                 candles.add(new Candle(
                         minute,
                         checkDouble(open), checkDouble(high), checkDouble(low), checkDouble(close),
+
                         calculateCandleDirectionSmooth(open, close, 0.5/100),
                         checkDouble(tradeCount),
                         checkDouble(volumeBase),
@@ -440,19 +447,19 @@ public class BuilderData {
                         checkDouble(depthImbalance),
                         checkDouble(mid),
                         checkDouble(spread),
-                        rsi4,
-                        rsi8,
-                        rsi16,
+                        rsi4.getValue(idx).doubleValue(),
+                        rsi8.getValue(idx).doubleValue(),
+                        rsi16.getValue(idx).doubleValue(),
                         macdVal,
                         macdSignal,
                         macdHist,
-                        nvi,
-                        upperBand,
-                        middleBand,
-                        lowerBand,
-                        bandwidth,
-                        percentB,
-                        atr
+                        nvi.getValue(idx).doubleValue(),
+                        facadeBand.upper().getValue(idx).doubleValue(),
+                        facadeBand.middle().getValue(idx).doubleValue(),
+                        facadeBand.lower().getValue(idx).doubleValue(),
+                        facadeBand.bandwidth().getValue(idx).doubleValue(),
+                        facadeBand.percentB().getValue(idx).doubleValue(),
+                        atr14.getValue(idx).doubleValue()
                 ));
             } catch (IllegalArgumentException ignored) {
                 remove++;
@@ -481,16 +488,8 @@ public class BuilderData {
         if (Math.abs(open) < 0.0000001) return 0.0f;
 
         double changePercent = (close - open) / open;
-
-        // Umbral de doji
-//        if (Math.abs(changePercent) < PredictionEngine.THRESHOLD/5) {
-//            return 0.0;
-//        }
-
-        // Normalizar al rango [-1, 1] considerando maxChangePercent
         double normalized = changePercent / maxChangePercent;
 
-        // Limitar a [-2, 2] para que la sigmoide cubra bien el rango
         normalized = Math.max(-2.0, Math.min(2.0, normalized));
 
         // Aplicar sigmoide ajustada para [-1, 1]
@@ -508,10 +507,10 @@ public class BuilderData {
         List<Float> fList = new ArrayList<>();
 
         // 1-4: Precios relativos (Log Returns)
-        fList.add((float) Math.log(curr.open() / prevClose));
-        fList.add((float) Math.log(curr.high() / prevClose));
-        fList.add((float) Math.log(curr.low() / prevClose));
-        fList.add((float) Math.log(curr.close() / prevClose));
+        fList.add((float) Math.log(curr.high() / prev.high()));
+        fList.add((float) Math.log(curr.open() / prev.open()));
+        fList.add((float) Math.log(curr.close() / prev.close()));
+        fList.add((float) Math.log(curr.low() / prev.low()));
 
         fList.add(curr.direccion());
         fList.add((float) Math.log(curr.amountTrades()));
@@ -521,8 +520,8 @@ public class BuilderData {
         fList.add((float) curr.volZscore());
         fList.add((float) curr.volPerAtr());
 //        fList.add((float) Math.log(curr.quoteVolume() / prevClose));
-        fList.add((float) Math.log(curr.buyQuoteVolume() / prevClose));
-        fList.add((float) Math.log(curr.sellQuoteVolume() / prevClose));
+//        fList.add((float) Math.log((curr.buyQuoteVolume() - prev.buyQuoteVolume()) / curr.buyQuoteVolume()));// Dan 0
+//        fList.add((float) Math.log((curr.sellQuoteVolume() - prev.sellQuoteVolume()) / curr.sellQuoteVolume()));
 
         // Delta y Buy Ratio
         double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
@@ -531,24 +530,24 @@ public class BuilderData {
 
 //        fList.add((float) Math.log(curr.bidLiquidity() / prevClose));
 //        fList.add((float) Math.log(curr.askLiquidity() / prevClose));
-//
-//        // 12-14: Métricas de Orderbook relativas
+
+        // 12-14: Métricas de Orderbook relativas
 //        fList.add((float) curr.depthImbalance());
 //        fList.add((float) ((curr.midPrice() - curr.close()) / curr.close()));
 //        fList.add((float) (curr.spread() / curr.close()));
 
         // RSI
-        fList.add((float) curr.rsi4());
-        fList.add((float) curr.rsi8());
-        fList.add((float) curr.rsi16());
+        fList.add((float) curr.rsi4()/100);
+        fList.add((float) curr.rsi8()/100);
+        fList.add((float) curr.rsi16()/100);
 
         // MACD
-        fList.add((float) curr.macdVal());
-        fList.add((float) curr.macdSignal());
-        fList.add((float) curr.macdHist());
+        fList.add((float) (curr.macdVal() / curr.close()));
+        fList.add((float) (curr.macdSignal() / curr.close()));
+        fList.add((float) (curr.macdHist() / curr.close()));
 
         // NVI
-        fList.add((float) curr.nvi());
+        fList.add((float) (curr.nvi() / curr.close()));
 
         // Bollinger
         double bbUpper = curr.upperBand();
@@ -567,8 +566,8 @@ public class BuilderData {
 
         fList.add(bbBandwidth);
         fList.add(bbPos);
-
-        fList.add((float) curr.atr14());
+        // ATR
+        fList.add((float) (curr.atr14() / curr.close()));
 
         float[] f = new float[fList.size()];
         for (int i = 0; i < fList.size(); i++) {

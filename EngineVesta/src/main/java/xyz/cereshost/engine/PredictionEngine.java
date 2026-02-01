@@ -11,8 +11,8 @@ import lombok.Getter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.builder.BuilderData;
-import xyz.cereshost.builder.MultiSymbolNormalizer;
-import xyz.cereshost.builder.RobustNormalizer;
+import xyz.cereshost.builder.YNormalizer;
+import xyz.cereshost.builder.XNormalizer;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.file.IOdata;
@@ -25,17 +25,17 @@ import java.util.List;
 @Getter
 public class PredictionEngine {
 
-    public static final double THRESHOLD_PRICE = 0.001;
+    public static final double THRESHOLD_PRICE = 0.003;
     public static final double THRESHOLD_RELATIVE = 0.08;
 
     private final Model model;
-    private final RobustNormalizer xNormalizer;
-    private final MultiSymbolNormalizer yNormalizer;
+    private final XNormalizer xNormalizer;
+    private final YNormalizer yNormalizer;
     private final int lookBack;
     private final int features;
     private final Device device;
 
-    public PredictionEngine(RobustNormalizer xNormalizer, MultiSymbolNormalizer yNormalizer, Model model, int lookBack, int features) {
+    public PredictionEngine(XNormalizer xNormalizer, YNormalizer yNormalizer, Model model, int lookBack, int features) {
         this.device = Device.gpu();
         this.model = model;
         this.xNormalizer = xNormalizer;
@@ -137,29 +137,41 @@ public class PredictionEngine {
 
         float currentPrice = (float) subList.get(subList.size() - 1).close();
         float tpLogReturn, slLogReturn;
-        if (signalLong) {
-            direction = Trading.DireccionOperation.LONG;
-            tpLogReturn = upForce;
-            slLogReturn = downForce;
-        } else if (signalShort) {
-            direction = Trading.DireccionOperation.SHORT;
-            tpLogReturn = downForce;
-            slLogReturn = upForce;
-        } else {
-            direction = Trading.DireccionOperation.NEUTRAL;
-            tpLogReturn = 0;
-            slLogReturn = 0;
+        Trading.DireccionOperation direccion = EngineUtils.getDireccion(probLong, probNeutral, probShort);
+        switch (direccion) {
+            case LONG ->{
+                tpLogReturn = upForce;
+                slLogReturn = downForce;
+            }
+            case SHORT ->{
+                tpLogReturn = downForce;
+                slLogReturn = upForce;
+            }
+            default -> {
+                tpLogReturn = 0;
+                slLogReturn = 0;
+            }
         }
+//        if (signalLong) {
+//            tpLogReturn = upForce;
+//            slLogReturn = downForce;
+//        } else if (signalShort) {
+//            tpLogReturn = downForce;
+//            slLogReturn = upForce;
+//        } else {
+//            tpLogReturn = 0;
+//            slLogReturn = 0;
+//        }
 
         // Cálculos de precios finales
-        float tpPrice = (float) (currentPrice * Math.exp(direction.equals(Trading.DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
-        float slPrice = (float) (currentPrice * Math.exp(direction.equals(Trading.DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
+        float tpPrice = (float) (currentPrice * Math.exp(direccion.equals(Trading.DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
+        float slPrice = (float) (currentPrice * Math.exp(direccion.equals(Trading.DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
 
         // Fix visual para Neutral
         //if(direction.equals(DireccionOperation.NEUTRAL)) { tpPrice = currentPrice; slPrice = currentPrice; }
 
         return new PredictionResult(
-                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, direction
+                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, direccion
         );
     }
 
@@ -212,11 +224,11 @@ public class PredictionEngine {
     public static @NotNull PredictionEngine loadPredictionEngine(String modelName) throws IOException {
 
         Model model = IOdata.loadModel();
-        Pair<RobustNormalizer, MultiSymbolNormalizer> normalizers = IOdata.loadNormalizers();
+        Pair<XNormalizer, YNormalizer> normalizers = IOdata.loadNormalizers();
 
         int lookBack = VestaEngine.LOOK_BACK;
         // Ajuste automático de features
-        int features = normalizers.getKey().getFeatureMedians().length;
+        int features = normalizers.getKey().getMedians().length;
 
         Vesta.info("✅ Sistema completo cargado:");
         Vesta.info("  Modelo: " + modelName);

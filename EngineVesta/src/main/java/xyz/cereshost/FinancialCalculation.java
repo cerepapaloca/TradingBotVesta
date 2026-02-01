@@ -344,7 +344,7 @@ public class FinancialCalculation {
         return new double[][]{means, stds};
     }
 
-    public static Map<String, double[]> computeVolumeNormalizations(List<CandleSimple> candles, int window, double[] atrArray) {
+    public static Map<String, double[]> computeVolumeNormalizations(List<CandleSimple> candles, int window, List<Double> atrList) {
         int n = candles.size();
         double[][] meanStd = computeRollingMeanStd(candles, window);
         double[] means = meanStd[0];
@@ -369,7 +369,7 @@ public class FinancialCalculation {
             }
             zscore[i] = z;
             // volume per ATR (ATR may be 0)
-            double atr = (atrArray != null && i < atrArray.length) ? atrArray[i] : 0.0;
+            double atr = (atrList != null && i < atrList.size()) ? atrList.get(i) : 0.0;
             perAtr[i] = (atr > 0) ? v / atr : 0.0;
         }
 

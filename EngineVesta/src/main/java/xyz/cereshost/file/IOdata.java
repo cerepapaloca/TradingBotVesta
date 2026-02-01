@@ -7,12 +7,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jetbrains.annotations.NotNull;
+import tech.tablesaw.io.csv.CsvReader;
 import xyz.cereshost.Main;
 import xyz.cereshost.DataSource;
 import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.builder.MultiSymbolNormalizer;
-import xyz.cereshost.builder.RobustNormalizer;
+import xyz.cereshost.builder.YNormalizer;
+import xyz.cereshost.builder.XNormalizer;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.CandleSimple;
@@ -267,7 +268,7 @@ public class IOdata {
 
     private static List<Trade> parseTradesFromFile(File file) {
         List<Trade> list = new ArrayList<>();
-        if (!file.exists()) return list;
+        //if (!file.exists()) return list;
 
         try (ZipInputStream zis = new ZipInputStream(new FileInputStream(file))) { // CAMBIO: FileInputStream
             ZipEntry entry;
@@ -278,14 +279,22 @@ public class IOdata {
                     while ((line = br.readLine()) != null) {
                         if(line.isEmpty() || Character.isLetter(line.charAt(0))) continue; // Skip Header
 
-                        String[] p = line.split(",");
+                        int p0 = line.indexOf(',');
+                        int p1 = line.indexOf(',', p0 + 1);
+                        int p2 = line.indexOf(',', p1 + 1);
+                        int p3 = line.indexOf(',', p2 + 1);
+                        int p4 = line.indexOf(',', p3 + 1);
+                        int p5 = line.indexOf(',', p4 + 1);
+                        if (p5 == -1) p5 = line.length(); // Por si es la última columna
+
                         list.add(new Trade(
-                                Long.parseLong(p[0]), // id
-                                Long.parseLong(p[4]), // time
-                                Double.parseDouble(p[1]), // price
-                                Double.parseDouble(p[2]), // qty
-                                Boolean.parseBoolean(p[5]) // isBuyerMaker
+                                Long.parseLong(line.substring(0, p0)),             // id (col 0)
+                                Long.parseLong(line.substring(p3 + 1, p4)),        // time (col 4)
+                                Double.parseDouble(line.substring(p0 + 1, p1)),     // price (col 1)
+                                Double.parseDouble(line.substring(p1 + 1, p2)),     // qty (col 2)
+                                "true".equals(line.substring(p4 + 1, p5)) // isBuyerMaker (col 5)
                         ));
+                        CsvReader csvReader = new CsvReader();
                     }
                 }
             }
@@ -306,7 +315,7 @@ public class IOdata {
     /**
      * Guardar normalizador X (RobustNormalizer)
      */
-    public static void saveXNormalizer(RobustNormalizer normalizer) throws IOException {
+    public static void saveXNormalizer(XNormalizer normalizer) throws IOException {
         Path normPath = Paths.get(NORMALIZER_DIR);
         String s = Utils.GSON.toJson(normalizer);
         saveOut(normPath, s, "Normalizer_x");
@@ -316,7 +325,7 @@ public class IOdata {
     /**
      * Guardar normalizador Y (MultiSymbolNormalizer)
      */
-    public static void saveYNormalizer(MultiSymbolNormalizer normalizer) throws IOException {
+    public static void saveYNormalizer(YNormalizer normalizer) throws IOException {
         Path normPath = Paths.get(NORMALIZER_DIR);
         String s = Utils.GSON.toJson(normalizer);
         saveOut(normPath, s, "Normalizer_y");
@@ -326,27 +335,27 @@ public class IOdata {
     /**
      * Cargar normalizador X
      */
-    public static RobustNormalizer loadXNormalizer() throws IOException {
+    public static XNormalizer loadXNormalizer() throws IOException {
         Path normPath = Paths.get(NORMALIZER_DIR, "Normalizer_x.json");
         if (!Files.exists(normPath)) throw new FileNotFoundException("Normalizador X no encontrado: " + normPath);
-        return Utils.GSON.fromJson(Files.readString(normPath), RobustNormalizer.class);
+        return Utils.GSON.fromJson(Files.readString(normPath), XNormalizer.class);
     }
 
     /**
      * Cargar normalizador Y
      */
-    public static MultiSymbolNormalizer loadYNormalizer() throws IOException {
+    public static YNormalizer loadYNormalizer() throws IOException {
         Path normPath = Paths.get(NORMALIZER_DIR, "Normalizer_y.json");
         if (!Files.exists(normPath)) throw new FileNotFoundException("Normalizador Y no encontrado: " + normPath);
-        return Utils.GSON.fromJson(Files.readString(normPath), MultiSymbolNormalizer.class);
+        return Utils.GSON.fromJson(Files.readString(normPath), YNormalizer.class);
     }
 
     /**
      * Cargar ambos normalizadores
      */
-    public static Pair<RobustNormalizer, MultiSymbolNormalizer> loadNormalizers() throws IOException {
-        RobustNormalizer xNorm = loadXNormalizer();
-        MultiSymbolNormalizer yNorm = loadYNormalizer();
+    public static Pair<XNormalizer, YNormalizer> loadNormalizers() throws IOException {
+        XNormalizer xNorm = loadXNormalizer();
+        YNormalizer yNorm = loadYNormalizer();
         return new Pair<>(xNorm, yNorm);
     }
     /**

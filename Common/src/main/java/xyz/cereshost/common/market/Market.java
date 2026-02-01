@@ -9,20 +9,20 @@ public class Market {
 
     public Market(@NotNull String symbol) {
         this.symbol = symbol;
-        this.trades = new LinkedHashSet<>();
-        this.depths = new LinkedHashSet<>();
-        this.candleSimples = new LinkedHashSet<>();
+        this.trades = new ArrayList<>(100_000);
+        this.depths = new ArrayList<>();
+        this.candleSimples = new ArrayList<>(1_000);
     }
 
     @NotNull
     @Getter
     private final String symbol;
     @Getter
-    private LinkedHashSet<Trade> trades;
+    private final ArrayList<Trade> trades;
     @Getter
-    private LinkedHashSet<CandleSimple> candleSimples;
+    private final ArrayList<CandleSimple> candleSimples;
     @Getter
-    private LinkedHashSet<Depth> depths;
+    private final ArrayList<Depth> depths;
 
 
     public void concat(@NotNull Market market) {
@@ -47,9 +47,9 @@ public class Market {
     }
 
     public synchronized void sortd(){
-        trades = trades.stream().sorted(Comparator.comparingLong(Trade::time)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
-        depths = depths.stream().sorted(Comparator.comparingLong(Depth::getDate)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
-        candleSimples = candleSimples.stream().sorted(Comparator.comparingLong(CandleSimple::openTime)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+        trades.sort(Comparator.comparingLong(Trade::time));
+        depths.sort(Comparator.comparingLong(Depth::getDate));
+        candleSimples.sort(Comparator.comparingLong(CandleSimple::openTime));
     }
 
     @Getter

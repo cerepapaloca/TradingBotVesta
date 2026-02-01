@@ -23,7 +23,7 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "ETHUSDC"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "DOGEUSDC"/* "BNBUSDT"*/);
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
@@ -61,11 +61,11 @@ public class Main {
                 Vesta.info("  MAE Promedio TP:           %.8f", evaluateResult.avgMaeTP());
                 Vesta.info("  MAE Promedio SL:           %.8f", evaluateResult.avgMaeSL());
                 Vesta.info("  Acierto de Tendencia:      %.2f%%S %.2f%%A %.2f%%F %.2f%%C", evaluateResult.hitRateSimple(), evaluateResult.hitRateAdvanced(), evaluateResult.hitRateSafe(), evaluateResult.hitRateConfident(0.7f));
-                int[] longHits = evaluateResult.hitRateLong();
+                int[] longHits = evaluateResult.hitRate(Trading.DireccionOperation.LONG);
                 Vesta.info("  Real Long                  %d L %d S %d N", longHits[0], longHits[1], longHits[2]);
-                int[] shortHits = evaluateResult.hitRateShort();
+                int[] shortHits = evaluateResult.hitRate(Trading.DireccionOperation.SHORT);
                 Vesta.info("  Real Short                 %d L %d S %d N", shortHits[0],  shortHits[1], shortHits[2]);
-                int[] NeutralHits = evaluateResult.hitRateNeutral();
+                int[] NeutralHits = evaluateResult.hitRate(Trading.DireccionOperation.NEUTRAL);
                 Vesta.info("  Real Neutral               %d L %d S %d N", NeutralHits[0], NeutralHits[1], NeutralHits[2]);
                 ChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultPrediction());
                 List<EngineUtils.ResultPrediction> resultPrediction = evaluateResult.resultPrediction();
@@ -102,12 +102,12 @@ public class Main {
 //                        ));
             }
             case "backtest" -> {
-                String symbol = "ETHUSDC";
+                String symbol = "DOGEUSDC";
 
                 showDataBackTest(new BackTestEngine(IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
             }
             case "trading" -> {
-                String symbol = "ETHUSDC";
+                String symbol = "DOGEUSDC";
                 new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
             }
         }
