@@ -8,7 +8,7 @@ import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.engine.EngineUtils;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.file.IOdata;
+import xyz.cereshost.io.IOdata;
 import xyz.cereshost.packet.PacketHandler;
 import xyz.cereshost.strategy.BetaStrategy;
 import xyz.cereshost.strategy.DefaultStrategy;
@@ -29,7 +29,7 @@ public class Main {
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.LOCAL_NETWORK;
 
-    public static final int MAX_MONTH_TRAINING = 1;
+    public static final int MAX_MONTH_TRAINING = 8;//12+8;
 
 
     @Getter

@@ -41,8 +41,8 @@ public class VestaLoss extends Loss {
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
 
-        CompletableFuture<NDArray> lossTP = CompletableFuture.supplyAsync(() -> trueParts.get(0).sub(predParts.get(0)).mul(1.0f).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
-        CompletableFuture<NDArray> lossSL = CompletableFuture.supplyAsync(() -> trueParts.get(1).sub(predParts.get(1)).mul(1.0f).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
+        CompletableFuture<NDArray> lossTP = CompletableFuture.supplyAsync(() -> trueParts.get(0).sub(predParts.get(0)).mul(0.7f).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
+        CompletableFuture<NDArray> lossSL = CompletableFuture.supplyAsync(() -> trueParts.get(1).sub(predParts.get(1)).mul(0.7f).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
 
         CompletableFuture<NDArray> lLong = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(2), predParts.get(2)).mul(1.0f), VestaEngine.EXECUTOR_TRAINING);
         CompletableFuture<NDArray> lNeutral = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul( 2.0f), VestaEngine.EXECUTOR_TRAINING);

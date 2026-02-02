@@ -3,52 +3,57 @@ package xyz.cereshost.builder;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 
 /**
  * Normalizador robusto para X (features).
- * - fit(X): calcula mediana, Q1, Q3 por feature (a lo largo de samples × time)
- * - transform(X): (x - median) / iqr
- * - inverseTransform(Xnorm): x = xnorm * iqr + median
- *
- * NOTA: No aplica clipping para mantener invertibilidad.
  */
 public class XNormalizer {
 
-    // Getters
     @Getter
-    private float[] medians;   // mediana por feature
+    private float[] medians;
+
     @Getter
-    private float[] iqrs;      // IQR (Q3-Q1) por feature (no 0)
+    private float[] iqrs;
+
     @Setter
-    private float minIqr = 1e-6f; // si IQR calculada es 0, sustituir por esto
+    private float minIqr = 1e-6f;
 
     public void fit(float[][][] X) {
         if (X == null || X.length == 0) {
             throw new IllegalArgumentException("X vacío");
         }
+
+        int samples = X.length;
+        int lookback = X[0].length;
         int features = X[0][0].length;
+        int total = samples * lookback;
 
         medians = new float[features];
         iqrs = new float[features];
 
-        // Recolectar por feature todos los valores
+        // 🔥 cada feature es independiente
         for (int f = 0; f < features; f++) {
-            List<Float> vals = new ArrayList<>(X.length * X[0].length);
-            for (int i = 0; i < X.length; i++) {
-                for (int t = 0; t < X[i].length; t++) {
-                    vals.add(X[i][t][f]);
+            float[] vals = new float[total];
+            int idx = 0;
+
+            for (int i = 0; i < samples; i++) {
+                for (int t = 0; t < lookback; t++) {
+                    vals[idx++] = X[i][t][f];
                 }
             }
-            Collections.sort(vals);
-            medians[f] = percentileFromSorted(vals, 50);
+
+            // 🚀 sort multithread
+            Arrays.parallelSort(vals);
+
+            float median = percentileFromSorted(vals, 50);
             float q1 = percentileFromSorted(vals, 25);
             float q3 = percentileFromSorted(vals, 75);
+
             float iqr = q3 - q1;
             if (iqr <= 0f) iqr = minIqr;
+
+            medians[f] = median;
             iqrs[f] = iqr;
         }
     }
@@ -57,11 +62,13 @@ public class XNormalizer {
         if (medians == null || iqrs == null) {
             throw new IllegalStateException("Llama a fit() antes de transform()");
         }
+
         int samples = X.length;
         int lookback = X[0].length;
         int features = X[0][0].length;
 
         float[][][] out = new float[samples][lookback][features];
+
         for (int i = 0; i < samples; i++) {
             for (int t = 0; t < lookback; t++) {
                 for (int f = 0; f < features; f++) {
@@ -76,11 +83,13 @@ public class XNormalizer {
         if (medians == null || iqrs == null) {
             throw new IllegalStateException("Llama a fit() antes de inverseTransform()");
         }
+
         int samples = Xnorm.length;
         int lookback = Xnorm[0].length;
         int features = Xnorm[0][0].length;
 
         float[][][] out = new float[samples][lookback][features];
+
         for (int i = 0; i < samples; i++) {
             for (int t = 0; t < lookback; t++) {
                 for (int f = 0; f < features; f++) {
@@ -91,20 +100,22 @@ public class XNormalizer {
         return out;
     }
 
-    // Helpers
+    // 🔧 helper optimizado para float[]
+    public static float percentileFromSorted(float[] sorted, double pct) {
+        int n = sorted.length;
+        if (n == 0) return 0f;
+        if (n == 1) return sorted[0];
 
-    public static float percentileFromSorted(List<Float> sorted, double pct) {
-        if (sorted == null || sorted.isEmpty()) return 0f;
-        final int n = sorted.size();
-        if (n == 1) return sorted.get(0);
         double rank = (pct / 100.0) * (n - 1);
         int lo = (int) Math.floor(rank);
         int hi = (int) Math.ceil(rank);
-        if (lo == hi) return sorted.get(lo);
-        float lw = sorted.get(lo);
-        float hw = sorted.get(hi);
+
+        if (lo == hi) return sorted[lo];
+
+        float lw = sorted[lo];
+        float hw = sorted[hi];
         double frac = rank - lo;
+
         return (float) (lw + (hw - lw) * frac);
     }
-
 }

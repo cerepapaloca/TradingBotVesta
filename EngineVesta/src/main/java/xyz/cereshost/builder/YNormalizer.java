@@ -3,6 +3,7 @@ package xyz.cereshost.builder;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -38,19 +39,26 @@ public class YNormalizer {
         medians = new float[numOutputs];
         mads = new float[numOutputs];
         mins = new float[numOutputs];
-
+        int rows = y.length;
         for (int col = 0; col < numOutputs; col++) {
             // Solo normalizar las primeras 2 columnas (TP y SL)
             if (col < 2) {
-                List<Float> values = new ArrayList<>();
+                int size = 0;
+                float[] values = new float[rows];
                 for (float[] row : y) {
-                    if (col < row.length) values.add(row[col]);
+                    if (col < row.length) {
+                        values[size++] = row[col];
+                    }
                 }
 
-                if (values.isEmpty()) continue;
+                if (size == 0) continue;
 
-                Collections.sort(values);
-                float minVal = values.get(0);
+                if (size < values.length) {
+                    values = Arrays.copyOf(values, size);
+                }
+
+                Arrays.parallelSort(values);
+                float minVal = values[0];
                 float med = median(values);
                 float deviation = mad(values, med);
 
@@ -95,15 +103,18 @@ public class YNormalizer {
         return original;
     }
 
-    private float median(@NotNull List<Float> values) {
-        int n = values.size();
-        return (n % 2 == 0) ? (values.get(n/2 - 1) + values.get(n/2)) / 2.0f : values.get(n/2);
+    private float median(float @NotNull [] values) {
+        int n = values.length;
+        return (n % 2 == 0) ? (values[n/2 - 1] + values[n/2]) / 2.0f : values[n/2];
     }
 
-    private float mad(@NotNull List<Float> values, float median) {
-        List<Float> deviations = new ArrayList<>();
-        for (float v : values) deviations.add(Math.abs(v - median));
-        Collections.sort(deviations);
-        return median(deviations);
+    private float mad(float @NotNull [] values, float median) {
+        float[] medians = new float[values.length];
+        int idx = 0;
+        for (float v : values) {
+            medians[idx++] = Math.abs(v - median);
+        }
+        Arrays.parallelSort(medians);
+        return median(medians);
     }
 }

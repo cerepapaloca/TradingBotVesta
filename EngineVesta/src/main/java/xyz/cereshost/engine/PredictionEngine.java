@@ -15,7 +15,7 @@ import xyz.cereshost.builder.YNormalizer;
 import xyz.cereshost.builder.XNormalizer;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
-import xyz.cereshost.file.IOdata;
+import xyz.cereshost.io.IOdata;
 import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;

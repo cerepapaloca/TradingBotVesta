@@ -6,13 +6,11 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.ta4j.core.*;
 import org.ta4j.core.indicators.ATRIndicator;
-import org.ta4j.core.indicators.MACDIndicator;
 import org.ta4j.core.indicators.RSIIndicator;
 import org.ta4j.core.indicators.bollinger.*;
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
 import org.ta4j.core.indicators.volume.NVIIndicator;
 import org.ta4j.core.num.DecimalNum;
-import org.ta4j.core.num.DoubleNum;
 import org.ta4j.core.num.Num;
 import xyz.cereshost.ChartUtils;
 import xyz.cereshost.FinancialCalculation;
@@ -22,7 +20,7 @@ import xyz.cereshost.common.market.*;
 import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.file.IOdata;
+import xyz.cereshost.io.IOdata;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -35,7 +33,7 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
-    public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols, int maxMonth) {
+    public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols, int maxMonth, int offset) {
         List<float[][][]> allX = new ArrayList<>();
         List<float[][]> allY = new ArrayList<>();
         for (String symbol : symbols) {
@@ -53,7 +51,7 @@ public class BuilderData {
                 // Crear lista de futuros para procesar cada mes de forma asincrónica
                 List<CompletableFuture<MonthResult>> futures = new ArrayList<>();
 
-                for (int month = maxMonth; month > 0; month--) {
+                for (int month = maxMonth + offset; month > offset; month--) {
                     final int currentMonth = month;
                     CompletableFuture<MonthResult> future = CompletableFuture.supplyAsync(() -> {
                         try {

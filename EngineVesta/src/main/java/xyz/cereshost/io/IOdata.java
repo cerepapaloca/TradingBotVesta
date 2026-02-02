@@ -1,4 +1,4 @@
-package xyz.cereshost.file;
+package xyz.cereshost.io;
 
 import ai.djl.Device;
 import ai.djl.Model;

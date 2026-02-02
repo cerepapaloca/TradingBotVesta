@@ -7,7 +7,7 @@ import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.file.IOdata;
+import xyz.cereshost.io.IOdata;
 import xyz.cereshost.strategy.TradingStrategy;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.trading.TradingBinance;

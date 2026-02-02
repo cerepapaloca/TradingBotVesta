@@ -1,9 +1,10 @@
-package xyz.cereshost;
+package xyz.cereshost.metrics;
 
 import ai.djl.training.Trainer;
 import ai.djl.training.listener.TrainingListenerAdapter;
-import org.jfree.data.category.DefaultCategoryDataset;
 import org.jfree.data.xy.XYSeriesCollection;
+import xyz.cereshost.ChartUtils;
+import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.engine.VestaLoss;
@@ -35,9 +36,10 @@ public class MetricsListener extends TrainingListenerAdapter {
 
         float loss = result.getTrainLoss();
         float mae = result.getTrainEvaluation("mae");
+        float dae = result.getTrainEvaluation("dae");
         trainLoss.add(loss);
         trainMae.add(mae);
-        double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH*Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB);
+        double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH* Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB);
         long time = System.currentTimeMillis();
         long delta = Math.abs(lastTime - time);
         Vesta.info(
@@ -59,7 +61,8 @@ public class MetricsListener extends TrainingListenerAdapter {
             if (datasetLoss == null || datasetNormal == null) {
                 datasetNormal = ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",
                         List.of(new ChartUtils.DataPlot("Loss", List.of(loss)),
-                                new ChartUtils.DataPlot("MAE", List.of(mae))
+                                new ChartUtils.DataPlot("MAE", List.of(mae)),
+                                new ChartUtils.DataPlot("DAE", List.of(dae))
                         )
                 );
                 datasetLoss = ChartUtils.plot("Training Losses TP/SL " + String.join(", ", symbols), "epochs",
@@ -77,6 +80,7 @@ public class MetricsListener extends TrainingListenerAdapter {
             }
             datasetNormal.getSeries("Loss").add(count, loss);
             datasetNormal.getSeries("MAE").add(count, mae);
+            datasetNormal.getSeries("DAE").add(count, dae);
             datasetLoss.getSeries("Loss TP").add(count, l.tp());
             datasetLoss.getSeries("Loss SL").add(count, l.sl());
             datasetDireccion.getSeries( "Loss L").add(count, l.longL());

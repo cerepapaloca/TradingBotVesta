@@ -1,4 +1,4 @@
-package xyz.cereshost;
+package xyz.cereshost.metrics;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
