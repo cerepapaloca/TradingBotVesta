@@ -27,9 +27,9 @@ public class Main {
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
-    public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.LOCAL_NETWORK;
+    public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.CSV;
 
-    public static final int MAX_MONTH_TRAINING = 8;//12+8;
+    public static final int MAX_MONTH_TRAINING = 2;//12+8;
 
 
     @Getter
@@ -70,9 +70,6 @@ public class Main {
                 ChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultPrediction());
                 List<EngineUtils.ResultPrediction> resultPrediction = evaluateResult.resultPrediction();
 
-                // Mostrar precisión por magnitud de dirección
-                ChartUtils.plotAccuracyByMagnitude(resultPrediction, "Presición por magnitud");
-
                 // Mostrar dispersión de predicción vs real
                 ChartUtils.plotPredictionVsRealScatter(resultPrediction, "Presicion VS Real");
 
@@ -104,7 +101,7 @@ public class Main {
             case "backtest" -> {
                 String symbol = "DOGEUSDC";
 
-                showDataBackTest(new BackTestEngine(IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
+                showDataBackTest(new BackTestEngine(IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
             }
             case "trading" -> {
                 String symbol = "DOGEUSDC";

@@ -64,7 +64,7 @@ public class BuilderData {
                                 return new MonthResult(null, null, candlesThisMonth, false);
                             }
 
-                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 30);
+                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 20);
                             float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                             float[][] yraw = pair.getValue();
 

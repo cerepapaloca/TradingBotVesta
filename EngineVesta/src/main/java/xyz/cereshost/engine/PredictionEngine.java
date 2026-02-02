@@ -25,7 +25,7 @@ import java.util.List;
 @Getter
 public class PredictionEngine {
 
-    public static final double THRESHOLD_PRICE = 0.003;
+    public static final double THRESHOLD_PRICE = 0.004;
     public static final double THRESHOLD_RELATIVE = 0.08;
 
     private final Model model;
@@ -171,7 +171,7 @@ public class PredictionEngine {
         //if(direction.equals(DireccionOperation.NEUTRAL)) { tpPrice = currentPrice; slPrice = currentPrice; }
 
         return new PredictionResult(
-                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, direccion
+                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, Math.abs(directionValue), direccion
         );
     }
 
@@ -181,6 +181,7 @@ public class PredictionEngine {
             double slPrice,       // Precio de Stop Loss
             double tpLogReturn,   // Log return para TP (positivo)
             double slLogReturn,   // Log return para SL (positivo)
+            double confident,
             Trading.DireccionOperation direction   // "LONG" o "SHORT"
     ) {
         public double getTpDistance() {

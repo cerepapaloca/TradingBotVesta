@@ -41,11 +41,10 @@ public class VestaLoss extends Loss {
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
 
-        CompletableFuture<NDArray> lossTP = CompletableFuture.supplyAsync(() -> trueParts.get(0).sub(predParts.get(0)).mul(0.7f).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
-        CompletableFuture<NDArray> lossSL = CompletableFuture.supplyAsync(() -> trueParts.get(1).sub(predParts.get(1)).mul(0.7f).abs().mean(), VestaEngine.EXECUTOR_TRAINING);
-
+        CompletableFuture<NDArray> lossTP = CompletableFuture.supplyAsync(() -> TPSLAdvance(trueParts, trueParts.get(0), predParts.get(0)), VestaEngine.EXECUTOR_TRAINING);
+        CompletableFuture<NDArray> lossSL = CompletableFuture.supplyAsync(() -> TPSLAdvance(trueParts, trueParts.get(1), predParts.get(1)), VestaEngine.EXECUTOR_TRAINING);
         CompletableFuture<NDArray> lLong = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(2), predParts.get(2)).mul(1.0f), VestaEngine.EXECUTOR_TRAINING);
-        CompletableFuture<NDArray> lNeutral = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul( 2.0f), VestaEngine.EXECUTOR_TRAINING);
+        CompletableFuture<NDArray> lNeutral = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul( 1.0f), VestaEngine.EXECUTOR_TRAINING);
         CompletableFuture<NDArray> lShort = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(4), predParts.get(4)).mul(1.0f), VestaEngine.EXECUTOR_TRAINING);
 
         // 3. PLUS DE PENALIZACIÓN (Inversión de tendencia)
@@ -76,6 +75,20 @@ public class VestaLoss extends Loss {
         if (lastResult != null) lastResult.close();
         this.lastResult = totalLoss.duplicate();
         return totalLoss;
+    }
+
+    private NDArray TPSLAdvance(NDList trueParts, NDArray slTrue, NDArray slPred) {
+        NDArray isNeutral = trueParts.get(3);
+        NDArray mask = isNeutral.mul(-1).add(1);
+
+        NDArray loss = slTrue.sub(slPred)
+                .abs()
+                .mul(mask)
+                .mul(0.7f);
+
+        NDArray valid = mask.sum().maximum(1e-7f);
+
+        return loss.sum().div(valid);
     }
 
     // Método auxiliar para usar la implementación nativa más rápida

@@ -2,6 +2,7 @@ package xyz.cereshost.common.market;
 
 import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.common.Vesta;
 
 import java.util.*;
 
@@ -74,6 +75,53 @@ public class Market {
             long minute = (t.time() / 60_000) * 60_000;
             tradesByMinuteCache.computeIfAbsent(minute, k -> new ArrayList<>()).add(t);
         }
+    }
+
+    public synchronized Market limit(int days) {
+        if (days <= 0) return this;
+
+        // 1. Encontrar el tiempo de inicio absoluto entre todas las colecciones
+        long firstTime = Long.MAX_VALUE;
+
+        if (!candleSimples.isEmpty()) {
+            firstTime = Math.min(firstTime, candleSimples.iterator().next().openTime());
+        }
+        if (!trades.isEmpty()) {
+            firstTime = Math.min(firstTime, trades.iterator().next().time());
+        }
+        if (!depths.isEmpty()) {
+            firstTime = Math.min(firstTime, depths.iterator().next().getDate());
+        }
+
+        // Si no hay datos, no hay nada que limitar
+        if (firstTime == Long.MAX_VALUE) return this;
+
+        // 2. Calcular el tiempo de corte (milisegundos en X días)
+        long durationMs = (long) days * 24 * 60 * 60 * 1000;
+        long cutoffTime = firstTime + durationMs;
+
+        Vesta.info("Limitando datos de " + symbol + " a " + days + " días. Corte en: " + cutoffTime);
+
+        // 3. Filtrar colecciones manteniendo solo lo que sea menor al cutoffTime
+        // Usamos removeIf porque es eficiente en LinkedHashSet
+
+        int candlesBefore = candleSimples.size();
+        candleSimples.removeIf(c -> c.openTime() >= cutoffTime);
+
+        int tradesBefore = trades.size();
+        trades.removeIf(t -> t.time() >= cutoffTime);
+
+        int depthsBefore = depths.size();
+        depths.removeIf(d -> d.getDate() >= cutoffTime);
+
+        // 4. Invalidar el cache de trades si existía, ya que los datos cambiaron
+        this.tradesByMinuteCache = null;
+
+        Vesta.info(String.format("Limpieza completada [%s]: Velas: %d->%d | Trades: %d->%d | Depth: %d->%d",
+                symbol, candlesBefore, candleSimples.size(),
+                tradesBefore, trades.size(),
+                depthsBefore, depths.size()));
+        return this;
     }
 
     public double getFeedTaker(){

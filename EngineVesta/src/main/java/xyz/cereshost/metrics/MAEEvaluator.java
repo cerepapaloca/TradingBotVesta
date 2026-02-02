@@ -7,14 +7,15 @@ import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class MAEEvaluator extends Evaluator {
 
     // Guardamos: key -> (totalElements, totalAbsError)
     private final ConcurrentHashMap<String, Pair<Long, Double>> accum = new ConcurrentHashMap<>();
 
-    private NDArray lastResult = null;
-    private String lastPredictionId = "";
+    private NDArray totalSumArray; // Acumulador en GPU
+    private final AtomicLong totalElements = new AtomicLong(0);
 
     public MAEEvaluator() {
         this("mae");
@@ -28,61 +29,57 @@ public class MAEEvaluator extends Evaluator {
     public NDArray evaluate(@NotNull NDList labels, @NotNull NDList predictions) {
         NDArray label = labels.singletonOrThrow();
         NDArray pred = predictions.singletonOrThrow();
-
-        // abs error por elemento y media sobre todos los elementos (batch * outputs)
-        NDArray absError = label.sub(pred).abs();
-        // escalar NDArray
-        return absError.mean();
-    }
-
-    @Override
-    public void addAccumulator(String key) {
-        accum.put(key, new Pair<>(0L, 0.0));
+        // Calculamos el error absoluto pero NO pedimos el valor a la CPU todavía
+        return label.sub(pred).abs().sum();
     }
 
     @Override
     public void updateAccumulator(String key, NDList labels, NDList predictions) {
-        NDArray label = labels.singletonOrThrow();
-        NDArray pred = predictions.singletonOrThrow();
+        // 1. Calcular la suma del batch en la GPU
+        NDArray batchSum = evaluate(labels, predictions);
 
-        if (pred.getUid().equals(lastPredictionId) && lastResult != null) {
-            return;
+        // 2. Acumular en el array global (también en GPU)
+        if (totalSumArray == null) {
+            // detach() es vital para que el array sobreviva al cierre del manager del batch
+            batchSum.detach();
+            totalSumArray = batchSum;
+        } else {
+            NDArray oldSum = totalSumArray;
+            // Sumamos y desvinculamos del manager actual
+            NDArray sum = oldSum.add(batchSum);
+            sum.detach();
+            totalSumArray = sum;
+            oldSum.close(); // Liberamos el puntero anterior en GPU
         }
 
-        // media de abs error en este batch (escalar)
-        NDArray meanAbs = evaluate(labels, predictions);
-
-        // número de elementos en este batch (por ejemplo batch * outputs)
-        long numElements = label.size(); // NDArray.size() devuelve el número total de elementos
-
-        double meanVal = meanAbs.toFloatArray()[0]; // o meanAbs.getDouble() si lo soporta
-
-        // suma absoluta total en este batch = mean * numElements
-        double sumAbsForBatch = meanVal * (double) numElements;
-
-        accum.compute(key, (k, old) -> {
-            if (old == null) {
-                return new Pair<>(numElements, sumAbsForBatch);
-            } else {
-                long newCount = old.getKey() + numElements;
-                double newSum = old.getValue() + sumAbsForBatch;
-                return new Pair<>(newCount, newSum);
-            }
-        });
-    }
-
-    @Override
-    public void resetAccumulator(String key) {
-        accum.put(key, new Pair<>(0L, 0.0));
+        // 3. El conteo de elementos es un long simple, no bloquea
+        totalElements.addAndGet(labels.singletonOrThrow().size());
     }
 
     @Override
     public float getAccumulator(String key) {
-        Pair<Long, Double> p = accum.get(key);
-        if (p == null || p.getKey() == 0L) {
+        if (totalSumArray == null || totalElements.get() == 0) {
             return Float.NaN;
         }
-        // media absoluta por elemento
-        return (float) (p.getValue() / (double) p.getKey());
+
+        // SOLO AQUÍ ocurre la sincronización (una vez por cada vez que necesites el log)
+        float totalSum = totalSumArray.toType(ai.djl.ndarray.types.DataType.FLOAT32, false)
+                .getFloat();
+
+        return totalSum / totalElements.get();
+    }
+
+    @Override
+    public void resetAccumulator(String key) {
+        if (totalSumArray != null) {
+            totalSumArray.close();
+            totalSumArray = null;
+        }
+        totalElements.set(0);
+    }
+
+    @Override
+    public void addAccumulator(String key) {
+        // No requerido con esta implementación
     }
 }

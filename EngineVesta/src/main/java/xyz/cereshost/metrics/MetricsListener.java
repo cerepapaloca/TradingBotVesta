@@ -21,6 +21,7 @@ public class MetricsListener extends TrainingListenerAdapter {
     private XYSeriesCollection datasetNormal = null;
     private XYSeriesCollection datasetLoss = null;
     private XYSeriesCollection datasetDireccion = null;
+    private XYSeriesCollection datasetRateDireccion = null;
     private final List<String> symbols = new ArrayList<>();
 
     public void MetricsListener(List<String> symbols) {
@@ -37,6 +38,7 @@ public class MetricsListener extends TrainingListenerAdapter {
         float loss = result.getTrainLoss();
         float mae = result.getTrainEvaluation("mae");
         float dae = result.getTrainEvaluation("dae");
+        float daels = result.getTrainEvaluation("BinDirAcc");
         trainLoss.add(loss);
         trainMae.add(mae);
         double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH* Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB);
@@ -58,11 +60,11 @@ public class MetricsListener extends TrainingListenerAdapter {
             lastTime = time;
             VestaLoss customLoss = (VestaLoss) trainer.getLoss();
             VestaLoss.LossReport l = customLoss.awaitNextBatchData();
-            if (datasetLoss == null || datasetNormal == null) {
+            if (datasetLoss == null || datasetNormal == null || datasetRateDireccion == null) {
                 datasetNormal = ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",
                         List.of(new ChartUtils.DataPlot("Loss", List.of(loss)),
-                                new ChartUtils.DataPlot("MAE", List.of(mae)),
-                                new ChartUtils.DataPlot("DAE", List.of(dae))
+                                new ChartUtils.DataPlot("MAE", List.of(mae))
+
                         )
                 );
                 datasetLoss = ChartUtils.plot("Training Losses TP/SL " + String.join(", ", symbols), "epochs",
@@ -76,11 +78,18 @@ public class MetricsListener extends TrainingListenerAdapter {
                                 new ChartUtils.DataPlot("Loss N", List.of(l.neutralL()))
                         )
                 );
+                datasetRateDireccion = ChartUtils.plot("Rate Dirección" + String.join(", ", symbols), "epochs",
+                        List.of(new ChartUtils.DataPlot("DAE", List.of(dae)),
+                            new ChartUtils.DataPlot("DAELS", List.of(daels))
+                        )
+
+                );
 
             }
             datasetNormal.getSeries("Loss").add(count, loss);
             datasetNormal.getSeries("MAE").add(count, mae);
-            datasetNormal.getSeries("DAE").add(count, dae);
+            datasetRateDireccion.getSeries("DAE").add(count, dae);
+            datasetRateDireccion.getSeries("DAELS").add(count, daels);
             datasetLoss.getSeries("Loss TP").add(count, l.tp());
             datasetLoss.getSeries("Loss SL").add(count, l.sl());
             datasetDireccion.getSeries( "Loss L").add(count, l.longL());

@@ -30,13 +30,15 @@ import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import xyz.cereshost.*;
+import xyz.cereshost.ChartUtils;
+import xyz.cereshost.Main;
 import xyz.cereshost.builder.BuilderData;
-import xyz.cereshost.builder.YNormalizer;
 import xyz.cereshost.builder.XNormalizer;
+import xyz.cereshost.builder.YNormalizer;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.io.IOdata;
+import xyz.cereshost.metrics.BinaryDirectionEvaluator;
 import xyz.cereshost.metrics.DirectionAccuracyEvaluator;
 import xyz.cereshost.metrics.MAEEvaluator;
 import xyz.cereshost.metrics.MetricsListener;
@@ -51,9 +53,10 @@ import java.util.function.BiFunction;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 50;
-    public static final int EPOCH = 1;
-    public static final int EPOCH_SUB = 50;
+    public static final int LOOK_BACK = 60;
+    public static final int EPOCH = 120;
+    public static final int EPOCH_SUB = 1;
+    public static final int SPLIT_DATASET = 1;
 
     public static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
     public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(6);
@@ -80,8 +83,8 @@ public class VestaEngine {
         TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2"))
                 .optOptimizer(Optimizer.adamW()
                         .optLearningRateTracker(Tracker.cosine()
-                                .setBaseValue(0.003f)
-                                .optFinalValue(1e-6f)
+                                .setBaseValue(0.000_001f)
+                                .optFinalValue(0.000_000_03f)
                                 .setMaxUpdates((int) (EPOCH*EPOCH_SUB*Main.MAX_MONTH_TRAINING*0.75))
                                 .build())
 //                        .optLearningRateTracker(Tracker.fixed(0.003f))
@@ -90,6 +93,7 @@ public class VestaEngine {
                         .build())
                 .optDevices(Engine.getInstance().getDevices())
                 .addEvaluator(new MAEEvaluator())
+                .addEvaluator(new BinaryDirectionEvaluator())
                 .addEvaluator(new DirectionAccuracyEvaluator())
                 .optExecutorService(EXECUTOR_TRAINING)
                 .addTrainingListeners(TrainingListener.Defaults.logging())
@@ -148,18 +152,20 @@ public class VestaEngine {
 
 
             // Entrenar
-            Vesta.info("Iniciando entrenamiento con " + EPOCH*EPOCH_SUB*Main.MAX_MONTH_TRAINING + " epochs...");
-            ChunkDataset sampleTraining = computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), Main.MAX_MONTH_TRAINING, 0), batchSize, manager);
-            ChunkDataset sampleVal = computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), Main.MAX_MONTH_TRAINING, 0), batchSize, manager);
+            int iteration =  Main.MAX_MONTH_TRAINING/SPLIT_DATASET;
+            Vesta.info("Iniciando entrenamiento con " + EPOCH*EPOCH_SUB*iteration + " epochs...");
+
+            ChunkDataset sampleTraining = computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), iteration, 0), batchSize, manager);
+            ChunkDataset sampleVal = computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), iteration, 0), batchSize, manager);
 
             for (int epoch = 0; epoch < EPOCH; epoch++) {
-                for (int idx = 0; idx < Main.MAX_MONTH_TRAINING; idx++) {
+                for (int idx = 0; idx < iteration; idx++) {
                     final int finalIdx = idx;
                     CompletableFuture<ChunkDataset> sampleTrainingNext = CompletableFuture.supplyAsync(() ->
-                            computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), Main.MAX_MONTH_TRAINING, (finalIdx + 1) % Main.MAX_MONTH_TRAINING), batchSize, manager), EXECUTOR_TRAINING);
+                            computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), iteration, (finalIdx + 1) % iteration), batchSize, manager), EXECUTOR_TRAINING);
 
                     CompletableFuture<ChunkDataset> sampleValNext = CompletableFuture.supplyAsync(() ->
-                            computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), Main.MAX_MONTH_TRAINING, (finalIdx + 1) % Main.MAX_MONTH_TRAINING), batchSize, manager), EXECUTOR_TRAINING);
+                            computeDataset(EngineUtils.getSingleSplitWithLabels(result.X_train_norm(), result.y_train_norm(), iteration, (finalIdx + 1) % iteration), batchSize, manager), EXECUTOR_TRAINING);
 
                     EasyTrain.fit(trainer, EPOCH_SUB, sampleTraining.dataset(), sampleVal.dataset());
                     NDArray xT = sampleTraining.x();
@@ -208,7 +214,7 @@ public class VestaEngine {
                 // Como entrenaste combinando símbolos, lo ideal es probar en uno representativo o iterar.
                 // Aquí probamos con el primer símbolo de la lista para obtener el ROI
                 String testSymbol = symbols.get(0);
-                Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols.get(0), 1);
+                Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols.get(0), 1).limit(7);
                 EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, result.yNormalizer(), 1024);
 
                 BackTestEngine.BackTestResult simResult;
@@ -386,13 +392,13 @@ public class VestaEngine {
         // luego el "smoothing" que tenías, y por último softmax para obtener probabilidades mutuamente excluyentes.
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(128).build())
-                .add(Dropout.builder().optRate(0.08f).build())
+                .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(128).build())
                 .add(Linear.builder().setUnits(64).build())
                 .add(Linear.builder().setUnits(3).build())
                 .add(new LambdaBlock(ndArrays -> {
                     NDArray x = ndArrays.singletonOrThrow();
-                    return new NDList(softmax(x, 0.7f)); // softmax sobre la última dimensión
+                    return new NDList(softmax(x, 1f)); // softmax sobre la última dimensión
                 }))
         );
 
@@ -408,7 +414,7 @@ public class VestaEngine {
                         .optHasBiases(true) // recomendado
                         .optBidirectional(false)
                         .optBatchFirst(true)
-                        .optDropRate(0.1f)
+                        .optDropRate(0.3f)
                         .build())
                 .add(new LambdaBlock(ndArrays -> {
                     NDArray seq = ndArrays.singletonOrThrow();  // [B, T, H]
@@ -423,7 +429,7 @@ public class VestaEngine {
                 }))
 //                .add(LayerNorm.builder().build())
 //                .add(Dropout.builder().optRate(0.08f).build())
-                .add(Linear.builder().setUnits(256).build());
+                .add(Linear.builder().setUnits(128).build());
     }
 
     private static void MLPHeader(SequentialBlock mainBlock) {
@@ -438,7 +444,7 @@ public class VestaEngine {
                 .add(Linear.builder().setUnits(512).build())
                 .add(Activation.leakyReluBlock(0.1f)) // LeakyReLU es mejor para evitar neuronas muertas
                 .add(BatchNorm.builder().build())     // Estabiliza el aprendizaje
-                .add(Dropout.builder().optRate(0.1f).build()) // Evita memorización
+                .add(Dropout.builder().optRate(0.2f).build()) // Evita memorización
                 .add(Linear.builder().setUnits(256).build());
 
         // Capa 2: Compresión
@@ -446,11 +452,12 @@ public class VestaEngine {
                 .add(Linear.builder().setUnits(256).build())
                 .add(Activation.leakyReluBlock(0.1f))
                 .add(BatchNorm.builder().build())
-                .add(Dropout.builder().optRate(0.2f).build());
+                .add(Dropout.builder().optRate(0.1f).build());
 
         // Capa 3: Refinamiento antes de las cabezas
         mainBlock.add(Linear.builder().setUnits(128).build())
                 .add(Linear.builder().setUnits(128).build())
+                .add(Dropout.builder().optRate(0.1f).build())
                 .add(Activation.leakyReluBlock(0.1f));
     }
 
@@ -475,7 +482,7 @@ public class VestaEngine {
         return new ChunkDataset(X_train, y_train, new ArrayDataset.Builder()
                 .setData(X_train)
                 .optLabels(y_train)
-                .setSampling(batchSize, true)
+                .setSampling(batchSize, false)
                 .build());
     }
 
