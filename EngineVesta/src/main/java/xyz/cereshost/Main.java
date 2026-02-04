@@ -23,13 +23,13 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "DOGEUSDC"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "ETHUSDC"/* "BNBUSDT"*/);
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.CSV;
 
-    public static final int MAX_MONTH_TRAINING = 2;//12+8;
+    public static final int MAX_MONTH_TRAINING = 3;//4 12+8;
 
 
     @Getter
@@ -99,12 +99,12 @@ public class Main {
 //                        ));
             }
             case "backtest" -> {
-                String symbol = "DOGEUSDC";
+                String symbol = "ETHUSDC";
 
                 showDataBackTest(new BackTestEngine(IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
             }
             case "trading" -> {
-                String symbol = "DOGEUSDC";
+                String symbol = "ETHUSDC";
                 new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
             }
         }

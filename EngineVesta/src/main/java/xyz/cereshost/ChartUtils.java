@@ -1,11 +1,17 @@
 package xyz.cereshost;
 
-import org.jfree.chart.*;
+import lombok.Getter;
+import org.jetbrains.annotations.NotNull;
+import org.jfree.chart.ChartFactory;
+import org.jfree.chart.ChartFrame;
+import org.jfree.chart.ChartPanel;
+import org.jfree.chart.JFreeChart;
 import org.jfree.chart.axis.DateAxis;
 import org.jfree.chart.axis.NumberAxis;
 import org.jfree.chart.axis.ValueAxis;
 import org.jfree.chart.plot.*;
 import org.jfree.chart.renderer.xy.CandlestickRenderer;
+import org.jfree.chart.renderer.xy.XYItemRenderer;
 import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
 import org.jfree.data.category.DefaultCategoryDataset;
 import org.jfree.data.xy.DefaultHighLowDataset;
@@ -41,10 +47,9 @@ public class ChartUtils {
             List<DataPlot> plots
     ) {
         XYSeriesCollection dataset = new XYSeriesCollection();
-
         for (DataPlot plot : plots) {
-            List<Float> values = plot.values();
-            String seriesName = plot.yLabel();
+            List<Float> values = plot.getValues();
+            String seriesName = plot.getYLabel();
             XYSeries series = new XYSeries(seriesName);
             for (int i = 0; i < values.size(); i++) {
                 series.add(i + 1, (float) values.get(i));
@@ -64,8 +69,7 @@ public class ChartUtils {
                 true,
                 false
         );
-        XYPlot chartSeries = chart.getXYPlot();
-        NumberAxis xAxis = (NumberAxis) chartSeries.getDomainAxis();
+        NumberAxis xAxis = getNumberAxisAndApplyStyle(plots, chart);
         xAxis.setNumberFormatOverride(new DecimalFormat("0"));
         xAxis.setAutoTickUnitSelection(true);
         xAxis.setStandardTickUnits(createIntegerTickUnits());
@@ -76,6 +80,62 @@ public class ChartUtils {
         frame.setVisible(true);
 
         return dataset;
+    }
+
+    private static NumberAxis getNumberAxisAndApplyStyle(List<DataPlot> plots, JFreeChart chart) {
+        XYPlot chartSeries = chart.getXYPlot();
+        int idx = 0;
+        for (DataPlot plot : plots) {
+            XYItemRenderer render = chartSeries.getRenderer();
+            if (plot.getColor() != null) render.setSeriesPaint(idx, plot.getColor());
+            switch (plot.getStyleLine()){
+                case DISCONTINUA -> render.setSeriesStroke(idx,
+                        new BasicStroke(2.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0, new float[]{8.0f, 6.0f}, 0));
+                default -> render.setSeriesStroke(idx,
+                        new BasicStroke(2f));
+            }
+            idx++;
+        }
+        return (NumberAxis) chartSeries.getDomainAxis();
+    }
+
+    @Getter
+    public static final class DataPlot {
+        @NotNull
+        private final String yLabel;
+        @NotNull
+        private final List<Float> values;
+        private final Color color;
+        @NotNull
+        private final StyleLine styleLine;
+
+        public DataPlot(
+                @NotNull String yLabel,
+                @NotNull List<Float> values
+        ) {
+            this.yLabel = yLabel;
+            this.values = values;
+            this.color = null;
+            this.styleLine = StyleLine.NORMAL;
+        }
+
+        public DataPlot(
+                @NotNull String yLabel,
+                @NotNull List<Float> values,
+                Color color,
+                @NotNull StyleLine styleLine
+        ) {
+            this.yLabel = yLabel;
+            this.values = values;
+            this.color = color;
+            this.styleLine = styleLine;
+        }
+
+        public enum StyleLine{
+            NORMAL,
+            DISCONTINUA
+        }
+
     }
 
     public static void darkMode(JFreeChart chart){
@@ -94,15 +154,13 @@ public class ChartUtils {
             }
             default -> {}
         }
-
         plot.setBackgroundPaint(Color.BLACK);
+        chart.getLegend().setBackgroundPaint(Color.BLACK);
+        chart.getLegend().setItemPaint(Color.WHITE);
         chart.setBackgroundPaint(Color.BLACK);
     };
 
-    public record DataPlot(
-            String yLabel,
-            List<Float> values
-    ) {}
+
 
     public static void showCandleChart(String title, List<Candle> candles, String symbol) {
         if (candles == null || candles.isEmpty()) {

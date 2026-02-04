@@ -3,6 +3,7 @@ package xyz.cereshost.engine;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
+import ai.djl.ndarray.NDManager;
 import ai.djl.training.loss.Loss;
 import lombok.SneakyThrows;
 
@@ -32,29 +33,28 @@ public class VestaLoss extends Loss {
         NDArray yPred = prediction.singletonOrThrow();
         NDArray yTrue = target.singletonOrThrow();
 
-        if (yPred.getUid().equals(lastPredictionId) && lastResult != null) {
-            return lastResult;
-        }
+//        if (yPred.getUid().equals(lastPredictionId) && lastResult != null) {
+//            return lastResult;
+//        }
 
 
         // 1. Cálculos vectorizados rápidos (GPU)
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
-
-        CompletableFuture<NDArray> lossTP = CompletableFuture.supplyAsync(() -> TPSLAdvance(trueParts, trueParts.get(0), predParts.get(0)), VestaEngine.EXECUTOR_TRAINING);
-        CompletableFuture<NDArray> lossSL = CompletableFuture.supplyAsync(() -> TPSLAdvance(trueParts, trueParts.get(1), predParts.get(1)), VestaEngine.EXECUTOR_TRAINING);
-        CompletableFuture<NDArray> lLong = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(2), predParts.get(2)).mul(1.0f), VestaEngine.EXECUTOR_TRAINING);
-        CompletableFuture<NDArray> lNeutral = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul( 1.0f), VestaEngine.EXECUTOR_TRAINING);
-        CompletableFuture<NDArray> lShort = CompletableFuture.supplyAsync(() -> binaryCrossEntropy(trueParts.get(4), predParts.get(4)).mul(1.0f), VestaEngine.EXECUTOR_TRAINING);
+        NDManager manager = target.getManager();
+        NDArray lossTP = TPSLAdvance(trueParts, trueParts.get(0), predParts.get(0));
+        NDArray lossSL = TPSLAdvance(trueParts, trueParts.get(1), predParts.get(1));
+        NDArray lLong = binaryCrossEntropy(trueParts.get(2), predParts.get(2)).mul(EngineUtils.floatToNDArray(1f, manager));
+        NDArray lNeutral = binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul(EngineUtils.floatToNDArray(2f, manager));
+        NDArray lShort =  binaryCrossEntropy(trueParts.get(4), predParts.get(4)).mul(EngineUtils.floatToNDArray(1f, manager));
 
         // 3. PLUS DE PENALIZACIÓN (Inversión de tendencia)
-        CompletableFuture<NDArray> crossError = CompletableFuture.supplyAsync(() ->
-                trueParts.get(2).mul(predParts.get(4))  // Long real * Predicción Short
+        NDArray crossError = trueParts.get(2).mul(predParts.get(4))  // Long real * Predicción Short
                         .add(trueParts.get(4).mul(predParts.get(2)))        // Short real * Predicción Long
-                        .mul(3f).mean(), VestaEngine.EXECUTOR_TRAINING);
+                        .mul(EngineUtils.floatToNDArray(3f, manager)).mean();
 
 
-        NDArray totalLoss = lossTP.get().add(lossSL.get()).add(lLong.get()).add(lNeutral.get()).add(lShort.get()).add(crossError.get());
+        NDArray totalLoss = lossTP.add(lossSL).add(lLong).add(lNeutral).add(lShort).add(crossError);
 
         // 2. ¿Alguien está esperando datos? (Sincronización Inteligente)
         // Solo entramos aquí si llamaste a awaitNextBatchData()
@@ -63,42 +63,45 @@ public class VestaLoss extends Loss {
             // Solo aquí pagamos el costo de sincronización GPU -> CPU
             request.complete(new LossReport(
                     totalLoss.getFloat(),
-                    lossTP.get().getFloat(),
-                    lossSL.get().getFloat(),
-                    lLong.get().getFloat(),
-                    lNeutral.get().getFloat(),
-                    lShort.get().getFloat()
+                    lossTP.getFloat(),
+                    lossSL.getFloat(),
+                    lLong.getFloat(),
+                    lNeutral.getFloat(),
+                    lShort.getFloat()
             ));
             dataRequest = null; // Limpiamos la petición
         }
-        this.lastPredictionId = yPred.getUid();
-        if (lastResult != null) lastResult.close();
-        this.lastResult = totalLoss.duplicate();
+//        this.lastPredictionId = yPred.getUid();
+//        if (lastResult != null) lastResult.close();
+//        this.lastResult = totalLoss.duplicate();
         return totalLoss;
     }
 
     private NDArray TPSLAdvance(NDList trueParts, NDArray slTrue, NDArray slPred) {
+        NDManager manager = slTrue.getManager();;
         NDArray isNeutral = trueParts.get(3);
-        NDArray mask = isNeutral.mul(-1).add(1);
+        NDArray mask = isNeutral.mul(EngineUtils.floatToNDArray(-1f, manager)).add(EngineUtils.floatToNDArray(1f, manager));
 
         NDArray loss = slTrue.sub(slPred)
                 .abs()
                 .mul(mask)
-                .mul(0.7f);
+                .mul(EngineUtils.floatToNDArray(0.7f, manager));
 
-        NDArray valid = mask.sum().maximum(1e-7f);
+        NDArray valid = mask.sum().maximum(EngineUtils.floatToNDArray(1e-7f, manager));
 
         return loss.sum().div(valid);
     }
 
     // Método auxiliar para usar la implementación nativa más rápida
     private NDArray binaryCrossEntropy(NDArray target, NDArray prediction) {
-        NDArray p = prediction.clip(1e-7, 1.0 - 1e-7);
-        return target.mul(p.log()).add(target.sub(1).neg().mul(p.sub(1).neg().log())).neg().mean();
+        NDManager manager = target.getManager();
+        NDArray p = prediction.minimum(EngineUtils.floatToNDArray(1.0f - 1e-7f, manager)).maximum(EngineUtils.floatToNDArray(1e-7f, manager));
+        return target.mul(p.log()).add(target.sub(EngineUtils.floatToNDArray(1f, manager)).neg().mul(p.sub(EngineUtils.floatToNDArray(1f, manager)).neg().log())).neg().mean();
     }
 
     private NDArray categoricalCrossEntropy(NDArray target, NDArray prediction) {
-        NDArray p = prediction.clip(1e-7, 1.0 - 1e-7);
+        NDManager manager = target.getManager();
+        NDArray p = prediction.minimum(EngineUtils.floatToNDArray(1e-7f, manager)).maximum(EngineUtils.floatToNDArray(1.0f - 1e-7f, manager));
         return target.mul(p.log()).sum(new int[]{1}).neg().mean();
     }
 

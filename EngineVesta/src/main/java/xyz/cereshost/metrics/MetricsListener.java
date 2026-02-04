@@ -9,12 +9,11 @@ import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.engine.VestaLoss;
 
+import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MetricsListener extends TrainingListenerAdapter {
-    private final List<Float> trainLoss = new ArrayList<>();
-    private final List<Float> trainMae  = new ArrayList<>();
 
     private long lastTime = -1;
     private double lastMae = -1;
@@ -24,46 +23,48 @@ public class MetricsListener extends TrainingListenerAdapter {
     private XYSeriesCollection datasetRateDireccion = null;
     private final List<String> symbols = new ArrayList<>();
 
-    public void MetricsListener(List<String> symbols) {
-        this.symbols.addAll(symbols);
-    }
-
     private int count = 1;
 
     @Override
     public void onEpoch(Trainer trainer) {
         var result = trainer.getTrainingResult();
 
-
-        float loss = result.getTrainLoss();
-        float mae = result.getTrainEvaluation("mae");
-        float dae = result.getTrainEvaluation("dae");
-        float daels = result.getTrainEvaluation("BinDirAcc");
-        trainLoss.add(loss);
-        trainMae.add(mae);
-        double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH* Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB);
+        // Obtener los resultados
+        float lossTrain = result.getTrainLoss();
+        float lossValidation = result.getValidateLoss();
+        float maeTrain = result.getTrainEvaluation("mae");
+        float daeTrain = result.getTrainEvaluation("DirrAcc");
+        float daelsTrain = result.getTrainEvaluation("BinDirAcc");
+        float maeValidation = result.getValidateEvaluation("mae");
+        float daeValidation = result.getValidateEvaluation("DirrAcc");
+        float daelsValidation = result.getValidateEvaluation("BinDirAcc");
+        // Calucar porgreso
+        double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH* (Main.MAX_MONTH_TRAINING/VestaEngine.SPLIT_DATASET) *VestaEngine.EPOCH_SUB);
         long time = System.currentTimeMillis();
         long delta = Math.abs(lastTime - time);
+        // Mostrar mensaje
         Vesta.info(
                 String.format("Progreso=%.2f Tiempo=%.2fs -T=%sm MAEr=%.4f [%s]\n",
                         (progress)*100,
                         (double) delta/1000,
                         (int) ((((VestaEngine.EPOCH*Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB) - trainer.getTrainingResult().getEpoch())*delta)/1000)/60,
-                        lastMae - mae,
+                        lastMae - maeValidation,
                         "#".repeat((int) (progress*100)) + " " .repeat((int) (Math.abs(progress-1)*100))
                 )
         );
 
-
+        // Ejecutar tarea de forma asincrónico
         VestaEngine.EXECUTOR.execute(() -> {
-            lastMae = mae;
+            lastMae = maeValidation;
             lastTime = time;
             VestaLoss customLoss = (VestaLoss) trainer.getLoss();
             VestaLoss.LossReport l = customLoss.awaitNextBatchData();
             if (datasetLoss == null || datasetNormal == null || datasetRateDireccion == null) {
                 datasetNormal = ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("Loss", List.of(loss)),
-                                new ChartUtils.DataPlot("MAE", List.of(mae))
+                        List.of(new ChartUtils.DataPlot("Loss T", List.of(lossTrain), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("MAE T", List.of(maeTrain), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("Loss V", List.of(lossValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL),
+                                new ChartUtils.DataPlot("MAE V", List.of(maeValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL)
 
                         )
                 );
@@ -79,17 +80,23 @@ public class MetricsListener extends TrainingListenerAdapter {
                         )
                 );
                 datasetRateDireccion = ChartUtils.plot("Rate Dirección" + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("DAE", List.of(dae)),
-                            new ChartUtils.DataPlot("DAELS", List.of(daels))
+                        List.of(new ChartUtils.DataPlot("DAE T", List.of(daeTrain), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("DAELS T", List.of(daelsTrain), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("DAE V", List.of(daeValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL),
+                                new ChartUtils.DataPlot("DAELS V", List.of(daelsValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL)
                         )
 
                 );
 
             }
-            datasetNormal.getSeries("Loss").add(count, loss);
-            datasetNormal.getSeries("MAE").add(count, mae);
-            datasetRateDireccion.getSeries("DAE").add(count, dae);
-            datasetRateDireccion.getSeries("DAELS").add(count, daels);
+            datasetNormal.getSeries("Loss T").add(count, lossTrain);
+            datasetNormal.getSeries("MAE T").add(count, maeTrain);
+            datasetNormal.getSeries("Loss V").add(count, lossValidation);
+            datasetNormal.getSeries("MAE V").add(count, maeValidation);
+            datasetRateDireccion.getSeries("DAE T").add(count, daeTrain);
+            datasetRateDireccion.getSeries("DAELS T").add(count, daelsTrain);
+            datasetRateDireccion.getSeries("DAE V").add(count, daeValidation);
+            datasetRateDireccion.getSeries("DAELS V").add(count, daelsValidation);
             datasetLoss.getSeries("Loss TP").add(count, l.tp());
             datasetLoss.getSeries("Loss SL").add(count, l.sl());
             datasetDireccion.getSeries( "Loss L").add(count, l.longL());

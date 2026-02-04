@@ -21,6 +21,7 @@ import xyz.cereshost.trading.Trading;
 import java.io.IOException;
 import java.nio.FloatBuffer;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_RELATIVE;
 
@@ -575,5 +576,20 @@ public class EngineUtils {
         endIndex = Math.min(endIndex, totalSamples);
 
         return new Pair<>(startIndex, endIndex);
+    }
+
+    private static final ConcurrentHashMap<Float, NDArray> cacheFloatsStatic = new ConcurrentHashMap<>();
+
+    public static NDArray floatToNDArray(float value, NDManager manager) {
+        NDArray ndArray = cacheFloatsStatic.computeIfAbsent(value, manager::create);
+        ndArray.detach();
+        return ndArray;
+    }
+
+    public static void clearCacheFloats() {
+        for (NDArray ndArray : cacheFloatsStatic.values()) {
+            ndArray.close();
+        }
+        cacheFloatsStatic.clear();
     }
 }

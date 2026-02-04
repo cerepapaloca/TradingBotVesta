@@ -2,6 +2,7 @@ package xyz.cereshost.io;
 
 import ai.djl.Device;
 import ai.djl.Model;
+import ai.djl.ndarray.NDManager;
 import ai.djl.util.Pair;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;

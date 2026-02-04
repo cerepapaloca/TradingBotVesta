@@ -2,12 +2,10 @@ package xyz.cereshost.metrics;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
+import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
-import ai.djl.training.evaluator.Evaluator;
 import lombok.SneakyThrows;
-
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
+import xyz.cereshost.engine.EngineUtils;
 
 /**
  * Evaluador Binario (Long vs Short).
@@ -20,14 +18,11 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * Output esperado: [TP, SL, Long, Neutral, Short]
  */
-public class BinaryDirectionEvaluator extends Evaluator {
+public class BinaryDirectionEvaluator extends BaseAccuracy {
 
     // Índices relativos al sub-array de dirección [L, N, S]
     // Long=0, Neutral=1, Short=2
     private static final int CLASS_NEUTRAL = 1;
-
-    private final AtomicLong correctCount = new AtomicLong(0);
-    private final AtomicLong totalValidCount = new AtomicLong(0);
 
     public BinaryDirectionEvaluator() {
         super("BinDirAcc"); // Nombre corto para los logs
@@ -36,6 +31,8 @@ public class BinaryDirectionEvaluator extends Evaluator {
     @Override
     public NDArray evaluate(NDList labels, NDList predictions) {
         // Obtenemos los arrays (Batch, 5)
+        NDManager manager = labels.getManager();
+
         NDArray predAll = predictions.singletonOrThrow();
         NDArray labelAll = labels.singletonOrThrow();
 
@@ -49,8 +46,8 @@ public class BinaryDirectionEvaluator extends Evaluator {
 
         // 3. Crear MÁSCARA DE VALIDEZ (Filtro)
         // Queremos filas donde: (Pred != Neutral) AND (Real != Neutral)
-        NDArray notNeutralPred = predClass.neq(CLASS_NEUTRAL);
-        NDArray notNeutralLabel = trueClass.neq(CLASS_NEUTRAL);
+        NDArray notNeutralPred = predClass.neq(EngineUtils.floatToNDArray(CLASS_NEUTRAL, manager));
+        NDArray notNeutralLabel = trueClass.neq(EngineUtils.floatToNDArray(CLASS_NEUTRAL, manager));
 
         // Mask es 1 si ambos son válidos, 0 si alguno es neutral
         NDArray validMask = notNeutralPred.logicalAnd(notNeutralLabel);
@@ -70,6 +67,8 @@ public class BinaryDirectionEvaluator extends Evaluator {
     @SneakyThrows
     @Override
     public void updateAccumulator(String key, NDList labels, NDList predictions) {
+        NDManager manager = labels.getManager();
+
         // Recalculamos la lógica de filtrado aquí para tener el conteo exacto
         NDArray predAll = predictions.singletonOrThrow();
         NDArray labelAll = labels.singletonOrThrow();
@@ -78,46 +77,19 @@ public class BinaryDirectionEvaluator extends Evaluator {
         NDArray trueClass = labelAll.get(":, 2:5").argMax(1);
 
         // Definir qué es válido
-        CompletableFuture<NDArray> validMaskFuture = CompletableFuture.supplyAsync(() -> predClass.neq(CLASS_NEUTRAL)
-                .logicalAnd(trueClass.neq(CLASS_NEUTRAL)));
+        NDArray validMask = predClass.neq(EngineUtils.floatToNDArray(CLASS_NEUTRAL, manager))
+                .logicalAnd(trueClass.neq(EngineUtils.floatToNDArray(CLASS_NEUTRAL, manager)));
 
         // Calcular aciertos sobre los válidos
-        NDArray validMask = validMaskFuture.get();
         NDArray hits = predClass.eq(trueClass).logicalAnd(validMask);
 
-        // Sumar
-        long batchCorrect = hits.sum().getLong();
-        long batchTotalValid = validMask.sum().getLong();
-
         // Solo actualizamos si hubo al menos una muestra válida en el batch
-        if (batchTotalValid > 0) {
-            correctCount.addAndGet(batchCorrect);
-            totalValidCount.addAndGet(batchTotalValid);
-        }
+        computeResult(key, hits.sum(), validMask.sum());
 
         // Limpieza de memoria (importante en DJL loop)
         predClass.close();
         trueClass.close();
         validMask.close();
         hits.close();
-    }
-
-    @Override
-    public float getAccumulator(String key) {
-        long total = totalValidCount.get();
-        if (total == 0) {
-            return 0f; // Evitar división por cero si todo fue Neutral
-        }
-        return (float) correctCount.get() / total * 100.0f;
-    }
-
-    @Override
-    public void resetAccumulator(String key) {
-        correctCount.set(0);
-        totalValidCount.set(0);
-    }
-
-    @Override
-    public void addAccumulator(String key) {
     }
 }

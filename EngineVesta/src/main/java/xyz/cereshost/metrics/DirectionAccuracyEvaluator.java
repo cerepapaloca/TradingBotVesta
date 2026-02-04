@@ -3,9 +3,7 @@ package xyz.cereshost.metrics;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.DataType;
-import ai.djl.training.evaluator.Evaluator;
-
-import java.util.concurrent.atomic.AtomicLong;
+import xyz.cereshost.engine.EngineUtils;
 
 /**
  * Evaluador sencillo para porcentaje de acierto en la dirección.
@@ -17,15 +15,11 @@ import java.util.concurrent.atomic.AtomicLong;
  *   eval.updateAccumulator("direction", labelsNDList, predsNDList);
  *   float acc = eval.getAccumulator("accuracy");
  */
-public class DirectionAccuracyEvaluator extends Evaluator {
+public class DirectionAccuracyEvaluator extends BaseAccuracy {
 
     public DirectionAccuracyEvaluator() {
-        super("dae");
+        super("DirrAcc");
     }
-
-    // Usamos nuestras propias variables para no depender de la versión de DJL
-    private final AtomicLong correctCount = new AtomicLong(0);
-    private final AtomicLong totalCount = new AtomicLong(0);
 
     @Override
     public NDArray evaluate(NDList labels, NDList predictions) {
@@ -55,34 +49,28 @@ public class DirectionAccuracyEvaluator extends Evaluator {
             if (correctArray.isEmpty()) {
                 return;
             }
+            NDArray pred = predictions.singletonOrThrow();
+            NDArray truth = labels.singletonOrThrow();
+
+            NDArray predClass = pred.argMax(1);
+            NDArray trueClass = truth.argMax(1);
+
+            // máscara de válidos (ejemplo: ignorar clase neutral = 2)
+            NDArray validMask = trueClass.neq(EngineUtils.floatToNDArray(2f, correctArray.getManager()));
+
+            // aciertos válidos
+            NDArray hits = predClass.eq(trueClass).mul(validMask);
 
             // Sumar todos los aciertos (1 = acierto, 0 = error)
-            float batchCorrect = correctArray.sum().getFloat();
-            long batchTotal = correctArray.getShape().get(0);
+            //float batchCorrect = correctArray.sum().getFloat();
+            NDArray batchCorrect = hits.sum()
+                    .toType(DataType.FLOAT32, false);
 
-            // Actualizar contadores
-            correctCount.addAndGet((long) batchCorrect);
-            totalCount.addAndGet(batchTotal);
+            NDArray batchTotal = validMask.sum()
+                    .toType(DataType.FLOAT32, false);
+
+            computeResult(key, batchCorrect, batchTotal);
+
         }
-    }
-
-    @Override
-    public float getAccumulator(String key) {
-        long total = totalCount.get();
-        if (total == 0) {
-            return 0f;
-        }
-        return (float) correctCount.get() / total * 100; // Multiplicar por 100 para porcentaje
-    }
-
-    @Override
-    public void resetAccumulator(String key) {
-        correctCount.set(0);
-        totalCount.set(0);
-    }
-
-    @Override
-    public void addAccumulator(String key) {
-        // No se necesita implementación específica
     }
 }
