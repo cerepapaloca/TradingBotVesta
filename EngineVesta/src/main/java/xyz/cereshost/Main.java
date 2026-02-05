@@ -29,7 +29,7 @@ public class Main {
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.CSV;
 
-    public static final int MAX_MONTH_TRAINING = 3;//4 12+8;
+    public static final int MAX_MONTH_TRAINING = 4;//4 12+8;
 
 
     @Getter
