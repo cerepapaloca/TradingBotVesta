@@ -16,6 +16,7 @@ import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.norm.Dropout;
+import ai.djl.nn.norm.LayerNorm;
 import ai.djl.nn.recurrent.GRU;
 import ai.djl.pytorch.engine.PtModel;
 import ai.djl.pytorch.engine.PtNDManager;
@@ -58,9 +59,9 @@ import java.util.function.BiFunction;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 60;
-    public static final int EPOCH = 4;
-    public static final int EPOCH_SUB = 15;
+    public static final int LOOK_BACK = 50;
+    public static final int EPOCH = 30;
+    public static final int EPOCH_SUB = 1;
     public static final int SPLIT_DATASET = 1;
 
     @Getter
@@ -69,6 +70,7 @@ public class VestaEngine {
     public static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
     public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(6);
     public static final ExecutorService EXECUTOR_TRAINING = Executors.newScheduledThreadPool(8);
+    private static final float DIRECTION_EQUALIZATION_STRENGTH = 0.35f;
     /**
      * Entrena un modelo con múltiples símbolos combinados
      */
@@ -86,12 +88,11 @@ public class VestaEngine {
         Device device = Engine.getInstance().getDevices()[0];
         Vesta.info("Usando dispositivo: " + device);
         Vesta.info("Entrenando con " + symbols.size() + " símbolos: " + symbols);
-        CompletableFuture<Market> futureMarket = new CompletableFuture<>();
 
         TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2"))
                 .optOptimizer(Optimizer.adamW()
                         .optLearningRateTracker(Tracker.cosine()
-                                .setBaseValue(0.000_000_3f)
+                                .setBaseValue(0.000_000_2f)
                                 .optFinalValue(0.000_000_05f)
                                 .setMaxUpdates((int) (EPOCH*EPOCH_SUB*((double)Main.MAX_MONTH_TRAINING /SPLIT_DATASET)))
                                 .build())
@@ -334,6 +335,8 @@ public class VestaEngine {
                 .add(Linear.builder().setUnits(128).build())
                 .add(Dropout.builder().optRate(0.1f).build())
                 .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
                     NDArray x = ndArrays.singletonOrThrow();
@@ -346,6 +349,8 @@ public class VestaEngine {
                 .add(Linear.builder().setUnits(128).build())
                 .add(Dropout.builder().optRate(0.1f).build())
                 .add(Linear.builder().setUnits(64).build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
                     NDArray x = ndArrays.singletonOrThrow();
@@ -369,6 +374,7 @@ public class VestaEngine {
         // Sub-brazo 1 (Long)
         dirSub.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(64).build())
+                .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
@@ -380,6 +386,7 @@ public class VestaEngine {
         // Sub-brazo 2 (Neutral)
         dirSub.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
@@ -391,6 +398,7 @@ public class VestaEngine {
         // Sub-brazo 3 (Short)
         dirSub.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(64).build())
+                .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
@@ -404,7 +412,30 @@ public class VestaEngine {
         branches.add(new SequentialBlock()
                 .add(Linear.builder().setUnits(128).build())
                 .add(Dropout.builder().optRate(0.2f).build())
+                .add(LayerNorm.builder().build())
                 .add(dirSub)
+                .add(new LambdaBlock(ndArrays -> {
+                    NDArray concatenated = ndArrays.singletonOrThrow(); // [B,3]
+                    // Mantener dimensión [B,1]
+                    NDArray longLogit = concatenated.get(":, 0:1");
+                    NDArray neutralLogit = concatenated.get(":, 1:2");
+                    NDArray shortLogit = concatenated.get(":, 2:3");
+
+                    NDArray diff = longLogit.sub(shortLogit);
+
+                    NDArray adjust = diff.mul(
+                            EngineUtils.floatToNDArray(
+                                    DIRECTION_EQUALIZATION_STRENGTH,
+                                    concatenated.getManager()
+                            )
+                    );
+
+                    NDArray longBalanced = longLogit.sub(adjust);
+                    NDArray shortBalanced = shortLogit.add(adjust);
+
+                    // Ahora TODOS son [B,1], concat en eje 1 es válido
+                    return new NDList(NDArrays.concat( new NDList(longBalanced, neutralLogit, shortBalanced),1));
+                }))
                 .add(Softmax.builder().temperature(1).build())
         );
 
@@ -445,7 +476,7 @@ public class VestaEngine {
                         .setFeedForwardDim(4*128)
                         .setDropoutRate(0.2f)
                         .setMaxSequenceLength(LOOK_BACK)
-                        .setOftenClearCache(250)
+                        .setOftenClearCache(40)
                         .build())
                 .add(new LambdaBlock(ndArrays -> {
                     NDArray seq = ndArrays.singletonOrThrow();  // [B, T, H]

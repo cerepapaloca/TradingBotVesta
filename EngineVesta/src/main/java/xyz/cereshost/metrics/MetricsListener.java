@@ -21,6 +21,7 @@ public class MetricsListener extends TrainingListenerAdapter {
     private XYSeriesCollection datasetLoss = null;
     private XYSeriesCollection datasetDireccion = null;
     private XYSeriesCollection datasetRateDireccion = null;
+    private XYSeriesCollection datasetDireccionMemory = null;
     private final List<String> symbols = new ArrayList<>();
 
     private int count = 1;
@@ -85,7 +86,9 @@ public class MetricsListener extends TrainingListenerAdapter {
                                 new ChartUtils.DataPlot("DAE V", List.of(daeValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL),
                                 new ChartUtils.DataPlot("DAELS V", List.of(daelsValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL)
                         )
-
+                );
+                datasetDireccionMemory = ChartUtils.plot("Penalización por dirección" + String.join(", ", symbols), "epochs",
+                        List.of(new ChartUtils.DataPlot("Direction", List.of(l.directionMemory()), Color.ORANGE, ChartUtils.DataPlot.StyleLine.DISCONTINUA))
                 );
 
             }
@@ -102,6 +105,8 @@ public class MetricsListener extends TrainingListenerAdapter {
             datasetDireccion.getSeries( "Loss L").add(count, l.longL());
             datasetDireccion.getSeries("Loss S").add(count, l.shortL());
             datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
+            datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
+            datasetDireccionMemory.getSeries("Direction").add(count, l.directionMemory());
             count++;
         });
     }

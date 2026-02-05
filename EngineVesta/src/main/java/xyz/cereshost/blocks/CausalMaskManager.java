@@ -152,7 +152,7 @@ public final class CausalMaskManager {
                 h.lock.writeLock().unlock();
             }
         }
-        System.gc();
+//        System.gc();
     }
 
     /**

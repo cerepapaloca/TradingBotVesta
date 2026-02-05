@@ -207,7 +207,7 @@ public class BuilderData {
                 // Evaluar potencial LONG en esta vela futura
                 double currentMaxGain = Math.log(future.high() / entryPrice);
                 if (currentMaxGain >= MIN_GAIN) {
-                    double theoreticalSL = currentMaxGain / 2.0; // Queremos ratio 1:2
+                    double theoreticalSL = currentMaxGain / 3.0; // Queremos ratio 1:2
                     double maxDrawdown = Math.log(entryPrice / lowestInWindow);
 
                     // Si el drawdown hasta ahora no ha superado el SL teórico, el trade es válido
@@ -223,7 +223,7 @@ public class BuilderData {
                 // Evaluar potencial SHORT en esta vela futura
                 double currentMaxFall = Math.log(entryPrice / future.low());
                 if (currentMaxFall >= MIN_GAIN) {
-                    double theoreticalSL = currentMaxFall / 2.0; // Ratio 1:2
+                    double theoreticalSL = currentMaxFall / 3.0; // Ratio 1:2
                     double maxRunup = Math.log(highestInWindow / entryPrice);
 
                     // Si la subida en contra no ha superado el SL teórico, el trade es válido
@@ -505,10 +505,10 @@ public class BuilderData {
         List<Float> fList = new ArrayList<>();
 
         // 1-4: Precios relativos (Log Returns)
-        fList.add((float) Math.log(curr.high() / prev.high()));
-        fList.add((float) Math.log(curr.open() / prev.open()));
-        fList.add((float) Math.log(curr.close() / prev.close()));
-        fList.add((float) Math.log(curr.low() / prev.low()));
+        fList.add((float) Math.log(Math.clamp(curr.high() / prev.high(), 1e-7, Double.POSITIVE_INFINITY)));
+        fList.add((float) Math.log(Math.clamp(curr.open() / prev.open(), 1e-7, Double.POSITIVE_INFINITY)));
+        fList.add((float) Math.log(Math.clamp(curr.close() / prev.close(), 1e-7, Double.POSITIVE_INFINITY)));
+        fList.add((float) Math.log(Math.clamp(curr.low() / prev.low(), 1e-7, Double.POSITIVE_INFINITY)));
 
         fList.add(curr.direccion());
         fList.add((float) Math.log(curr.amountTrades()));

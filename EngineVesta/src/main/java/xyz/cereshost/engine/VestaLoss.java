@@ -4,28 +4,31 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.types.DataType;
+import ai.djl.ndarray.types.Shape;
 import ai.djl.training.loss.Loss;
 import lombok.SneakyThrows;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class VestaLoss extends Loss {
 
     public record LossReport(
-            float total, float tp, float sl, float longL, float neutralL, float shortL
+            float total, float tp, float sl, float longL, float neutralL, float shortL, float directionMemory
     ) {}
 
+    private static final float NEUTRAL_GRAD_CLIP = 0.35f;
+    private static final float DIRECTION_MEMORY_DECAY = 0.9f;
+    private static final float DIRECTION_MEMORY_LR = 1.0f - DIRECTION_MEMORY_DECAY;
+    private static final float BIAS_PENALTY_SCALE = 15f;
+
     private volatile CompletableFuture<LossReport> dataRequest = null;
+    private NDArray directionMemory = null;
 
     public VestaLoss(String name) {
         super(name);
     }
-
-    private NDArray lastResult = null;
-    private String lastPredictionId = "";
 
     @SneakyThrows
     @Override
@@ -44,17 +47,24 @@ public class VestaLoss extends Loss {
         NDManager manager = target.getManager();
         NDArray lossTP = TPSLAdvance(trueParts, trueParts.get(0), predParts.get(0));
         NDArray lossSL = TPSLAdvance(trueParts, trueParts.get(1), predParts.get(1));
-        NDArray lLong = binaryCrossEntropy(trueParts.get(2), predParts.get(2)).mul(EngineUtils.floatToNDArray(1f, manager));
-        NDArray lNeutral = binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul(EngineUtils.floatToNDArray(2f, manager));
-        NDArray lShort =  binaryCrossEntropy(trueParts.get(4), predParts.get(4)).mul(EngineUtils.floatToNDArray(1f, manager));
+        NDArray lLong = directionalPenaltySoft(trueParts.get(2), predParts.get(2)).mul(EngineUtils.floatToNDArray(1f, manager));
+        NDArray clippedNeutralPred = clipNeutralGradient(trueParts.get(3), predParts.get(3), NEUTRAL_GRAD_CLIP);
+        NDArray lNeutral = directionalPenaltySoft(trueParts.get(3), clippedNeutralPred).mul(EngineUtils.floatToNDArray(1f, manager));
+        NDArray lShort =  directionalPenaltySoft(trueParts.get(4), predParts.get(4)).mul(EngineUtils.floatToNDArray(1f, manager));
 
         // 3. PLUS DE PENALIZACIÓN (Inversión de tendencia)
-        NDArray crossError = trueParts.get(2).mul(predParts.get(4))  // Long real * Predicción Short
-                        .add(trueParts.get(4).mul(predParts.get(2)))        // Short real * Predicción Long
-                        .mul(EngineUtils.floatToNDArray(3f, manager)).mean();
+        NDArray longTrue = trueParts.get(2);
+        NDArray shortTrue = trueParts.get(4);
+        NDArray directionMask = EngineUtils.floatToNDArray(1f, manager).sub(trueParts.get(3));
+        NDArray crossError = longTrue.mul(predParts.get(4))  // Long real * Predicción Short
+                        .add(shortTrue.mul(predParts.get(2)))        // Short real * Predicción Long
+                        .mul(directionMask)
+                        .mul(EngineUtils.floatToNDArray(5f, manager)).mean();
+
+        NDArray biasPenalty = computeDirectionalBiasPenalty(trueParts, predParts, manager);
 
 
-        NDArray totalLoss = lossTP.add(lossSL).add(lLong).add(lNeutral).add(lShort).add(crossError);
+        NDArray totalLoss = lossTP.add(lossSL).add(lLong).add(lNeutral).add(lShort).add(crossError).add(biasPenalty);
 
         // 2. ¿Alguien está esperando datos? (Sincronización Inteligente)
         // Solo entramos aquí si llamaste a awaitNextBatchData()
@@ -67,7 +77,8 @@ public class VestaLoss extends Loss {
                     lossSL.getFloat(),
                     lLong.getFloat(),
                     lNeutral.getFloat(),
-                    lShort.getFloat()
+                    lShort.getFloat(),
+                    directionMemory.getFloat()
             ));
             dataRequest = null; // Limpiamos la petición
         }
@@ -92,6 +103,49 @@ public class VestaLoss extends Loss {
         return loss.sum().div(valid);
     }
 
+    private NDArray clipNeutralGradient(NDArray neutralTrue, NDArray neutralPred, float limit) {
+        NDManager manager = neutralPred.getManager();
+        NDArray clipMin = EngineUtils.floatToNDArray(-limit, manager);
+        NDArray clipMax = EngineUtils.floatToNDArray(limit, manager);
+        NDArray diff = neutralPred.sub(neutralTrue);
+        NDArray clipped = diff.maximum(clipMin).minimum(clipMax);
+        return neutralTrue.add(clipped);
+    }
+
+    private NDArray computeDirectionalBiasPenalty(NDList trueParts, NDList predParts, NDManager batchManager) {
+        NDArray trueDir = NDArrays.concat(new NDList(trueParts.get(2), trueParts.get(3), trueParts.get(4)), 1);   // [B,3]
+        NDArray predDir = NDArrays.concat(new NDList(predParts.get(2), predParts.get(3), predParts.get(4)), 1);   // [B,3]
+
+        NDArray trueIdx = trueDir.argMax(1); // 0=Long,1=Neutral,2=Short
+        NDArray predIdx = predDir.argMax(1);
+
+        NDArray correctMask = predIdx.eq(trueIdx).toType(DataType.FLOAT32, false);
+        NDArray wrongMask = EngineUtils.floatToNDArray(1f, batchManager).sub(correctMask);
+
+        NDArray sign = predIdx.eq(0).toType(DataType.FLOAT32, false)
+                .sub(predIdx.eq(2).toType(DataType.FLOAT32, false)); // +1 long, -1 short, 0 neutral
+
+        NDArray signCorrect = sign.mul(correctMask);
+        NDArray signWrong = sign.mul(wrongMask);
+
+        // Lazy init or resurrect directionMemory
+        if (directionMemory == null) {
+            NDManager memMgr = VestaEngine.getRootManager() != null ? VestaEngine.getRootManager() : batchManager;
+            directionMemory = memMgr.zeros(new Shape(1));
+        }
+
+        // Update memory in its own manager (EMA of correct signed hits)
+        NDManager memMgr = directionMemory.getManager();
+        NDArray signCorrectMem = signCorrect.toDevice(memMgr.getDevice(), false);
+        NDArray decay = EngineUtils.floatToNDArray(DIRECTION_MEMORY_DECAY, memMgr);
+        NDArray lr = EngineUtils.floatToNDArray(DIRECTION_MEMORY_LR, memMgr);
+        directionMemory = directionMemory.mul(decay).add(signCorrectMem.mean().mul(lr));
+
+        // Penalty uses wrong signed predictions scaled by current memory (bias)
+        NDArray memoryLocal = directionMemory.toDevice(batchManager.getDevice(), false);
+        return signWrong.mul(memoryLocal).abs().mean().mul(EngineUtils.floatToNDArray(BIAS_PENALTY_SCALE, batchManager));
+    }
+
     // Método auxiliar para usar la implementación nativa más rápida
     private NDArray binaryCrossEntropy(NDArray target, NDArray prediction) {
         NDManager manager = target.getManager();
@@ -107,7 +161,7 @@ public class VestaLoss extends Loss {
 
     private NDArray directionalPenaltySoft(NDArray trueOneHot, NDArray probs) {
         NDArray pTrue = trueOneHot.mul(probs).sum(new int[]{1}, true);
-        NDArray pFalse = pTrue.mul(-1f).add(1f);
+        NDArray pFalse = pTrue.mul(EngineUtils.floatToNDArray(-1f, trueOneHot.getManager())).add(EngineUtils.floatToNDArray(1f, trueOneHot.getManager()));
         NDArray penaltyPerSample = pFalse.pow(2);
         return penaltyPerSample.mean();
     }
@@ -122,7 +176,7 @@ public class VestaLoss extends Loss {
             return dataRequest.get();
         } catch (InterruptedException | ExecutionException e) {
             Thread.currentThread().interrupt();
-            return new LossReport(0,0,0,0,0,0);
+            return new LossReport(0,0,0,0,0,0, 0);
         }
     }
 }
