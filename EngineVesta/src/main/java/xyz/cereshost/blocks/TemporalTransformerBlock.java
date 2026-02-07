@@ -79,8 +79,8 @@ public class TemporalTransformerBlock extends AbstractBlock {
                 .build();
 
         // 3. Capas de normalización (LayerNorm)
-        this.layerNorm1 = LayerNorm.builder().optEpsilon(1e-6f).build();
-        this.layerNorm2 = LayerNorm.builder().optEpsilon(1e-6f).build();
+        this.layerNorm1 = LayerNorm.builder().axis(2).optEpsilon(1e-6f).build();
+        this.layerNorm2 = LayerNorm.builder().axis(2).optEpsilon(1e-6f).build();
 
         // 4. Capa feed-forward de 2 niveles (FFN)
         this.feedForwardBlock = new SequentialBlock()
@@ -159,10 +159,6 @@ public class TemporalTransformerBlock extends AbstractBlock {
             int maskLength = (int) maskSide;
 
             // === 1. Atención Multi-Cabeza con Máscara Causal ===
-            NDArray query = projectedInput;
-            NDArray key = projectedInput;
-            NDArray value = projectedInput;
-
             // Tomar slice de la máscara causal según la longitud actual
             NDArray baseMask =
                     CausalMaskManager
@@ -173,15 +169,17 @@ public class TemporalTransformerBlock extends AbstractBlock {
                                     oftenClearCache
                             )[0]; // [1,1,T,T]
 
-// Slice correcto
-            NDArray slicedMask =
+// Slice correcto (mask 0/1) y expandir a [B, seq, seq]
+            NDArray slicedMask2d =
                     baseMask.get(
                             new NDIndex("0, 0, 0:" + seqLength + ", 0:" + seqLength)
-                    ); // [1,1,seq,seq]
+                    ); // [seq,seq]
+            NDArray slicedMask3d = slicedMask2d.expandDims(0); // [1,seq,seq]
 
 // EXPANDIR A BATCH (OBLIGATORIO EN DJL)
-            currentMask = slicedMask.repeat(0, (int) batchSize); // [B,1,seq,seq]
-            NDList attentionInput = new NDList(query, key, value, currentMask);
+            currentMask = slicedMask3d.repeat(0, (int) batchSize); // [B,seq,seq]
+            currentMask = currentMask.toDevice(manager.getDevice(), false);
+            NDList attentionInput = new NDList(projectedInput, currentMask);
 
             NDList attentionOutput = attentionBlock.forward(parameterStore, attentionInput, training);
             attentionContext = attentionOutput.singletonOrThrow();

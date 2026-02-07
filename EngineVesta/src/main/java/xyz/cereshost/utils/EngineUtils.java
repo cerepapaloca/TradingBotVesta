@@ -1,4 +1,4 @@
-package xyz.cereshost.engine;
+package xyz.cereshost.utils;
 
 import ai.djl.Device;
 import ai.djl.ndarray.NDArray;
@@ -14,8 +14,8 @@ import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.builder.YNormalizer;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;

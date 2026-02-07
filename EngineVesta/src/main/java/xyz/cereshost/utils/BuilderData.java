@@ -1,4 +1,4 @@
-package xyz.cereshost.builder;
+package xyz.cereshost.utils;
 
 import ai.djl.util.Pair;
 import lombok.Getter;
@@ -50,15 +50,14 @@ public class BuilderData {
 
                 // Crear lista de futuros para procesar cada mes de forma asincrónica
                 List<CompletableFuture<MonthResult>> futures = new ArrayList<>();
-
                 for (int month = maxMonth + offset; month > offset; month--) {
                     final int currentMonth = month;
                     CompletableFuture<MonthResult> future = CompletableFuture.supplyAsync(() -> {
                         try {
-                            Vesta.info("🖥️ Comenzado carga de datos del mes %d", currentMonth);
+                            Vesta.info("⬆️ Comenzado carga de datos del mes %d", currentMonth);
                             Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, currentMonth);
                             List<Candle> candlesThisMonth = BuilderData.to1mCandles(market);
-
+                            market = null;
                             if (candlesThisMonth.size() <= LOOK_BACK + 2) {
                                 Vesta.warning("Mes " + currentMonth + " insuficiente historial: " + candlesThisMonth.size() + " velas");
                                 return new MonthResult(null, null, candlesThisMonth, false);
@@ -266,8 +265,8 @@ public class BuilderData {
             }
         }
 
-        Vesta.info("Build completado -> L: %d | S: %d | N: %d",
-                direccionCount[0], direccionCount[1], direccionCount[2]);
+//        Vesta.info("Build completado -> L: %d | S: %d | N: %d",
+//                direccionCount[0], direccionCount[1], direccionCount[2]);
 
         return new Pair<>(X, y);
     }

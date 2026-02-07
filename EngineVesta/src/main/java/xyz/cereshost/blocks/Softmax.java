@@ -7,10 +7,9 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.AbstractBlock;
 import ai.djl.training.ParameterStore;
-import ai.djl.util.PairList;
 import lombok.Builder;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.engine.EngineUtils;
+import xyz.cereshost.utils.EngineUtils;
 
 @Builder
 public class Softmax extends AbstractBlock {

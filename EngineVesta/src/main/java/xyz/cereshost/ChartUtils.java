@@ -22,7 +22,7 @@ import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.CandleSimple;
 import xyz.cereshost.engine.BackTestEngine;
-import xyz.cereshost.engine.EngineUtils;
+import xyz.cereshost.utils.EngineUtils;
 import xyz.cereshost.trading.Trading;
 
 import javax.swing.*;

@@ -3,7 +3,7 @@ package xyz.cereshost.engine;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.builder.BuilderData;
+import xyz.cereshost.utils.BuilderData;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.common.market.Trade;

@@ -109,7 +109,7 @@ public final class CausalMaskManager {
                 NDArray idx = mgr.arange(T);
                 NDArray iIdx = idx.expandDims(0);
                 NDArray jIdx = idx.expandDims(1);
-                NDArray mask2d = jIdx.lte(iIdx); // [T,T] boolean
+                NDArray mask2d = iIdx.lte(jIdx); // [T,T] boolean (keep past & present)
                 // expand to [1,1,T,T] and convert dtype
                 NDArray mask4d = mask2d.expandDims(0).expandDims(0).toType(dtype, false);
 

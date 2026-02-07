@@ -1,7 +1,7 @@
 package xyz.cereshost;
 
 import lombok.Getter;
-import xyz.cereshost.builder.BuilderData;
+import xyz.cereshost.utils.BuilderData;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
@@ -64,7 +64,7 @@ public class TradingLoopBinance {
                     long nextCandle = ((serverTime / CANDLE_MS) + 1) * CANDLE_MS;
 
                     long sleep = Math.abs(nextCandle - (serverTime));
-                    Vesta.info("🕐 Tiempo de espera: %.2fs", (float) sleep/1000);
+                    Vesta.info("💤 Tiempo de espera: %.2fs", (float) sleep/1000);
                     if (sleep > 0) {
                         LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(sleep));
                     }

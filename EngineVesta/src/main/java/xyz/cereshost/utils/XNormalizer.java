@@ -1,4 +1,4 @@
-package xyz.cereshost.builder;
+package xyz.cereshost.utils;
 
 import lombok.Getter;
 import lombok.Setter;

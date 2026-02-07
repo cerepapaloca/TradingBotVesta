@@ -16,7 +16,7 @@ import java.util.List;
 public class MetricsListener extends TrainingListenerAdapter {
 
     private long lastTime = -1;
-    private double lastMae = -1;
+    private long startTime = -1;
     private XYSeriesCollection datasetNormal = null;
     private XYSeriesCollection datasetLoss = null;
     private XYSeriesCollection datasetDireccion = null;
@@ -26,10 +26,13 @@ public class MetricsListener extends TrainingListenerAdapter {
 
     private int count = 1;
 
+    public void startTraining() {
+        startTime = System.currentTimeMillis();
+    }
+
     @Override
     public void onEpoch(Trainer trainer) {
         var result = trainer.getTrainingResult();
-
         // Obtener los resultados
         float lossTrain = result.getTrainLoss();
         float lossValidation = result.getValidateLoss();
@@ -45,18 +48,17 @@ public class MetricsListener extends TrainingListenerAdapter {
         long delta = Math.abs(lastTime - time);
         // Mostrar mensaje
         Vesta.info(
-                String.format("Progreso=%.2f Tiempo=%.2fs -T=%sm MAEr=%.4f [%s]\n",
+                String.format("Progreso: %.2f%% Tiempo: %.2fs -T: %dm +T: %dm\n[%s]",
                         (progress)*100,
                         (double) delta/1000,
                         (int) ((((VestaEngine.EPOCH*Main.MAX_MONTH_TRAINING*VestaEngine.EPOCH_SUB) - trainer.getTrainingResult().getEpoch())*delta)/1000)/60,
-                        lastMae - maeValidation,
+                        (int) (((System.currentTimeMillis() - startTime)/1000)/60),
                         "#".repeat((int) (progress*100)) + " " .repeat((int) (Math.abs(progress-1)*100))
                 )
         );
 
         // Ejecutar tarea de forma asincrónico
         VestaEngine.EXECUTOR.execute(() -> {
-            lastMae = maeValidation;
             lastTime = time;
             VestaLoss customLoss = (VestaLoss) trainer.getLoss();
             VestaLoss.LossReport l = customLoss.awaitNextBatchData();
@@ -88,7 +90,9 @@ public class MetricsListener extends TrainingListenerAdapter {
                         )
                 );
                 datasetDireccionMemory = ChartUtils.plot("Penalización por dirección" + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("Direction", List.of(l.directionMemory()), Color.ORANGE, ChartUtils.DataPlot.StyleLine.DISCONTINUA))
+                        List.of(new ChartUtils.DataPlot("Direction ABS", List.of(l.biasPenalty()), Color.ORANGE, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                        new ChartUtils.DataPlot("Direction Relative", List.of(l.directionMemory()), Color.YELLOW, ChartUtils.DataPlot.StyleLine.NORMAL)
+                        )
                 );
 
             }
@@ -106,7 +110,8 @@ public class MetricsListener extends TrainingListenerAdapter {
             datasetDireccion.getSeries("Loss S").add(count, l.shortL());
             datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
             datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
-            datasetDireccionMemory.getSeries("Direction").add(count, l.directionMemory());
+            datasetDireccionMemory.getSeries("Direction ABS").add(count, l.biasPenalty());
+            datasetDireccionMemory.getSeries("Direction Relative").add(count, l.directionMemory());
             count++;
         });
     }

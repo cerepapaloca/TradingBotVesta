@@ -5,7 +5,7 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
 import lombok.SneakyThrows;
-import xyz.cereshost.engine.EngineUtils;
+import xyz.cereshost.utils.EngineUtils;
 
 /**
  * Evaluador Binario (Long vs Short).

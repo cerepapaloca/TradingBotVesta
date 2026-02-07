@@ -5,7 +5,7 @@ import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.BackTestEngine;
-import xyz.cereshost.engine.EngineUtils;
+import xyz.cereshost.utils.EngineUtils;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.io.IOdata;
@@ -23,13 +23,13 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "ETHUSDC"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "XRPUSDC"/* "BNBUSDT"*/);
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.CSV;
 
-    public static final int MAX_MONTH_TRAINING = 4;//4 12+8;
+    public static final int MAX_MONTH_TRAINING = 6;//4 12+8;
 
 
     @Getter
@@ -99,12 +99,12 @@ public class Main {
 //                        ));
             }
             case "backtest" -> {
-                String symbol = "ETHUSDC";
+                String symbol = "XRPUSDC";
 
                 showDataBackTest(new BackTestEngine(IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
             }
             case "trading" -> {
-                String symbol = "ETHUSDC";
+                String symbol = "XRPUSDC";
                 new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
             }
         }

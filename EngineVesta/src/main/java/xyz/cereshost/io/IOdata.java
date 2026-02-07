@@ -2,7 +2,6 @@ package xyz.cereshost.io;
 
 import ai.djl.Device;
 import ai.djl.Model;
-import ai.djl.ndarray.NDManager;
 import ai.djl.util.Pair;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -13,8 +12,8 @@ import xyz.cereshost.Main;
 import xyz.cereshost.DataSource;
 import xyz.cereshost.common.market.Trade;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.builder.YNormalizer;
-import xyz.cereshost.builder.XNormalizer;
+import xyz.cereshost.utils.YNormalizer;
+import xyz.cereshost.utils.XNormalizer;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.CandleSimple;
@@ -136,7 +135,7 @@ public class IOdata {
                 int targetMonth = 12 - (offset % 12);
 
                 long timeTotal = System.currentTimeMillis();
-                Vesta.info("%d/%02d (idx=%d) 📂 Verificando caché local para: %s", targetYear, targetMonth, monthIndex, s);
+                Vesta.info("%d/%02d (idx=%d) 💾 Verificando caché local para: %s", targetYear, targetMonth, monthIndex, s);
                 Deque<CandleSimple> candles = new ArrayDeque<>();
                 Deque<Trade> trades = new ArrayDeque<>();
                 File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, targetMonth);

@@ -3,7 +3,7 @@ package xyz.cereshost.metrics;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.DataType;
-import xyz.cereshost.engine.EngineUtils;
+import xyz.cereshost.utils.EngineUtils;
 
 /**
  * Evaluador sencillo para porcentaje de acierto en la dirección.

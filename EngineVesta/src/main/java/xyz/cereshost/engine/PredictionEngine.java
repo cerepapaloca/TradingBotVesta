@@ -10,13 +10,14 @@ import ai.djl.util.Pair;
 import lombok.Getter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.builder.BuilderData;
-import xyz.cereshost.builder.YNormalizer;
-import xyz.cereshost.builder.XNormalizer;
+import xyz.cereshost.utils.BuilderData;
+import xyz.cereshost.utils.YNormalizer;
+import xyz.cereshost.utils.XNormalizer;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.io.IOdata;
 import xyz.cereshost.trading.Trading;
+import xyz.cereshost.utils.EngineUtils;
 
 import java.io.IOException;
 import java.util.Comparator;
@@ -25,7 +26,7 @@ import java.util.List;
 @Getter
 public class PredictionEngine {
 
-    public static final double THRESHOLD_PRICE = 0.003;
+    public static final double THRESHOLD_PRICE = 0.002;
     public static final double THRESHOLD_RELATIVE = 0.08;
 
     private final Model model;
