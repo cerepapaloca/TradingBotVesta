@@ -23,6 +23,7 @@ public class VestaLoss extends Loss {
     private static final float DIRECTION_MEMORY_DECAY = 0.8f;
     private static final float DIRECTION_MEMORY_LR = 1.0f - DIRECTION_MEMORY_DECAY;
     private static final float BIAS_PENALTY_SCALE = 0f;
+    private static final float DELTA = 3f;
 
     private volatile CompletableFuture<LossReport> dataRequest = null;
     private NDArray directionMemory = null;
@@ -46,8 +47,20 @@ public class VestaLoss extends Loss {
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
         NDManager manager = target.getManager();
-        NDArray lossTP = trueParts.get(0).sub(predParts.get(0)).pow(EngineUtils.floatToNDArray(2f, manager)).mul(EngineUtils.floatToNDArray(0.1f, manager)).mean();
-        NDArray lossSL = trueParts.get(1).sub(predParts.get(1)).pow(EngineUtils.floatToNDArray(2f, manager)).mul(EngineUtils.floatToNDArray(0.1f, manager)).mean();
+        NDArray lossTP = trueParts.get(1).sub(predParts.get(1))
+                .pow(EngineUtils.floatToNDArray(2f, manager))
+                .add(EngineUtils.floatToNDArray(DELTA*DELTA, manager))
+                .sqrt()
+                .sub(EngineUtils.floatToNDArray(DELTA, manager))
+                .mul(EngineUtils.floatToNDArray(0.1f, manager))
+                .mean();
+        NDArray lossSL = trueParts.get(1).sub(predParts.get(1))
+                .pow(EngineUtils.floatToNDArray(2f, manager))
+                .add(EngineUtils.floatToNDArray(DELTA*DELTA, manager))
+                .sqrt()
+                .sub(EngineUtils.floatToNDArray(DELTA, manager))
+                .mul(EngineUtils.floatToNDArray(0.1f, manager))
+                .mean();
         NDArray lLong = EngineUtils.floatToNDArray(0f, manager);// directionalPenaltySoft(trueParts.get(2), predParts.get(2)).mul(EngineUtils.floatToNDArray(0f, manager));
         //NDArray clippedNeutralPred = clipNeutralGradient(trueParts.get(3), predParts.get(3), NEUTRAL_GRAD_CLIP);
         NDArray lNeutral = EngineUtils.floatToNDArray(0f, manager);// binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul(EngineUtils.floatToNDArray(0f, manager));

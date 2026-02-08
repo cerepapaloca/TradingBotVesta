@@ -64,8 +64,7 @@ public class IOdata {
             out.writeInt(ySamples);
             out.writeInt(yCols);
 
-            for (int i = 0; i < xSamples; i++) {
-                float[][] seq = X[i];
+            for (float[][] seq : X) {
                 for (int j = 0; j < seqLen; j++) {
                     float[] row = seq[j];
                     for (int k = 0; k < features; k++) {
@@ -74,8 +73,7 @@ public class IOdata {
                 }
             }
 
-            for (int i = 0; i < ySamples; i++) {
-                float[] row = y[i];
+            for (float[] row : y) {
                 for (int j = 0; j < yCols; j++) {
                     out.writeFloat(row[j]);
                 }

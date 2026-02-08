@@ -52,16 +52,14 @@ import xyz.cereshost.utils.YNormalizer;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiFunction;
 
 public class VestaEngine {
 
     public static final int LOOK_BACK = 120;
-    public static final int EPOCH = 3;
+    public static final int EPOCH = 5;
     public static final int EPOCH_SUB = 1;
     public static final int SPLIT_DATASET = 1;
     public static final int THRESHOLD_RAM_USE = 12;
@@ -71,7 +69,7 @@ public class VestaEngine {
     private static NDManager rootManager;
 
     public static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
-    public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(1);
+    public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(3);
     public static final ExecutorService EXECUTOR_READ_SCV = Executors.newScheduledThreadPool(8);
     public static final ExecutorService EXECUTOR_TRAINING = Executors.newScheduledThreadPool(8);
     private static final float DIRECTION_EQUALIZATION_STRENGTH = 0.35f;
@@ -97,15 +95,10 @@ public class VestaEngine {
             PtNDManager manager = (PtNDManager) model.getNDManager();
 
             Pair<float[][][], float[][]> combined = BuilderData.fullBuild(symbols,  Main.MAX_MONTH_TRAINING, 1);
-
-            if (combined == null){
-
-            }
+            System.gc();
+            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(30));
             float[][][] xCombined = combined.getKey();
             float[][] yCombined = combined.getValue();
-
-            ChartUtils.showTPSLDistribution("Datos Combinados", yCombined, "Todos");
-            ChartUtils.showDirectionDistribution("Datos Combinados", yCombined, "Todos");
 
             Vesta.info("Datos combinados:");
             Vesta.info("  Total de muestras: " + xCombined.length);
@@ -116,6 +109,11 @@ public class VestaEngine {
             long samples = xCombined.length;
             int lookback = xCombined[0].length;
             int features = xCombined[0][0].length;
+
+            if (samples < 750_000){
+                ChartUtils.showTPSLDistribution("Datos Combinados", yCombined, "Todos");
+                ChartUtils.showDirectionDistribution("Datos Combinados", yCombined, "Todos");
+            }
 
             // SPLIT (antes de normalizar) -> 70% train, 15% val, 15% test
             long testSize = (long) (samples * 0.15);

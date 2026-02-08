@@ -7,10 +7,7 @@ import lombok.experimental.UtilityClass;
 import xyz.cereshost.DataSource;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
-import xyz.cereshost.common.market.CandleSimple;
-import xyz.cereshost.common.market.Market;
-import xyz.cereshost.common.market.Trade;
-import xyz.cereshost.common.market.Volumen;
+import xyz.cereshost.common.market.*;
 import xyz.cereshost.common.packet.client.RequestMarketClient;
 import xyz.cereshost.common.packet.server.MarketDataServer;
 import xyz.cereshost.engine.VestaEngine;
@@ -22,16 +19,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -43,7 +36,8 @@ public class IOMarket {
     private static final int TRADE_BIN_MAGIC = 0x54524431;
     private static final int KLINE_BIN_MAGIC = 0x4B4C4E31;
     private static final int BIN_VERSION = 1;
-    private static final int BATCH_SIZE = 10_000;
+    private static final int BATCH_SIZE = 50_000;
+    private static final int BUFFER_READ_MB = 500;
 
 
     public static Market loadMarkets(DataSource data, String s) throws InterruptedException, IOException {
@@ -111,7 +105,7 @@ public class IOMarket {
                     boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
                     long id = trade.get("id").asLong();
                     long time = trade.get("time").asLong();
-                    trades.add(new Trade(id, time, price, quoteQty, isBuyerMaker));
+                    trades.add(new Trade(id, time,(float) price, (float) quoteQty, isBuyerMaker));
                 }
 
                 Market market = new Market(s);
@@ -131,52 +125,60 @@ public class IOMarket {
                 int targetMonth = 12 - (offset % 12);
 
                 long timeTotal = System.currentTimeMillis();
-                Vesta.info("%d/%02d (idx=%d) 💾 Verificando caché local para: %s", targetYear, targetMonth, monthIndex, s);
-                Deque<CandleSimple> candles = new ArrayDeque<>();
-                Deque<Trade> trades = new ArrayDeque<>();
+                Vesta.info("%d/%02d (idx=%d) 💾 Leyendo caché local para: %s", targetYear, targetMonth, monthIndex, s);
                 File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, targetMonth);
-                candles.addAll(parseKlinesFromFile(klineFile));
+                Deque<CandleSimple> candles = parseKlinesFromFile(klineFile);
                 File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, targetMonth);
-                trades.addAll(parseTradesFromFile(tradeFile));
-
+                Deque<Trade> trades = parseTradesFromFile(tradeFile);
                 if (candles.isEmpty() || trades.isEmpty()) {
                     Vesta.info("⚠️ Datos incompletos o corruptos para %s en %d/%02d (idx=%d)", s, targetYear, targetMonth, monthIndex);
                     latch.countDown();
                     return marketFinal.get();
                 }
+                int sizeCandles = candles.size();
+                int sizeTrades = trades.size();
+                Vesta.info("%d/%02d (idx=%d) 🔒 Asegurando orden de los datos", targetYear, targetMonth, monthIndex);
+                LinkedHashSet<CandleSimple> candlesSorted = Market.sortInChunks(candles, 10_000, CandleSimple::openTime);
+                LinkedHashSet<Trade> tradeSorted = Market.sortInChunks(trades, 10_000, Trade::time);
 
                 // 3. Lógica de CORTE (Sincronización de tiempos)
-                long minTimeCandles = candles.getFirst().openTime();
-                long maxTimeCandles = candles.getLast().openTime();
+                long minTimeCandles = candlesSorted.getFirst().openTime();
+                long maxTimeCandles = candlesSorted.getLast().openTime();
 
-                long minTimeTrades = trades.getFirst().time();
-                long maxTimeTrades = trades.getLast().time();
+                long minTimeTrades = tradeSorted.getFirst().time();
+                long maxTimeTrades = tradeSorted.getLast().time();
 
                 long commonStart = Math.max(minTimeCandles, minTimeTrades);
                 long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
 
                 Vesta.info("%d/%02d (idx=%d) ✂️ Ajustando %s a ventana común: %d - %d", targetYear, targetMonth, monthIndex, s, commonStart, commonEnd);
+                // borrar por inicio
+                while (!candlesSorted.isEmpty() && candlesSorted.getFirst().openTime() < commonStart) {
+                    candlesSorted.removeFirst();
+                }
+                // borrar por final
+                while (!candlesSorted.isEmpty() && candlesSorted.getLast().openTime() > commonEnd) {
+                    candlesSorted.removeLast();
+                }
 
-                Deque<CandleSimple> finalCandles = candles.stream()
-                        .filter(c -> c.openTime() >= commonStart && c.openTime() <= commonEnd)
-                        .collect(Collectors.toCollection(ArrayDeque::new));
-                candles.clear();
-                Deque<Trade> finalTrades = trades.stream()
-                        .filter(t -> t.time() >= commonStart && t.time() <= commonEnd)
-                        .collect(Collectors.toCollection(ArrayDeque::new));
-                trades.clear(); // Esto puede pesar más 20GB de RAM
-                System.gc();
+                // mismo para trades
+                while (!tradeSorted.isEmpty() && tradeSorted.getFirst().time() < commonStart) {
+                    tradeSorted.removeFirst();
+                }
+                while (!tradeSorted.isEmpty() && tradeSorted.getLast().time() > commonEnd) {
+                    tradeSorted.removeLast();
+                }
+
                 final Market market = new Market(s);
-                market.addCandles(finalCandles);
-                market.addTrade(finalTrades);
-                Vesta.info("%d/%02d (idx=%d) 🔒 Asegurando orden de los datos", targetYear, targetMonth, monthIndex);
-                market.sortd();
+                market.setCandles(candlesSorted);
+                market.setTrade(tradeSorted);
+                //market.sortd();
 
                 marketFinal.set(market);
                 lastUpdate.set(System.currentTimeMillis());
 
                 Vesta.info("%d/%02d (idx=%d) ✅ Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
-                        targetYear, targetMonth, monthIndex, s, finalCandles.size(), finalTrades.size(), (float) (System.currentTimeMillis() - timeTotal) / 1000);
+                        targetYear, targetMonth, monthIndex, s, sizeCandles, sizeTrades, (float) (System.currentTimeMillis() - timeTotal) / 1000);
 
                 latch.countDown();
             }
@@ -258,7 +260,7 @@ public class IOMarket {
                 buildKlineBinFromZip(zipFile, binTemp);
             }
             rewriteZipWithBinEntry(zipFile, entryName, out -> {
-                try (InputStream in = new BufferedInputStream(new FileInputStream(binTemp), 1 << 20)) {
+                try (InputStream in = new BufferedInputStream(new FileInputStream(binTemp), (1 << 20) * BUFFER_READ_MB)) {
                     copyStream(in, out);
                 }
             });
@@ -272,11 +274,11 @@ public class IOMarket {
     ///////////////////
     ///////////////////
 
-    private static List<CandleSimple> parseKlinesFromFile(File file) {
-        List<CandleSimple> list = new ArrayList<>();
+    private synchronized static Deque<CandleSimple> parseKlinesFromFile(File file) {
+        Deque<CandleSimple> list = new ArrayDeque<>();
         if (!file.exists()) return list;
 
-        List<CandleSimple> cached = parseKlinesFromBin(file);
+        Deque<CandleSimple> cached = parseKlinesFromBin(file);
         if (cached != null) {
             return cached;
         }
@@ -286,11 +288,11 @@ public class IOMarket {
         int batchSize = BATCH_SIZE;
         Deque<FutureTask<List<CandleSimple>>> tasks = new ArrayDeque<>(maxInFlight);
 
-        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), 1 << 20))) { // CAMBIO: FileInputStream
+        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), (1 << 20) * BUFFER_READ_MB))) { // CAMBIO: FileInputStream
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (!entry.isDirectory() && entry.getName().endsWith(".csv")) {
-                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), 1 << 20);
+                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), (1 << 20) * BUFFER_READ_MB);
                     String line;
                     List<String> batch = new ArrayList<>(batchSize);
                     while ((line = br.readLine()) != null) {
@@ -329,11 +331,11 @@ public class IOMarket {
         return list;
     }
 
-    private static List<Trade> parseTradesFromFile(File file) {
-        List<Trade> list = new ArrayList<>();
+    private synchronized static Deque<Trade> parseTradesFromFile(File file) {
+        Deque<Trade> list = new ArrayDeque<>();
         if (!file.exists()) return list;
 
-        List<Trade> cached = parseTradesFromBin(file);
+        Deque<Trade> cached = parseTradesFromBin(file);
         if (cached != null) {
             return cached;
         }
@@ -343,11 +345,11 @@ public class IOMarket {
         int batchSize = BATCH_SIZE;
         Deque<FutureTask<List<Trade>>> tasks = new ArrayDeque<>(maxInFlight);
 
-        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), 1 << 20))) {
+        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), (1 << 20) * BUFFER_READ_MB))) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (!entry.isDirectory() && entry.getName().endsWith(".csv")) {
-                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), 1 << 20);
+                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), (1 << 20) * BUFFER_READ_MB);
                     String line;
                     List<String> batch = new ArrayList<>(batchSize);
                     while ((line = br.readLine()) != null) {
@@ -396,7 +398,7 @@ public class IOMarket {
         VestaEngine.EXECUTOR_READ_SCV.execute(task);
     }
 
-    private static void drainTradeTask(Deque<FutureTask<List<Trade>>> tasks, List<Trade> list)
+    private static void drainTradeTask(Deque<FutureTask<List<Trade>>> tasks, Deque<Trade> list)
             throws InterruptedException, ExecutionException {
         FutureTask<List<Trade>> task = tasks.removeFirst();
         List<Trade> trades = task.get();
@@ -431,8 +433,8 @@ public class IOMarket {
         return new Trade(
                 Long.parseLong(line.substring(0, p0)),             // id (col 0)
                 Long.parseLong(line.substring(p3 + 1, p4)),        // time (col 4)
-                Double.parseDouble(line.substring(p0 + 1, p1)),     // price (col 1)
-                Double.parseDouble(line.substring(p1 + 1, p2)),     // qty (col 2)
+                Float.parseFloat(line.substring(p0 + 1, p1)),     // price (col 1)
+                Float.parseFloat(line.substring(p1 + 1, p2)),     // qty (col 2)
                 "true".equals(line.substring(p4 + 1, p5)) // isBuyerMaker (col 5)
         );
     }
@@ -440,14 +442,14 @@ public class IOMarket {
     ///////////////////
     ///////////////////
 
-    private static List<Trade> parseTradesFromBin(File zipFile) {
+    private static Deque<Trade> parseTradesFromBin(File zipFile) {
         String entryName = binEntryName(zipFile);
         try (ZipFile zip = new ZipFile(zipFile)) {
             ZipEntry entry = zip.getEntry(entryName);
             if (entry == null) {
                 return null;
             }
-            try (DataInputStream in = new DataInputStream(new BufferedInputStream(zip.getInputStream(entry), 1 << 20))) {
+            try (DataInputStream in = new DataInputStream(new BufferedInputStream(zip.getInputStream(entry), (1 << 20) * BUFFER_READ_MB))) {
                 int magic = in.readInt();
                 if (magic != TRADE_BIN_MAGIC) {
                     return null;
@@ -456,7 +458,7 @@ public class IOMarket {
                 if (version != BIN_VERSION) {
                     return null;
                 }
-                List<Trade> list = new ArrayList<>();
+                Deque<Trade> list = new ArrayDeque<>(250_000);
                 while (true) {
                     try {
                         long id = in.readLong();
@@ -464,7 +466,7 @@ public class IOMarket {
                         double price = in.readDouble();
                         double qty = in.readDouble();
                         boolean isBuyerMaker = in.readBoolean();
-                        list.add(new Trade(id, time, price, qty, isBuyerMaker));
+                        list.add(new Trade(id, time, (float) price, (float) qty, isBuyerMaker));
                     } catch (EOFException eof) {
                         break;
                     }
@@ -477,14 +479,14 @@ public class IOMarket {
         }
     }
 
-    private static List<CandleSimple> parseKlinesFromBin(File zipFile) {
+    private static Deque<CandleSimple> parseKlinesFromBin(File zipFile) {
         String entryName = binEntryName(zipFile);
         try (ZipFile zip = new ZipFile(zipFile)) {
             ZipEntry entry = zip.getEntry(entryName);
             if (entry == null) {
                 return null;
             }
-            try (DataInputStream in = new DataInputStream(new BufferedInputStream(zip.getInputStream(entry), 1 << 20))) {
+            try (DataInputStream in = new DataInputStream(new BufferedInputStream(zip.getInputStream(entry), (1 << 20) * BUFFER_READ_MB))) {
                 int magic = in.readInt();
                 if (magic != KLINE_BIN_MAGIC) {
                     return null;
@@ -493,7 +495,7 @@ public class IOMarket {
                 if (version != BIN_VERSION) {
                     return null;
                 }
-                List<CandleSimple> list = new ArrayList<>();
+                Deque<CandleSimple> list = new ArrayDeque<>(44_000);
                 while (true) {
                     try {
                         long openTime = in.readLong();
@@ -530,7 +532,7 @@ public class IOMarket {
     ///////////////////
     ///////////////////
 
-    private static void writeTradeBinFromList(File zipFile, List<Trade> trades) throws IOException {
+    private static void writeTradeBinFromList(File zipFile, Deque<Trade> trades) throws IOException {
         String entryName = binEntryName(zipFile);
         rewriteZipWithBinEntry(zipFile, entryName, out -> {
             out.writeInt(TRADE_BIN_MAGIC);
@@ -545,7 +547,7 @@ public class IOMarket {
         });
     }
 
-    private static void writeKlineBinFromList(File zipFile, List<CandleSimple> candles) throws IOException {
+    private static void writeKlineBinFromList(File zipFile, Deque<CandleSimple> candles) throws IOException {
         String entryName = binEntryName(zipFile);
         rewriteZipWithBinEntry(zipFile, entryName, out -> {
             out.writeInt(KLINE_BIN_MAGIC);
@@ -575,10 +577,10 @@ public class IOMarket {
     private static void rewriteZipWithBinEntry(File zipFile, String entryName, BinWriter writer) throws IOException {
         Path temp = Files.createTempFile(zipFile.getParentFile().toPath(), zipFile.getName(), ".tmp");
         try {
-            try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), 1 << 20));
-                 ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(temp), 1 << 20))) {
+            try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), (1 << 20) * BUFFER_READ_MB));
+                 ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(temp), (1 << 20) * BUFFER_READ_MB))) {
                 ZipEntry entry;
-                byte[] buffer = new byte[1 << 20];
+                byte[] buffer = new byte[(1 << 20) * BUFFER_READ_MB];
                 while ((entry = zis.getNextEntry()) != null) {
                     if (entry.isDirectory()) {
                         continue;
@@ -608,7 +610,7 @@ public class IOMarket {
     }
 
     private static void copyStream(InputStream in, OutputStream out) throws IOException {
-        byte[] buffer = new byte[1 << 20];
+        byte[] buffer = new byte[(1 << 20) * BUFFER_READ_MB];
         int read;
         while ((read = in.read(buffer)) != -1) {
             out.write(buffer, 0, read);
@@ -619,14 +621,14 @@ public class IOMarket {
         if (binFile.getParentFile() != null) {
             Files.createDirectories(binFile.getParentFile().toPath());
         }
-        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), 1 << 20));
-             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(binFile), 1 << 20))) {
+        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), (1 << 20) * BUFFER_READ_MB));
+             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(binFile), (1 << 20) * BUFFER_READ_MB))) {
             out.writeInt(TRADE_BIN_MAGIC);
             out.writeInt(BIN_VERSION);
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (!entry.isDirectory() && entry.getName().endsWith(".csv")) {
-                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), 1 << 20);
+                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), (1 << 20) * BUFFER_READ_MB);
                     String line;
                     while ((line = br.readLine()) != null) {
                         if (line.isEmpty() || Character.isLetter(line.charAt(0))) continue; // Skip Header
@@ -647,14 +649,14 @@ public class IOMarket {
         if (binFile.getParentFile() != null) {
             Files.createDirectories(binFile.getParentFile().toPath());
         }
-        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), 1 << 20));
-             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(binFile), 1 << 20))) {
+        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), (1 << 20) * BUFFER_READ_MB));
+             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(binFile), (1 << 20) * BUFFER_READ_MB))) {
             out.writeInt(KLINE_BIN_MAGIC);
             out.writeInt(BIN_VERSION);
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (!entry.isDirectory() && entry.getName().endsWith(".csv")) {
-                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), 1 << 20);
+                    BufferedReader br = new BufferedReader(new InputStreamReader(zis), (1 << 20) * BUFFER_READ_MB);
                     String line;
                     while ((line = br.readLine()) != null) {
                         if (line.isEmpty() || Character.isLetter(line.charAt(0))) continue; // Skip Header
@@ -686,7 +688,7 @@ public class IOMarket {
         VestaEngine.EXECUTOR_READ_SCV.execute(task);
     }
 
-    private static void drainKlineTask(Deque<FutureTask<List<CandleSimple>>> tasks, List<CandleSimple> list)
+    private static void drainKlineTask(Deque<FutureTask<List<CandleSimple>>> tasks, Deque<CandleSimple> list)
             throws InterruptedException, ExecutionException {
         FutureTask<List<CandleSimple>> task = tasks.removeFirst();
         List<CandleSimple> candles = task.get();

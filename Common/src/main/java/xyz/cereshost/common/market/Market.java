@@ -1,6 +1,7 @@
 package xyz.cereshost.common.market;
 
 import lombok.Getter;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Vesta;
 
@@ -36,7 +37,15 @@ public class Market {
     }
 
     public synchronized void addTrade(Collection<Trade> trade) {
-        this.trades.addAll(trade);
+        Iterator<Trade> iterator = trade.iterator();
+        while (iterator.hasNext()) {
+            this.trades.add(iterator.next());
+            iterator.remove();
+        }
+    }
+
+    public synchronized void setTrade(LinkedHashSet<Trade> trades) {
+        this.trades = trades;
     }
 
     public synchronized void addDepth(Depth tickMarker) {
@@ -44,7 +53,15 @@ public class Market {
     }
 
     public synchronized void addCandles(Collection<CandleSimple> candleSimple) {
-        this.candleSimples.addAll(candleSimple);
+        Iterator<CandleSimple> iterator = candleSimple.iterator();
+        while (iterator.hasNext()) {
+            this.candleSimples.add(iterator.next());
+            iterator.remove();
+        }
+    }
+
+    public synchronized void setCandles(LinkedHashSet<CandleSimple> candleSimple) {
+        this.candleSimples = candleSimple;
     }
 
     public synchronized void sortd(){
@@ -54,11 +71,12 @@ public class Market {
         candleSimples = sortInChunks(candleSimples, chunkSize, CandleSimple::openTime);
     }
 
-    private interface TimeAccessor<T> {
+    public interface TimeAccessor<T> {
         long time(T item);
     }
 
-    private static <T> LinkedHashSet<T> sortInChunks(LinkedHashSet<T> source, int chunkSize, TimeAccessor<T> accessor) {
+    @Contract(pure = true)
+    public static <T> LinkedHashSet<T> sortInChunks(Collection<T> source, int chunkSize, TimeAccessor<T> accessor) {
         if (source == null || source.isEmpty()) {
             return new LinkedHashSet<>();
         }
@@ -75,6 +93,8 @@ public class Market {
                 batch.clear();
             }
         }
+        // No debería quedar nada
+        source.clear();
         if (!batch.isEmpty()) {
             all.addAll(batch);
             batch.clear();
@@ -107,11 +127,16 @@ public class Market {
                 .toList();
     }
 
-    public synchronized void buildTradeCache() {
+    public void buildTradeCache() {
         tradesByMinuteCache = new TreeMap<>();
-        for (Trade t : trades) {
+
+        Iterator<Trade> it = trades.iterator();
+        while (it.hasNext()) {
+            Trade t = it.next();
+
             long minute = (t.time() / 60_000) * 60_000;
             tradesByMinuteCache.computeIfAbsent(minute, k -> new ArrayList<>()).add(t);
+            it.remove();
         }
     }
 
@@ -160,6 +185,13 @@ public class Market {
                 tradesBefore, trades.size(),
                 depthsBefore, depths.size()));
         return this;
+    }
+
+    public void clear(){
+        trades.clear();
+        depths.clear();
+        candleSimples.clear();
+        tradesByMinuteCache.clear();
     }
 
     public double getFeedTaker(){

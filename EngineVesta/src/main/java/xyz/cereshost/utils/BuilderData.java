@@ -35,7 +35,7 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
-    public static @Nullable Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols, int maxMonth, int offset) {
+    public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols, int maxMonth, int offset) {
         List<PairCache> cacheEntries = new ArrayList<>();
         Path cacheDir;
         try {
@@ -61,10 +61,12 @@ public class BuilderData {
                     final int currentMonth = month;
                     CompletableFuture<MonthMarketCache> future = CompletableFuture.supplyAsync(() -> {
                         try {
+                            System.gc();
                             Vesta.info("(idx:%d) ⬆️ Comenzado carga de datos", currentMonth);
                             Market market = IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, currentMonth);
                             List<Candle> candlesThisMonth = BuilderData.to1mCandles(market);
-                            market = null; // Borra market
+                            Vesta.info("(idx:%d) 📊 Velas computadas (C:%d)", currentMonth, candlesThisMonth.size());
+                            market.clear();
                             if (candlesThisMonth.size() <= LOOK_BACK + 2) {
                                 Vesta.warning("(idx:%d) insuficiente historial: " + candlesThisMonth.size() + " velas", currentMonth);
                                 return new MonthMarketCache(null, 0, 0, 0, 0, candlesThisMonth, false);
@@ -86,6 +88,7 @@ public class BuilderData {
                             if (maxMonth < 6) {
                                 candlesThisMonth.clear();
                             }
+                            pair = null;
                             return new MonthMarketCache(cacheFile, samples, seqLen, features, yCols, candlesThisMonth, true);
                         } catch (Exception e) {
                             Vesta.error("(idx:%d) Error procesando mes: " + e.getMessage(), currentMonth);
@@ -110,10 +113,9 @@ public class BuilderData {
                             if (result.cacheFile != null && result.samples > 0) {
                                 // Añadir objeto que indica que se guardó caché del pair
                                 cacheEntries.add(result);
-                                Vesta.info("(idx:%d) procesado: %d muestras (%s)", month, result.samples, symbol);
+                                Vesta.info("(%d/%d) ✅ procesado: %d muestras (%s)", month, maxMonth, result.samples, symbol);
                             }
                         }
-                        System.gc();
                     } catch (InterruptedException | ExecutionException e) {
                         Vesta.error("(idx:%d) Error procesando mes para " + symbol + ": " + e.getMessage(), months.get(i));
                         Thread.currentThread().interrupt();
@@ -165,7 +167,7 @@ public class BuilderData {
         }
 
 
-        return VestaEngine.THRESHOLD_RAM_USE > maxMonth ? null : new Pair<>(X_final, y_final);
+        return new Pair<>(X_final, y_final);
     }
 
     @Getter
@@ -265,7 +267,7 @@ public class BuilderData {
 
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
 
-        market.sortd();
+        //market.sortd();
         int remove = 0;
         int idx = 0;
 
@@ -455,6 +457,8 @@ public class BuilderData {
             }
             idx++;
         }
+        tradesByMinute.clear();
+        closes.clear();
         Vesta.info("Se elimino %d por dar resultado NA o Infinito", remove);
         return candles;
     }
