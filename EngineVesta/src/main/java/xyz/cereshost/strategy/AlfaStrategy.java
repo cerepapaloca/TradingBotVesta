@@ -17,14 +17,14 @@ public class AlfaStrategy implements TradingStrategy {
 //                o.setTpPercent(tpMinimo + 0.1);
 //            }
         }
-        if (pred.direction() == Trading.DireccionOperation.NEUTRAL) {
+        if (pred.directionOperation() == Trading.DireccionOperation.NEUTRAL) {
             operations.log("Momento no optimo para operar");
             return;
         }
 
         if ((pred.getRatio() > 1 && pred.getRatio() < 4) && (pred.getTpPercent() > 0.15 && pred.getTpPercent() < 0.4)) {
             if (operations.openSize() == 0) {
-                operations.open(pred.getTpPercent(), pred.getSlPercent(), pred.direction(), operations.getAvailableBalance(), 1);
+                operations.open(pred.getTpPercent(), pred.getSlPercent(), pred.directionOperation(), operations.getAvailableBalance(), 1);
             }else{
                 operations.log("Operación ya abierta");
             }

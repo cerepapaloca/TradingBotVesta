@@ -28,6 +28,66 @@ import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_RELATIVE;
 @UtilityClass
 public class EngineUtils {
 
+    public static final float MIN_DIRECTION_RATIO = 2.0f;
+
+    public record DirectionFilterResult(
+            int direction,
+            float maxMove,
+            float minMove,
+            float ratio,
+            float confidence
+    ) {
+        public Trading.DireccionOperation toOperation() {
+            return directionToOperation(direction);
+        }
+    }
+
+    public static @NotNull DirectionFilterResult filterDirectionByExtremes(float maxValue, float minValue) {
+        float absMax = Math.abs(maxValue);
+        float absMin = Math.abs(minValue);
+
+        if (!Float.isFinite(absMax) || !Float.isFinite(absMin)) {
+            return new DirectionFilterResult(0, absMax, absMin, 0f, 0f);
+        }
+
+        float diff = Math.abs(absMax - absMin);
+        if (diff < (float) PredictionEngine.THRESHOLD_PRICE) {
+            return new DirectionFilterResult(0, absMax, absMin, 0f, 0f);
+        }
+
+        int direction = absMax > absMin ? 1 : -1;
+        float ratio = direction == 1
+                ? (absMin == 0f ? Float.POSITIVE_INFINITY : absMax / absMin)
+                : (absMax == 0f ? Float.POSITIVE_INFINITY : absMin / absMax);
+
+        if (ratio < MIN_DIRECTION_RATIO) {
+            return new DirectionFilterResult(0, absMax, absMin, ratio, 0f);
+        }
+
+        float confidence = (absMax + absMin == 0f) ? 0f : diff / (absMax + absMin);
+        return new DirectionFilterResult(direction, absMax, absMin, ratio, confidence);
+    }
+
+    public static float @NotNull [] directionToOneHot(int direction) {
+        if (direction > 0) {
+            return new float[]{1f, 0f, 0f};
+        }
+        if (direction < 0) {
+            return new float[]{0f, 0f, 1f};
+        }
+        return new float[]{0f, 1f, 0f};
+    }
+
+    public static @NotNull Trading.DireccionOperation directionToOperation(int direction) {
+        if (direction > 0) {
+            return Trading.DireccionOperation.LONG;
+        }
+        if (direction < 0) {
+            return Trading.DireccionOperation.SHORT;
+        }
+        return Trading.DireccionOperation.NEUTRAL;
+    }
+
 //    public static void checkEngines() {
 //        Vesta.info("=== Verificando Engines DJL ===");
 //
@@ -225,20 +285,20 @@ public class EngineUtils {
             int chunkSize // Recomendado: 512 o 1024
     ) {
         long totalSamples = X_test.getShape().get(0);
-        int targetCols = (int) y_test.getShape().get(1); // Dinámico: usualmente 5 [TP, SL, L, N, S]
-        int predCols = 5; // Formato Vesta: [TP, SL, ProbL, ProbN, ProbS]
+        int targetCols = (int) y_test.getShape().get(1); // Dinamico: usualmente 5 [Max, Min, 0, 0, 0]
+        int predCols = 5; // Formato Vesta: [Max, Min, 0, 0, 0]
 
         double totalMaeUP = 0;
         double totalMaeDOWN = 0;
         double totalMaeDir = 0;
-        List<ResultPrediction> allResults = new ArrayList<>();
+        List<ResultEvaluate> allResults = new ArrayList<>();
 
         // Procesar por bloques
         for (int start = 0; start < totalSamples; start += chunkSize) {
             int end = (int) Math.min(start + chunkSize, totalSamples);
             int currentBatchSize = end - start;
 
-            // 1. Slicing de los datos de prueba (Sin copiar memoria si es posible)
+            // 1. Slicing de los datos de prueba (sin copiar memoria si es posible)
             try (NDArray xChunk = X_test.get(new NDIndex("{}:{}", start, end));
                  NDArray yChunk = y_test.get(new NDIndex("{}:{}", start, end))) {
 
@@ -246,7 +306,7 @@ public class EngineUtils {
                 NDList predictions = trainer.evaluate(new NDList(xChunk));
                 NDArray yPred = predictions.singletonOrThrow();
 
-                // 3. Conversión a arrays planos para procesamiento rápido en CPU
+                // 3. Conversion a arrays planos para procesamiento rapido en CPU
                 float[] yTestFlat = yChunk.toFloatArray();
                 float[] yPredFlat = yPred.toFloatArray();
 
@@ -255,27 +315,15 @@ public class EngineUtils {
                     int targetIdx = i * targetCols;
                     int predIdx = i * predCols;
 
-                    // Extraer Target (ajusta los índices según tu estructura real)
+                    // Extraer Target (ajusta los indices segun tu estructura real)
                     float rawRealTP = yTestFlat[targetIdx];
                     float rawRealSL = yTestFlat[targetIdx + 1];
 
-                    // Calculamos dirección real usando los flags (Long, Neutral, Short)
-                    float rawRealDir = PredictionEngine.computeDirection(new float[]{
-                            yTestFlat[targetIdx + 2],
-                            yTestFlat[targetIdx + 3],
-                            yTestFlat[targetIdx + 4]
-                    });
-
-                    // Extraer Predicción
+                    // Extraer Prediccion
                     float rawPredTP = yPredFlat[predIdx];
                     float rawPredSL = yPredFlat[predIdx + 1];
-                    float predDirection = PredictionEngine.computeDirection(new float[]{
-                            yPredFlat[predIdx + 2],
-                            yPredFlat[predIdx + 3],
-                            yPredFlat[predIdx + 4]
-                    });
 
-                    // 5. Desnormalización (TP y SL)
+                    // 5. Desnormalizacion (TP y SL)
                     float[][] denormTarget = yNormalizer.inverseTransform(new float[][]{{rawRealTP, rawRealSL}});
                     float[][] denormPred = yNormalizer.inverseTransform(new float[][]{{rawPredTP, rawPredSL}});
 
@@ -284,26 +332,33 @@ public class EngineUtils {
                     float predTP = denormPred[0][0];
                     float predSL = denormPred[0][1];
 
-                    // 6. Acumular Métricas
+                    DirectionFilterResult realDecision = filterDirectionByExtremes(realTP, realSL);
+                    DirectionFilterResult predDecision = filterDirectionByExtremes(predTP, predSL);
+                    float rawRealDir = realDecision.direction();
+                    float predDirection = predDecision.direction();
+                    float[] predOneHot = directionToOneHot(predDecision.direction());
+                    float[] realOneHot = directionToOneHot(realDecision.direction());
+
+                    // 6. Acumular metricas
                     totalMaeUP += Math.abs(realTP - predTP);
                     totalMaeDOWN += Math.abs(realSL - predSL);
                     totalMaeDir += Math.abs(rawRealDir - predDirection);
 
                     // 7. Guardar resultado individual
-                    allResults.add(new ResultPrediction(
+                    allResults.add(new ResultEvaluate(
                             predTP, predSL, predDirection,
                             realTP, realSL, rawRealDir,
-                            yPredFlat[predIdx + 2],
-                            yTestFlat[targetIdx + 2],
-                            yPredFlat[predIdx + 3],
-                            yTestFlat[targetIdx + 3],
-                            yPredFlat[predIdx + 4],
-                            yTestFlat[targetIdx + 4],
-                            start + i // Índice global
+                            predOneHot[0],
+                            realOneHot[0],
+                            predOneHot[1],
+                            realOneHot[1],
+                            predOneHot[2],
+                            realOneHot[2],
+                            start + i // Indice global
                     ));
                 }
 
-                // Liberar predicción del chunk
+                // Liberar prediccion del chunk
                 predictions.close();
             }
         }
@@ -313,7 +368,7 @@ public class EngineUtils {
         double avgMaeDOWN = totalMaeDOWN / totalSamples;
         double avgMaeDir = totalMaeDir / totalSamples;
 
-        Vesta.info("Evaluación Finalizada -> MAE TP: %.6f, MAE SL: %.6f, MAE Dir: %.6f", avgMaeUP, avgMaeDOWN, avgMaeDir);
+        Vesta.info("Evaluacion Finalizada -> MAE TP: %.6f, MAE SL: %.6f, MAE Dir: %.6f", avgMaeUP, avgMaeDOWN, avgMaeDir);
 
         return new ResultsEvaluate("VestaIA_Chunked", avgMaeUP, avgMaeDOWN, allResults);
     }
@@ -322,12 +377,12 @@ public class EngineUtils {
             String modelName,
             double avgMaeTP,
             double avgMaeSL,
-            List<ResultPrediction> resultPrediction
+            List<ResultEvaluate> resultEvaluate
     ) {
         public float hitRateSimple(){
             int hits = 0;
             int fails = 0;
-            for (ResultPrediction prediction : resultPrediction) {
+            for (ResultEvaluate prediction : resultEvaluate) {
                 if (prediction.getPredDirection() == Trading.DireccionOperation.NEUTRAL || prediction.getRealDirection() == Trading.DireccionOperation.NEUTRAL) continue;
                 // ley de los signos
                 if (prediction.getPredDirection() == prediction.getRealDirection()) {
@@ -345,7 +400,7 @@ public class EngineUtils {
             int hits = 0;
             int total = 0;
 
-            for (ResultPrediction prediction : resultPrediction) {
+            for (ResultEvaluate prediction : resultEvaluate) {
                 if (prediction.getPredDirection() == prediction.getRealDirection()) {
                     hits++;
                 }
@@ -361,7 +416,7 @@ public class EngineUtils {
 
             float threshold = (float) THRESHOLD_RELATIVE;
 
-            for (ResultPrediction prediction : resultPrediction) {
+            for (ResultEvaluate prediction : resultEvaluate) {
                 float pred = prediction.predDir();
                 float real = prediction.realDir();
                 if (real > threshold) { // Long real
@@ -382,7 +437,7 @@ public class EngineUtils {
 
         public int @NotNull [] hitRateLongOneFloat() {
             int[] hits = new int[3];
-            for (ResultPrediction prediction : resultPrediction){
+            for (ResultEvaluate prediction : resultEvaluate){
                 if (prediction.realDir() > THRESHOLD_RELATIVE){
                     computeDir(hits, prediction);
                 }
@@ -392,7 +447,7 @@ public class EngineUtils {
 
         public int @NotNull [] hitRateShortOneFloat() {
             int[] hits = new int[3];
-            for (ResultPrediction prediction : resultPrediction){
+            for (ResultEvaluate prediction : resultEvaluate){
                 if (prediction.realDir() < -THRESHOLD_RELATIVE){
                     computeDir(hits, prediction);
                 }
@@ -402,7 +457,7 @@ public class EngineUtils {
 
         public int @NotNull [] hitRateNeutralOneFloat() {
             int[] hits = new int[3];
-            for (ResultPrediction prediction : resultPrediction){
+            for (ResultEvaluate prediction : resultEvaluate){
                 if (prediction.realDir() > -THRESHOLD_RELATIVE && prediction.realDir() < THRESHOLD_RELATIVE) {
                     computeDir(hits, prediction);
                 }
@@ -412,7 +467,7 @@ public class EngineUtils {
 
         public int[] hitRate(Trading.DireccionOperation direccion){
             int[] hits = new int[3];
-            for (ResultPrediction prediction : resultPrediction){
+            for (ResultEvaluate prediction : resultEvaluate){
                 if (prediction.getRealDirection() == direccion) {
                     switch (prediction.getPredDirection()) {
                         case LONG -> hits[0]++;
@@ -431,7 +486,7 @@ public class EngineUtils {
             // Usamos el threshold para definir qué es un acierto real
             float threshold = (float) THRESHOLD_RELATIVE;
 
-            for (ResultPrediction prediction : resultPrediction) {
+            for (ResultEvaluate prediction : resultEvaluate) {
                 float pred = prediction.predDir();
                 float real = prediction.realDir();
 
@@ -452,7 +507,7 @@ public class EngineUtils {
             return total > 0 ? ((float) hits / total) * 100f : 0f;
         }
 
-        private void computeDir(int[] hits, @NotNull ResultPrediction prediction) {
+        private void computeDir(int[] hits, @NotNull EngineUtils.ResultEvaluate prediction) {
             boolean signalLong = prediction.predDir() > THRESHOLD_RELATIVE;
             boolean signalShort = prediction.predDir() < -THRESHOLD_RELATIVE;
             if (signalLong) {
@@ -466,7 +521,7 @@ public class EngineUtils {
 
     }
 
-    public record ResultPrediction(
+    public record ResultEvaluate(
             float predTP, float predSL, float predDir,
             float realTP, float realSL, float realDir,
             float predLongSing, float realLongSing,

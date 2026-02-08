@@ -46,27 +46,27 @@ public class VestaLoss extends Loss {
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
         NDManager manager = target.getManager();
-        NDArray lossTP = TPSLAdvance(trueParts, trueParts.get(0), predParts.get(0)).mul(EngineUtils.floatToNDArray(0.6f, manager));
-        NDArray lossSL = TPSLAdvance(trueParts, trueParts.get(1), predParts.get(1)).mul(EngineUtils.floatToNDArray(0.6f, manager));;
-        NDArray lLong = directionalPenaltySoft(trueParts.get(2), predParts.get(2)).mul(EngineUtils.floatToNDArray(1f, manager));
+        NDArray lossTP = trueParts.get(0).sub(predParts.get(0)).pow(EngineUtils.floatToNDArray(2f, manager)).mul(EngineUtils.floatToNDArray(0.1f, manager)).mean();
+        NDArray lossSL = trueParts.get(1).sub(predParts.get(1)).pow(EngineUtils.floatToNDArray(2f, manager)).mul(EngineUtils.floatToNDArray(0.1f, manager)).mean();
+        NDArray lLong = EngineUtils.floatToNDArray(0f, manager);// directionalPenaltySoft(trueParts.get(2), predParts.get(2)).mul(EngineUtils.floatToNDArray(0f, manager));
         //NDArray clippedNeutralPred = clipNeutralGradient(trueParts.get(3), predParts.get(3), NEUTRAL_GRAD_CLIP);
-        NDArray lNeutral = binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul(EngineUtils.floatToNDArray(2f, manager));
-        NDArray lShort =  directionalPenaltySoft(trueParts.get(4), predParts.get(4)).mul(EngineUtils.floatToNDArray(1f, manager));
+        NDArray lNeutral = EngineUtils.floatToNDArray(0f, manager);// binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul(EngineUtils.floatToNDArray(0f, manager));
+        NDArray lShort = EngineUtils.floatToNDArray(0f, manager);// directionalPenaltySoft(trueParts.get(4), predParts.get(4)).mul(EngineUtils.floatToNDArray(0f, manager));
 
         // 3. PLUS DE PENALIZACIÓN (Inversión de tendencia)
-        NDArray longTrue = trueParts.get(2);
-        NDArray shortTrue = trueParts.get(4);
-        NDArray directionMask = EngineUtils.floatToNDArray(1f, manager).sub(trueParts.get(3));
-        NDArray crossError = longTrue.mul(predParts.get(4))  // Long real * Predicción Short
-                        .add(shortTrue.mul(predParts.get(2)))        // Short real * Predicción Long
-                        .mul(directionMask)
-                        .mul(EngineUtils.floatToNDArray(2f, manager)).mean();
+//        NDArray longTrue = trueParts.get(2);
+//        NDArray shortTrue = trueParts.get(4);
+//        NDArray directionMask =  EngineUtils.floatToNDArray(1f, manager).sub(trueParts.get(3));
+        NDArray crossError = EngineUtils.floatToNDArray(0f, manager);// longTrue.mul(predParts.get(4))  // Long real * Predicción Short
+//                        .add(shortTrue.mul(predParts.get(2)))        // Short real * Predicción Long
+//                        .mul(directionMask)
+//                        .mul(EngineUtils.floatToNDArray(0f, manager)).mean();
 
-        NDArray biasPenalty = computeDirectionalBiasPenalty(trueParts, predParts, manager);
+        NDArray biasPenalty = EngineUtils.floatToNDArray(0f, manager);// computeDirectionalBiasPenalty(trueParts, predParts, manager);
 
 
         NDArray directionLoss = lLong.add(lNeutral).add(lShort).add(crossError).add(biasPenalty);
-        NDArray totalLoss = lossTP.add(lossSL).add(directionLoss);
+        NDArray totalLoss = lossTP.add(lossSL);//.add(directionLoss);
         // 2. ¿Alguien está esperando datos? (Sincronización Inteligente)
         // Solo entramos aquí si llamaste a awaitNextBatchData()
         CompletableFuture<LossReport> request = dataRequest;
@@ -79,7 +79,7 @@ public class VestaLoss extends Loss {
                     lLong.getFloat(),
                     lNeutral.getFloat(),
                     lShort.getFloat(),
-                    directionMemory.getFloat(),
+                    0f,
                     biasPenalty.getFloat()
             ));
             dataRequest = null; // Limpiamos la petición

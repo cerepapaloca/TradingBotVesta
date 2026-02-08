@@ -25,7 +25,7 @@ public class BinaryDirectionEvaluator extends BaseAccuracy {
     private static final int CLASS_NEUTRAL = 1;
 
     public BinaryDirectionEvaluator() {
-        super("BinDirAcc"); // Nombre corto para los logs
+        super("2_dir"); // Nombre corto para los logs
     }
 
     @Override

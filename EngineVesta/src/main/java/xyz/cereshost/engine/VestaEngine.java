@@ -16,7 +16,6 @@ import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.norm.Dropout;
-import ai.djl.nn.norm.LayerNorm;
 import ai.djl.nn.recurrent.GRU;
 import ai.djl.pytorch.engine.PtModel;
 import ai.djl.pytorch.engine.PtNDManager;
@@ -36,15 +35,15 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.ChartUtils;
 import xyz.cereshost.Main;
-import xyz.cereshost.blocks.Softmax;
 import xyz.cereshost.blocks.TemporalTransformerBlock;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
+import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.io.IOdata;
-import xyz.cereshost.metrics.BinaryDirectionEvaluator;
-import xyz.cereshost.metrics.DirectionAccuracyEvaluator;
 import xyz.cereshost.metrics.MAEEvaluator;
 import xyz.cereshost.metrics.MetricsListener;
+import xyz.cereshost.metrics.MinDiffEvaluator;
+import xyz.cereshost.metrics.MaxDiffEvaluator;
 import xyz.cereshost.utils.BuilderData;
 import xyz.cereshost.utils.EngineUtils;
 import xyz.cereshost.utils.XNormalizer;
@@ -61,16 +60,19 @@ import java.util.function.BiFunction;
 
 public class VestaEngine {
 
-    public static final int LOOK_BACK = 90;
-    public static final int EPOCH = 15;
+    public static final int LOOK_BACK = 120;
+    public static final int EPOCH = 3;
     public static final int EPOCH_SUB = 1;
     public static final int SPLIT_DATASET = 1;
+    public static final int THRESHOLD_RAM_USE = 12;
+    public static final int BACH_SIZE = 256;
 
     @Getter
     private static NDManager rootManager;
 
     public static final ExecutorService EXECUTOR = Executors.newCachedThreadPool();
-    public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(4);
+    public static final ExecutorService EXECUTOR_BUILD = Executors.newScheduledThreadPool(1);
+    public static final ExecutorService EXECUTOR_READ_SCV = Executors.newScheduledThreadPool(8);
     public static final ExecutorService EXECUTOR_TRAINING = Executors.newScheduledThreadPool(8);
     private static final float DIRECTION_EQUALIZATION_STRENGTH = 0.35f;
     /**
@@ -91,31 +93,14 @@ public class VestaEngine {
         Vesta.info("Usando dispositivo: " + device);
         Vesta.info("Entrenando con " + symbols.size() + " símbolos: " + symbols);
 
-        MetricsListener metricsListener = new MetricsListener();
-        TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2"))
-                .optOptimizer(Optimizer.adamW()
-                        .optLearningRateTracker(Tracker.cosine()
-                                .setBaseValue(0.000_001f)
-                                .optFinalValue(0.000_000_1f)
-                                .setMaxUpdates((int) (EPOCH*EPOCH_SUB*((double)Main.MAX_MONTH_TRAINING /SPLIT_DATASET)))
-                                .build())
-//                        .optLearningRateTracker(Tracker.fixed(0.003f))
-                        .optWeightDecays(0.0f)
-                        .optClipGrad(2f)
-                        .build())
-                .optDevices(Engine.getInstance().getDevices())
-                .addEvaluator(new MAEEvaluator())
-                .addEvaluator(new BinaryDirectionEvaluator())
-                .addEvaluator(new DirectionAccuracyEvaluator())
-                .optExecutorService(EXECUTOR_TRAINING)
-                .addTrainingListeners(TrainingListener.Defaults.logging())
-                .addTrainingListeners(metricsListener);
-
         try (PtModel model = (PtModel) Model.newInstance(Main.NAME_MODEL, device, "PyTorch")) {
             PtNDManager manager = (PtNDManager) model.getNDManager();
 
             Pair<float[][][], float[][]> combined = BuilderData.fullBuild(symbols,  Main.MAX_MONTH_TRAINING, 1);
 
+            if (combined == null){
+
+            }
             float[][][] xCombined = combined.getKey();
             float[][] yCombined = combined.getValue();
 
@@ -155,11 +140,32 @@ public class VestaEngine {
             EngineUtils.cleanNaNValues(result.getX_test_norm());
 
             // Construir modelo (usa tu método existente)
-
             model.setBlock(getSequentialBlock());
             // Configuración de entrenamiento (igual a tu código)
 
-            int batchSize = 256;// 256;
+            MetricsListener metricsListener = new MetricsListener();
+            TrainingConfig config = new DefaultTrainingConfig(new VestaLoss("WeightedL2"))
+                    .optOptimizer(Optimizer.adamW()
+                            .optLearningRateTracker(Tracker.cosine()
+                                    .setBaseValue(0.000_001f)
+                                    .optFinalValue(0.000_000_3f)
+                                    .setMaxUpdates((int) (EPOCH*EPOCH_SUB*((double)Main.MAX_MONTH_TRAINING /SPLIT_DATASET)))
+                                    .build())
+//                        .optLearningRateTracker(Tracker.fixed(0.003f))
+                            .optWeightDecays(0.0f)
+                            .optClipGrad(2f)
+                            .build())
+                    .optDevices(Engine.getInstance().getDevices())
+                    .addEvaluator(new MAEEvaluator())
+                    .addEvaluator(new MaxDiffEvaluator())
+                    .addEvaluator(new MinDiffEvaluator())
+//                .addEvaluator(new BinaryDirectionEvaluator())
+//                .addEvaluator(new DirectionAccuracyEvaluator())
+                    .optExecutorService(EXECUTOR_TRAINING)
+                    .addTrainingListeners(TrainingListener.Defaults.logging())
+                    .addTrainingListeners(metricsListener);
+
+            int batchSize = BACH_SIZE;
             Trainer trainer = model.newTrainer(config);
             trainer.initialize(new Shape(batchSize, LOOK_BACK, features));
 
@@ -230,7 +236,7 @@ public class VestaEngine {
                 // Como entrenaste combinando símbolos, lo ideal es probar en uno representativo o iterar.
                 // Aquí probamos con el primer símbolo de la lista para obtener el ROI
                 String testSymbol = symbols.get(0);
-                Market market = IOdata.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols.get(0), 1).limit(7);
+                Market market = IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols.get(0), 1).limit(7);
                 EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, result.getYNormalizer(), 1024);
 
                 BackTestEngine.BackTestResult simResult;
@@ -351,7 +357,7 @@ public class VestaEngine {
     public static @NotNull SequentialBlock getSequentialBlock() {
         SequentialBlock mainBlock = new SequentialBlock();
 
-        float deltaFloat = 0.7f; // Controla qué tan suave es el centro
+        float deltaFloat = 0.5f; // Controla qué tan suave es el centro
         TTLHeader(mainBlock);
         // Branch aggregator: recibirá outputs de TP, SL y DIRECCION (que a su vez es la concatenacion de 3 sub-brazos)
         ParallelBlock branches = new ParallelBlock(list -> {
@@ -365,10 +371,10 @@ public class VestaEngine {
 
         // TP (igual que antes)
         branches.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(128).build())
-                .add(Dropout.builder().optRate(0.2f).build())
-                .add(Linear.builder().setUnits(64).build())
                 .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().optRate(0.2f).build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
@@ -379,10 +385,10 @@ public class VestaEngine {
 
         // SL (igual que antes)
         branches.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(128).build())
-                .add(Dropout.builder().optRate(0.2f).build())
-                .add(Linear.builder().setUnits(64).build())
                 .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().optRate(0.2f).build())
+                .add(Linear.builder().setUnits(32).build())
+                .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(32).build())
                 .add(Linear.builder().setUnits(1).build())
                 .add(new LambdaBlock(ndArrays -> {
@@ -405,48 +411,49 @@ public class VestaEngine {
         });
 
         // Sub-brazo 1 (Long)
-        dirSub.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(64).build())
-                .add(Dropout.builder().optRate(0.3f).build())
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(1).build())
-                .add(new LambdaBlock(ndArrays -> {
-                    NDArray x = ndArrays.singletonOrThrow();
-                    return new NDList(x); // ya es escalar por muestra
-                }))
-        );
-
-        // Sub-brazo 2 (Neutral)
-        dirSub.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(32).build())
-                .add(Dropout.builder().optRate(0.2f).build())
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(1).build())
-                .add(new LambdaBlock(ndArrays -> {
-                    NDArray x = ndArrays.singletonOrThrow();
-                    return new NDList(x);
-                }))
-        );
-
-        // Sub-brazo 3 (Short)
-        dirSub.add(new SequentialBlock()
-                .add(Linear.builder().setUnits(64).build())
-                .add(Dropout.builder().optRate(0.3f).build())
-                .add(Linear.builder().setUnits(32).build())
-                .add(Linear.builder().setUnits(1).build())
-                .add(new LambdaBlock(ndArrays -> {
-                    NDArray x = ndArrays.singletonOrThrow();
-                    return new NDList(x);
-                }))
-        );
+//        dirSub.add(new SequentialBlock()
+//                .add(Linear.builder().setUnits(64).build())
+//                .add(Dropout.builder().optRate(0.3f).build())
+//                .add(Linear.builder().setUnits(32).build())
+//                .add(Linear.builder().setUnits(1).build())
+//                .add(new LambdaBlock(ndArrays -> {
+//                    NDArray x = ndArrays.singletonOrThrow();
+//                    return new NDList(x); // ya es escalar por muestra
+//                }))
+//        );
+//
+//        // Sub-brazo 2 (Neutral)
+//        dirSub.add(new SequentialBlock()
+//                .add(Linear.builder().setUnits(32).build())
+//                .add(Dropout.builder().optRate(0.2f).build())
+//                .add(Linear.builder().setUnits(32).build())
+//                .add(Linear.builder().setUnits(1).build())
+//                .add(new LambdaBlock(ndArrays -> {
+//                    NDArray x = ndArrays.singletonOrThrow();
+//                    return new NDList(x);
+//                }))
+//        );
+//
+//        // Sub-brazo 3 (Short)
+//        dirSub.add(new SequentialBlock()
+//                .add(Linear.builder().setUnits(64).build())
+//                .add(Dropout.builder().optRate(0.3f).build())
+//                .add(Linear.builder().setUnits(32).build())
+//                .add(Linear.builder().setUnits(1).build())
+//                .add(new LambdaBlock(ndArrays -> {
+//                    NDArray x = ndArrays.singletonOrThrow();
+//                    return new NDList(x);
+//                }))
+//        );
 
         // Ahora el bloque de Dirección que aplica unos Dense previos, luego el dirSub (que concatena los 3 escalares),
         // luego el "smoothing" que tenías, y por último softmax para obtener probabilidades mutuamente excluyentes.
         branches.add(new SequentialBlock()
-                .add(Dropout.builder().optRate(0.3f).build())
-                .add(Linear.builder().setUnits(128).build())
-                .add(LayerNorm.builder().build())
-                .add(dirSub)
+                        .add(Linear.builder().setUnits(3).build())
+//                .add(Dropout.builder().optRate(0.3f).build())
+//                .add(Linear.builder().setUnits(128).build())
+//                .add(LayerNorm.builder().build())
+//                .add(dirSub)
 //                .add(new LambdaBlock(ndArrays -> {
 //                    NDArray concatenated = ndArrays.singletonOrThrow(); // [B,3]
 //                    // Mantener dimensión [B,1]
@@ -469,11 +476,12 @@ public class VestaEngine {
 //                    // Ahora TODOS son [B,1], concat en eje 1 es válido
 //                    return new NDList(NDArrays.concat( new NDList(longBalanced, neutralLogit, shortBalanced),1));
 //                }))
-                .add(new LambdaBlock(ndArrays -> {
-                    NDArray x = ndArrays.singletonOrThrow();
-                    return new NDList(x.mul(x).add(EngineUtils.floatToNDArray(deltaFloat*deltaFloat, ndArrays.getManager())).sqrt().sub(EngineUtils.floatToNDArray(deltaFloat, ndArrays.getManager())));
-                }))
-                .add(Softmax.builder().temperature(1).build())
+//                .add(new LambdaBlock(ndArrays -> {
+//                    NDArray x = ndArrays.singletonOrThrow();
+//                    return new NDList(x.mul(x).add(EngineUtils.floatToNDArray(deltaFloat*deltaFloat, ndArrays.getManager())).sqrt().sub(EngineUtils.floatToNDArray(deltaFloat, ndArrays.getManager())));
+//                }))
+//                .add(Softmax.builder().temperature(1).build())
+
         );
 
         mainBlock.add(branches);
@@ -508,9 +516,9 @@ public class VestaEngine {
 
     private static void TTLHeader(SequentialBlock mainBlock) {
         mainBlock.add(TemporalTransformerBlock.builder()
-                        .setModelDim(256)
+                        .setModelDim(128)
                         .setNumHeads(4)
-                        .setFeedForwardDim(4*256)
+                        .setFeedForwardDim(4*128)
                         .setDropoutRate(0.3f)
                         .setMaxSequenceLength(LOOK_BACK)
                         .setOftenClearCache(40)
@@ -526,7 +534,9 @@ public class VestaEngine {
                     ); // [B, 2H]
                     return new NDList(combined);
                 }))
-                .add(Linear.builder().setUnits(128).build());
+                .add(Linear.builder().setUnits(64).build())
+                .add(Dropout.builder().optRate(0.1f).build())
+                .add(Linear.builder().setUnits(64).build());
     }
 
     private static void MLPHeader(SequentialBlock mainBlock) {

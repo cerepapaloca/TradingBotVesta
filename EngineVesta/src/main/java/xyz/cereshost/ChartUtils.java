@@ -445,7 +445,7 @@ public class ChartUtils {
      */
     public static void showPredictionComparison(
             String title,
-            List<EngineUtils.ResultPrediction> results
+            List<EngineUtils.ResultEvaluate> results
     ) {
         if (results == null || results.isEmpty()) {
             Vesta.error("No hay resultados para mostrar");
@@ -462,14 +462,14 @@ public class ChartUtils {
             List<Float> slError = new ArrayList<>();
 
             JTabbedPane tabbedPane = new JTabbedPane();
-            results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::tpDiff));
-            for (EngineUtils.ResultPrediction r : results) {
+            results.sort(Comparator.comparingDouble(EngineUtils.ResultEvaluate::tpDiff));
+            for (EngineUtils.ResultEvaluate r : results) {
                 actualTP.add(r.realTP());
                 predictedTP.add(r.predTP());
                 tpError.add(Math.abs(r.realTP() - r.predTP()));
             }
-            results.sort(Comparator.comparingDouble(EngineUtils.ResultPrediction::lsDiff));
-            for (EngineUtils.ResultPrediction r : results) {
+            results.sort(Comparator.comparingDouble(EngineUtils.ResultEvaluate::lsDiff));
+            for (EngineUtils.ResultEvaluate r : results) {
                 actualSL.add(r.realSL());
                 predictedSL.add(r.predSL());
                 slError.add(Math.abs(r.realSL() - r.predSL()));
@@ -559,14 +559,14 @@ public class ChartUtils {
     /**
      * Muestra la distribución de ratios TP/SL
      */
-    public static void plotRatioDistribution(String title, List<EngineUtils.ResultPrediction> results) {
+    public static void plotRatioDistribution(String title, List<EngineUtils.ResultEvaluate> results) {
         if (results == null || results.isEmpty()) return;
 
         // Calcular ratios
         List<Float> realRatios = new ArrayList<>();
         List<Float> predRatios = new ArrayList<>();
 
-        for (EngineUtils.ResultPrediction r : results) {
+        for (EngineUtils.ResultEvaluate r : results) {
             if (r.realSL() != 0) {
                 realRatios.add(r.realTP() / r.realSL());
             }else {
@@ -923,13 +923,13 @@ public class ChartUtils {
     /**
      * Gráfico de dispersión predicción vs realidad
      */
-    public static void plotPredictionVsRealScatter(List<EngineUtils.ResultPrediction> predictions, String title) {
+    public static void plotPredictionVsRealScatter(List<EngineUtils.ResultEvaluate> predictions, String title) {
         try {
             XYSeries longSeries = new XYSeries("LONG");
             XYSeries neutralSeries = new XYSeries("NEUTRAL");
             XYSeries shortSeries = new XYSeries("SHORT");
 
-            for (EngineUtils.ResultPrediction pred : predictions) {
+            for (EngineUtils.ResultEvaluate pred : predictions) {
                 float real = pred.realDir();
                 float predVal = pred.predDir();
 
@@ -991,13 +991,13 @@ public class ChartUtils {
     /**
      * Distribución de errores por dirección
      */
-    public static void plotErrorDistributionByDirection(List<EngineUtils.ResultPrediction> predictions, String title) {
+    public static void plotErrorDistributionByDirection(List<EngineUtils.ResultEvaluate> predictions, String title) {
         try {
             List<Float> longErrors = new ArrayList<>();
             List<Float> neutralErrors = new ArrayList<>();
             List<Float> shortErrors = new ArrayList<>();
 
-            for (EngineUtils.ResultPrediction pred : predictions) {
+            for (EngineUtils.ResultEvaluate pred : predictions) {
                 float error = pred.dirDiff();
 
                 if (pred.realDir() > THRESHOLD_RELATIVE) {

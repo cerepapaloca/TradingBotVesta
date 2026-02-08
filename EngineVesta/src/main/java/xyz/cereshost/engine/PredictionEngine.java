@@ -122,57 +122,40 @@ public class PredictionEngine {
         // Inferencia
         float[] rawPredictions = predictRaw(XWithSymbol); // Output del modelo
 
-
-        float upForce = rawPredictions[0];   // TP real
-        float downForce = rawPredictions[1]; // SL real
-        float probLong = rawPredictions[2]; // Long
-        float probNeutral = rawPredictions[3]; // Neutro
-        float probShort = rawPredictions[4]; // Short
-        Trading.DireccionOperation direction;
-        // 3. Lógica de Negocio
-        float[] directionProbs = {probLong, probNeutral, probShort};
-        float directionValue = computeDirection(directionProbs);
-
-        boolean signalLong = directionValue > THRESHOLD_RELATIVE;
-        boolean signalShort = directionValue < -THRESHOLD_RELATIVE;
+        float maxLog = rawPredictions[0];
+        float minLog = rawPredictions[1];
 
         float currentPrice = (float) subList.get(subList.size() - 1).close();
-        float tpLogReturn, slLogReturn;
-        Trading.DireccionOperation direccion = EngineUtils.getDireccion(probLong, probNeutral, probShort);
-        switch (direccion) {
-            case LONG ->{
-                tpLogReturn = upForce;
-                slLogReturn = downForce;
-            }
-            case SHORT ->{
-                tpLogReturn = downForce;
-                slLogReturn = upForce;
-            }
-            default -> {
-                tpLogReturn = 0;
-                slLogReturn = 0;
-            }
+        float maxPrice = (float) (currentPrice * Math.exp(maxLog));
+        float minPrice = (float) (currentPrice * Math.exp(minLog));
+
+        EngineUtils.DirectionFilterResult decision = EngineUtils.filterDirectionByExtremes(maxLog, minLog);
+        int direction = decision.direction();
+
+        float tpLogReturn;
+        float slLogReturn;
+        float tpPrice;
+        float slPrice;
+
+        if (direction > 0) {
+            tpLogReturn = decision.maxMove();
+            slLogReturn = decision.minMove();
+            tpPrice = maxPrice;
+            slPrice = minPrice;
+        } else if (direction < 0) {
+            tpLogReturn = decision.minMove();
+            slLogReturn = decision.maxMove();
+            tpPrice = minPrice;
+            slPrice = maxPrice;
+        } else {
+            tpLogReturn = 0f;
+            slLogReturn = 0f;
+            tpPrice = currentPrice;
+            slPrice = currentPrice;
         }
-//        if (signalLong) {
-//            tpLogReturn = upForce;
-//            slLogReturn = downForce;
-//        } else if (signalShort) {
-//            tpLogReturn = downForce;
-//            slLogReturn = upForce;
-//        } else {
-//            tpLogReturn = 0;
-//            slLogReturn = 0;
-//        }
-
-        // Cálculos de precios finales
-        float tpPrice = (float) (currentPrice * Math.exp(direccion.equals(Trading.DireccionOperation.SHORT) ? -tpLogReturn : tpLogReturn));
-        float slPrice = (float) (currentPrice * Math.exp(direccion.equals(Trading.DireccionOperation.SHORT) ? slLogReturn : -slLogReturn));
-
-        // Fix visual para Neutral
-        //if(direction.equals(DireccionOperation.NEUTRAL)) { tpPrice = currentPrice; slPrice = currentPrice; }
 
         return new PredictionResult(
-                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, Math.abs(directionValue), direccion
+                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, decision.confidence(), direction
         );
     }
 
@@ -183,8 +166,17 @@ public class PredictionEngine {
             double tpLogReturn,   // Log return para TP (positivo)
             double slLogReturn,   // Log return para SL (positivo)
             double confident,
-            Trading.DireccionOperation direction   // "LONG" o "SHORT"
+            int direction   // -1 Short, 0 Neutral, 1 Long
     ) {
+        public Trading.DireccionOperation directionOperation() {
+            if (direction > 0) {
+                return Trading.DireccionOperation.LONG;
+            }
+            if (direction < 0) {
+                return Trading.DireccionOperation.SHORT;
+            }
+            return Trading.DireccionOperation.NEUTRAL;
+        }
         public double getTpDistance() {
             return Math.abs(tpPrice - currentPrice);
         }

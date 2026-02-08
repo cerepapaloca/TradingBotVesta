@@ -5,6 +5,7 @@ import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.BackTestEngine;
+import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.utils.EngineUtils;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
@@ -23,13 +24,13 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "XRPUSDC"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "BTCUSDT"/* "BNBUSDT"*/);
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.CSV;
 
-    public static final int MAX_MONTH_TRAINING = 6;//4 12+8;
+    public static final int MAX_MONTH_TRAINING = 24;//4 12+8;
 
 
     @Getter
@@ -67,15 +68,15 @@ public class Main {
                 Vesta.info("  Real Short                 %d L %d S %d N", shortHits[0],  shortHits[1], shortHits[2]);
                 int[] NeutralHits = evaluateResult.hitRate(Trading.DireccionOperation.NEUTRAL);
                 Vesta.info("  Real Neutral               %d L %d S %d N", NeutralHits[0], NeutralHits[1], NeutralHits[2]);
-                ChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultPrediction());
-                List<EngineUtils.ResultPrediction> resultPrediction = evaluateResult.resultPrediction();
+                ChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultEvaluate());
+                List<EngineUtils.ResultEvaluate> resultEvaluate = evaluateResult.resultEvaluate();
 
                 // Mostrar dispersión de predicción vs real
-                ChartUtils.plotPredictionVsRealScatter(resultPrediction, "Presicion VS Real");
+                ChartUtils.plotPredictionVsRealScatter(resultEvaluate, "Presicion VS Real");
 
                 // Mostrar distribución de errores por dirección
-                ChartUtils.plotErrorDistributionByDirection(resultPrediction, "Error de distrución por distacia");
-                ChartUtils.plotRatioDistribution("Ratios " + String.join(" ", symbols), evaluateResult.resultPrediction());
+                ChartUtils.plotErrorDistributionByDirection(resultEvaluate, "Error de distrución por distacia");
+                ChartUtils.plotRatioDistribution("Ratios " + String.join(" ", symbols), evaluateResult.resultEvaluate());
                 showDataBackTest(backtestResult);
                 // Gráfica de distribución de errores porcentuales
 
@@ -99,12 +100,12 @@ public class Main {
 //                        ));
             }
             case "backtest" -> {
-                String symbol = "XRPUSDC";
+                String symbol = "BTCUSDC";
 
-                showDataBackTest(new BackTestEngine(IOdata.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
+                showDataBackTest(new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
             }
             case "trading" -> {
-                String symbol = "XRPUSDC";
+                String symbol = "BTCUSDC";
                 new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
             }
         }

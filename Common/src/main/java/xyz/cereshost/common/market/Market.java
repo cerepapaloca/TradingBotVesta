@@ -48,9 +48,47 @@ public class Market {
     }
 
     public synchronized void sortd(){
-        trades = trades.stream().sorted(Comparator.comparingLong(Trade::time)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
-        depths = depths.stream().sorted(Comparator.comparingLong(Depth::getDate)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
-        candleSimples = candleSimples.stream().sorted(Comparator.comparingLong(CandleSimple::openTime)).collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+        int chunkSize = 10_000;
+        trades = sortInChunks(trades, chunkSize, Trade::time);
+        depths = sortInChunks(depths, chunkSize, Depth::getDate);
+        candleSimples = sortInChunks(candleSimples, chunkSize, CandleSimple::openTime);
+    }
+
+    private interface TimeAccessor<T> {
+        long time(T item);
+    }
+
+    private static <T> LinkedHashSet<T> sortInChunks(LinkedHashSet<T> source, int chunkSize, TimeAccessor<T> accessor) {
+        if (source == null || source.isEmpty()) {
+            return new LinkedHashSet<>();
+        }
+
+        int safeChunkSize = Math.max(1, chunkSize);
+        List<T> all = new ArrayList<>(source.size());
+        List<T> batch = new ArrayList<>(Math.min(safeChunkSize, source.size()));
+
+        for (Iterator<T> it = source.iterator(); it.hasNext(); ) {
+            batch.add(it.next());
+            it.remove();
+            if (batch.size() >= safeChunkSize) {
+                all.addAll(batch);
+                batch.clear();
+            }
+        }
+        if (!batch.isEmpty()) {
+            all.addAll(batch);
+            batch.clear();
+        }
+
+        all.sort(Comparator.comparingLong(accessor::time));
+
+        LinkedHashSet<T> sorted = new LinkedHashSet<>(Math.max(16, (int) (all.size() / 0.75f) + 1));
+        for (int i = 0; i < all.size(); i++) {
+            sorted.add(all.get(i));
+            all.set(i, null);
+        }
+        all.clear();
+        return sorted;
     }
 
     @Getter

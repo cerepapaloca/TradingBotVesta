@@ -1,6 +1,7 @@
 package xyz.cereshost;
 
 import lombok.Getter;
+import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.utils.BuilderData;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
@@ -46,7 +47,7 @@ public class TradingLoopBinance {
         try {
 
 //            BinanceApi binanceApi = new BinanceApi();
-            trading = new TradingBinance("", "", true, IOdata.loadMarkets(DataSource.LOCAL_NETWORK_MINIMAL, symbol));
+            trading = new TradingBinance("", "", true, IOMarket.loadMarkets(DataSource.LOCAL_NETWORK_MINIMAL, symbol));
             trading.setTradingLoopBinance(this);
         } catch (InterruptedException | IOException e) {
             throw new RuntimeException(e);
@@ -102,7 +103,7 @@ public class TradingLoopBinance {
 
         executor.execute(() -> {
             try {
-                market.set(IOdata.loadMarkets(DataSource.BINANCE, symbol));
+                market.set(IOMarket.loadMarkets(DataSource.BINANCE, symbol));
             } catch (InterruptedException | IOException e) {
                 stop(e);
             }

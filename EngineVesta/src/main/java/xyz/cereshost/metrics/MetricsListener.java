@@ -37,11 +37,13 @@ public class MetricsListener extends TrainingListenerAdapter {
         float lossTrain = result.getTrainLoss();
         float lossValidation = result.getValidateLoss();
         float maeTrain = result.getTrainEvaluation("mae");
-        float daeTrain = result.getTrainEvaluation("DirrAcc");
-        float daelsTrain = result.getTrainEvaluation("BinDirAcc");
+//        float daeTrain = result.getTrainEvaluation("3_dir");
+//        float daelsTrain = result.getTrainEvaluation("2_dir");
         float maeValidation = result.getValidateEvaluation("mae");
-        float daeValidation = result.getValidateEvaluation("DirrAcc");
-        float daelsValidation = result.getValidateEvaluation("BinDirAcc");
+        float minValidation = result.getValidateEvaluation("min_diff");
+        float maxValidation = result.getValidateEvaluation("max_diff");
+//        float daeValidation = result.getValidateEvaluation("3_dir");
+//        float daelsValidation = result.getValidateEvaluation("2_dir");
         // Calucar porgreso
         double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH* (Main.MAX_MONTH_TRAINING/VestaEngine.SPLIT_DATASET) *VestaEngine.EPOCH_SUB);
         long time = System.currentTimeMillis();
@@ -62,7 +64,7 @@ public class MetricsListener extends TrainingListenerAdapter {
             lastTime = time;
             VestaLoss customLoss = (VestaLoss) trainer.getLoss();
             VestaLoss.LossReport l = customLoss.awaitNextBatchData();
-            if (datasetLoss == null || datasetNormal == null || datasetRateDireccion == null) {
+            if (datasetLoss == null && datasetNormal == null && datasetRateDireccion == null) {
                 datasetNormal = ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",
                         List.of(new ChartUtils.DataPlot("Loss T", List.of(lossTrain), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
                                 new ChartUtils.DataPlot("MAE T", List.of(maeTrain), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
@@ -72,46 +74,50 @@ public class MetricsListener extends TrainingListenerAdapter {
                         )
                 );
                 datasetLoss = ChartUtils.plot("Training Losses TP/SL " + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("Loss TP", List.of(l.tp())),
-                                new ChartUtils.DataPlot("Loss SL", List.of(l.sl()))
+                        List.of(new ChartUtils.DataPlot("Loss Max", List.of(l.tp()), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("Loss Min", List.of(l.sl()), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("Max", List.of(maxValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL),
+                                new ChartUtils.DataPlot("Min", List.of(minValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL)
                         )
                 );
-                datasetDireccion = ChartUtils.plot("Training Losses Dirección" + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("Loss L", List.of(l.longL())),
-                                new ChartUtils.DataPlot("Loss S", List.of(l.shortL())),
-                                new ChartUtils.DataPlot("Loss N", List.of(l.neutralL()))
-                        )
-                );
-                datasetRateDireccion = ChartUtils.plot("Rate Dirección" + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("DAE T", List.of(daeTrain), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
-                                new ChartUtils.DataPlot("DAELS T", List.of(daelsTrain), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
-                                new ChartUtils.DataPlot("DAE V", List.of(daeValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL),
-                                new ChartUtils.DataPlot("DAELS V", List.of(daelsValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL)
-                        )
-                );
-                datasetDireccionMemory = ChartUtils.plot("Penalización por dirección" + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("Direction ABS", List.of(l.biasPenalty()), Color.ORANGE, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
-                        new ChartUtils.DataPlot("Direction Relative", List.of(l.directionMemory()), Color.YELLOW, ChartUtils.DataPlot.StyleLine.NORMAL)
-                        )
-                );
+//                datasetDireccion = ChartUtils.plot("Training Losses Dirección" + String.join(", ", symbols), "epochs",
+//                        List.of(new ChartUtils.DataPlot("Loss L", List.of(l.longL())),
+//                                new ChartUtils.DataPlot("Loss S", List.of(l.shortL())),
+//                                new ChartUtils.DataPlot("Loss N", List.of(l.neutralL()))
+//                        )
+//                );
+//                datasetRateDireccion = ChartUtils.plot("Rate Dirección" + String.join(", ", symbols), "epochs",
+//                        List.of(new ChartUtils.DataPlot("DAE T", List.of(daeTrain), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+//                                new ChartUtils.DataPlot("DAELS T", List.of(daelsTrain), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+//                                new ChartUtils.DataPlot("DAE V", List.of(daeValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL),
+//                                new ChartUtils.DataPlot("DAELS V", List.of(daelsValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL)
+//                        )
+//                );
+//                datasetDireccionMemory = ChartUtils.plot("Penalización por dirección" + String.join(", ", symbols), "epochs",
+//                        List.of(new ChartUtils.DataPlot("Direction ABS", List.of(l.biasPenalty()), Color.ORANGE, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+//                        new ChartUtils.DataPlot("Direction Relative", List.of(l.directionMemory()), Color.YELLOW, ChartUtils.DataPlot.StyleLine.NORMAL)
+//                        )
+//                );
 
             }
             datasetNormal.getSeries("Loss T").add(count, lossTrain);
             datasetNormal.getSeries("MAE T").add(count, maeTrain);
             datasetNormal.getSeries("Loss V").add(count, lossValidation);
             datasetNormal.getSeries("MAE V").add(count, maeValidation);
-            datasetRateDireccion.getSeries("DAE T").add(count, daeTrain);
-            datasetRateDireccion.getSeries("DAELS T").add(count, daelsTrain);
-            datasetRateDireccion.getSeries("DAE V").add(count, daeValidation);
-            datasetRateDireccion.getSeries("DAELS V").add(count, daelsValidation);
-            datasetLoss.getSeries("Loss TP").add(count, l.tp());
-            datasetLoss.getSeries("Loss SL").add(count, l.sl());
-            datasetDireccion.getSeries( "Loss L").add(count, l.longL());
-            datasetDireccion.getSeries("Loss S").add(count, l.shortL());
-            datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
-            datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
-            datasetDireccionMemory.getSeries("Direction ABS").add(count, l.biasPenalty());
-            datasetDireccionMemory.getSeries("Direction Relative").add(count, l.directionMemory());
+            datasetLoss.getSeries("Max").add(count, maxValidation);
+            datasetLoss.getSeries("Min").add(count, minValidation);
+//            datasetRateDireccion.getSeries("DAE T").add(count, daeTrain);
+//            datasetRateDireccion.getSeries("DAELS T").add(count, daelsTrain);
+//            datasetRateDireccion.getSeries("DAE V").add(count, daeValidation);
+//            datasetRateDireccion.getSeries("DAELS V").add(count, daelsValidation);
+            datasetLoss.getSeries("Loss Max").add(count, l.tp());
+            datasetLoss.getSeries("Loss Min").add(count, l.sl());
+//            datasetDireccion.getSeries( "Loss L").add(count, l.longL());
+//            datasetDireccion.getSeries("Loss S").add(count, l.shortL());
+//            datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
+//            datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());
+//            datasetDireccionMemory.getSeries("Direction ABS").add(count, l.biasPenalty());
+//            datasetDireccionMemory.getSeries("Direction Relative").add(count, l.directionMemory());
             count++;
         });
     }

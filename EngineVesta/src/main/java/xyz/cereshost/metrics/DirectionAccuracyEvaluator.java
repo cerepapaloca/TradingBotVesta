@@ -18,7 +18,7 @@ import xyz.cereshost.utils.EngineUtils;
 public class DirectionAccuracyEvaluator extends BaseAccuracy {
 
     public DirectionAccuracyEvaluator() {
-        super("DirrAcc");
+        super("3_dir");
     }
 
     @Override
