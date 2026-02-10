@@ -110,7 +110,7 @@ public class PredictionEngine {
             throw new RuntimeException("Historial insuficiente. Se necesitan " + (lookBack + 1) + " velas.");
         }
 
-        List<Candle> subList = candles.subList((int) (candles.size() - (lookBack + 1)), candles.size());
+        List<Candle> subList = candles.subList((candles.size() - (lookBack + 1)), candles.size());
 
         // Construir entrada
         float[][][] X = new float[1][Math.toIntExact(lookBack)][Math.toIntExact(features - 2)];
@@ -125,7 +125,7 @@ public class PredictionEngine {
         float maxLog = rawPredictions[0];
         float minLog = rawPredictions[1];
 
-        float currentPrice = (float) subList.get(subList.size() - 1).close();
+        float currentPrice = (float) subList.getLast().close();
         float maxPrice = (float) (currentPrice * Math.exp(maxLog));
         float minPrice = (float) (currentPrice * Math.exp(minLog));
 

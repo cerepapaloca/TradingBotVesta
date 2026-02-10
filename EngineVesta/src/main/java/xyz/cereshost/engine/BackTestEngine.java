@@ -15,6 +15,7 @@ import xyz.cereshost.trading.TradingBackTest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 @Getter
 public class BackTestEngine {
@@ -44,8 +45,7 @@ public class BackTestEngine {
     public BackTestResult run(){
         List<Candle> allCandles = BuilderData.to1mCandles(market);
         allCandles.sort(Comparator.comparingLong(Candle::openTime));
-
-        market.buildTradeCache(); // Crucial para velocidad
+//        market.buildTradeCache(); // Crucial para velocidad
 
         int totalSamples = allCandles.size();
         int lookBack = engine.getLookBack();

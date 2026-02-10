@@ -83,8 +83,8 @@ public class BinanceAPI {
         }
         Deque<Trade> trades = new ArrayDeque<>();
         for (JsonNode trade : root) {
-            double quoteQty = trade.get("quoteQty").asDouble();
-            double price = trade.get("price").asDouble();
+            float quoteQty = (float) trade.get("quoteQty").asDouble();
+            float price = (float) trade.get("price").asDouble();
             boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
             long id = trade.get("id").asLong();
             long time = trade.get("time").asLong();

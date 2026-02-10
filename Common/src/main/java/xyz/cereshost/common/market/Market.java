@@ -6,6 +6,7 @@ import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Vesta;
 
 import java.util.*;
+import java.util.concurrent.*;
 
 public class Market {
 
@@ -83,7 +84,7 @@ public class Market {
 
         int safeChunkSize = Math.max(1, chunkSize);
         List<T> all = new ArrayList<>(source.size());
-        List<T> batch = new ArrayList<>(Math.min(safeChunkSize, source.size()));
+        Deque<T> batch = new ArrayDeque<>();
 
         for (Iterator<T> it = source.iterator(); it.hasNext(); ) {
             batch.add(it.next());
@@ -116,7 +117,7 @@ public class Market {
 
     public List<Trade> getTradesInWindow(long startTime, long endTime) {
         if (tradesByMinuteCache == null) {
-            buildTradeCache();
+            throw new IllegalStateException("TradesByMinuteCache has not been initialized");
         }
         // Devuelve todos los trades que ocurrieron en ese minuto
         // subMap devuelve una vista, values() la colección, y flatMap las une
@@ -128,17 +129,93 @@ public class Market {
     }
 
     public void buildTradeCache() {
-        tradesByMinuteCache = new TreeMap<>();
+        if ((tradesByMinuteCache == null || tradesByMinuteCache.isEmpty()) && !trades.isEmpty()) {
+            final LinkedHashMap<Long, List<Trade>> map = new LinkedHashMap<>();
+            Iterator<Trade> it = trades.iterator();
+            while (it.hasNext()) {
+                Trade t = it.next();
 
-        Iterator<Trade> it = trades.iterator();
-        while (it.hasNext()) {
-            Trade t = it.next();
-
-            long minute = (t.time() / 60_000) * 60_000;
-            tradesByMinuteCache.computeIfAbsent(minute, k -> new ArrayList<>()).add(t);
-            it.remove();
+                long minute = (t.time() / 60_000) * 60_000;
+                map.computeIfAbsent(minute, k -> new ArrayList<>(20)).add(t);
+                it.remove();
+            }
+            tradesByMinuteCache = new TreeMap<>();
+            tradesByMinuteCache.putAll(map);
         }
+
     }
+
+    //    public synchronized void buildTradeCache(Executor executor) {
+//        if (trades.isEmpty()) {
+//            tradesByMinuteCache = new TreeMap<>();
+//            return;
+//        }
+//
+//        ConcurrentSkipListMap<Long, ConcurrentLinkedQueue<Trade>> cache = new ConcurrentSkipListMap<>();
+//        ConcurrentLinkedQueue<Trade> queue = new ConcurrentLinkedQueue<>();
+//
+//        Iterator<Trade> it = trades.iterator();
+//        while (it.hasNext()) {
+//            queue.add(it.next());
+//            it.remove();
+//        }
+//
+//        int workers = 8;
+//        List<CompletableFuture<Void>> futures = new ArrayList<>(workers);
+//
+//
+//        for (int i = 0; i < workers; i++) {
+//            futures.add(CompletableFuture.runAsync(() -> {
+//
+//                Trade t;
+//                final HashMap<Long, List<Trade>> local = new HashMap<>();
+//                final int BATCH = 100_000; // ajustar
+//                int j = 0;
+//                while ((t = queue.poll()) != null) {
+//
+//                    long minute = (t.time() / 60_000) * 60_000;
+//
+//                    List<Trade> trades = local.get(minute);
+//                    if (trades == null) {
+//                        List<Trade> list = new ArrayList<>(20);
+//                        list.add(t);
+//                        local.put(minute, list);
+//                    }else {
+//                        trades.add(t);
+//                    }
+//                    //local.computeIfAbsent(minute, k -> new ArrayList<>(20)).add(t);
+//
+//                    if (local.size() >= BATCH) {
+//                        // merge parcial
+//                        mergeLocalIntoCache(local, cache);
+//                        local.clear();
+//                    }
+//                    if ((j % 10_000) == 0) Vesta.info("J:" + j);
+//                    j++;
+//                }
+//
+//                // merge final
+//                if (!local.isEmpty()) {
+//                    mergeLocalIntoCache(local, cache);
+//                    local.clear();
+//                }
+//
+//            }, executor));
+//        }
+//
+//        futures.forEach(CompletableFuture::join);
+//        tradesByMinuteCache = cache;
+//    }
+//
+//    private static void mergeLocalIntoCache(Map<Long, List<Trade>> local, ConcurrentMap<Long, ConcurrentLinkedQueue<Trade>> cache) {
+//        for (Map.Entry<Long, List<Trade>> e : local.entrySet()) {
+//            Long minuteKey = e.getKey(); // boxing happens aquí una vez por key
+//            List<Trade> list = e.getValue();
+//
+//            // get/create the concurrent queue once, then addAll (fewer CAS calls)
+//            cache.computeIfAbsent(minuteKey, k -> new ConcurrentLinkedQueue<>()).addAll(list);
+//        }
+//    }
 
     public synchronized Market limit(int days) {
         if (days <= 0) return this;

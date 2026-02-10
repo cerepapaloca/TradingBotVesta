@@ -183,6 +183,16 @@ public class EngineUtils {
         }
     }
 
+    public static void cleanNaNValues(float[] @NotNull [] array) {
+        for (float[] sample : array) {
+            for (int k = 0; k < sample.length; k++) {
+                if (Float.isNaN(sample[k]) || Float.isInfinite(sample[k])) {
+                    sample[k] = 0f;
+                }
+            }
+        }
+    }
+
     public static float[] flatten3DArraySlice(
             float[][][] array,
             int offset,
@@ -324,8 +334,8 @@ public class EngineUtils {
                     float rawPredSL = yPredFlat[predIdx + 1];
 
                     // 5. Desnormalizacion (TP y SL)
-                    float[][] denormTarget = yNormalizer.inverseTransform(new float[][]{{rawRealTP, rawRealSL}});
-                    float[][] denormPred = yNormalizer.inverseTransform(new float[][]{{rawPredTP, rawPredSL}});
+                    float[][] denormTarget = yNormalizer.inverseTransform(new float[][]{{rawRealTP, rawRealSL, 0, 0, 0}});
+                    float[][] denormPred = yNormalizer.inverseTransform(new float[][]{{rawPredTP, rawPredSL, 0, 0, 0}});
 
                     float realTP = denormTarget[0][0];
                     float realSL = denormTarget[0][1];
@@ -583,8 +593,11 @@ public class EngineUtils {
         return result;
     }
 
-    public static Pair<float[][][], float[][]> getSingleSplitWithLabels(
-            float[][][] xData, float[][] yData, int numSplits, int splitIndex) {
+    public static Pair<float[][][], float[][]> getSingleSplitWithLabels(Pair<float[][][], float[][]> pair, int numSplits, int splitIndex){
+        return getSingleSplitWithLabels(pair.getKey(), pair.getValue(), numSplits, splitIndex);
+    }
+
+    public static Pair<float[][][], float[][]> getSingleSplitWithLabels( float[][][] xData, float[][] yData, int numSplits, int splitIndex) {
 
         // Verificar que ambos arrays tienen la misma longitud
         if (xData.length != yData.length) {

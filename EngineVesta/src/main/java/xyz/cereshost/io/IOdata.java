@@ -19,11 +19,18 @@ import java.nio.file.StandardOpenOption;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.zip.Deflater;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
+
+import static xyz.cereshost.io.IOMarket.BUFFER_READ_MB;
 
 public class IOdata {
 
     public static final Path MODEL_DIR = Path.of("models");
     public static final String NORMALIZER_DIR = "normalizers";
+    public static final String CACHE_DIR = "E:\\data";
     public static final int TRAINING_CACHE_MAGIC = 0x54425631;
 
     public static void saveOut(@NotNull Path path, String json, String name) throws IOException {
@@ -36,89 +43,142 @@ public class IOdata {
         );
     }
 
+    private static boolean flipflop;
+    private static UUID uuid = UUID.randomUUID();
+
+    public static void newInstanceCache(){
+        uuid = UUID.randomUUID();
+    }
+
     public static Path createTrainingCacheDir() throws IOException {
-        Path dir = Path.of("data", "cache", UUID.randomUUID().toString());
+        Path dir = Path.of(CACHE_DIR, "cache", uuid.toString());
         Files.createDirectories(dir);
         return dir;
     }
 
-    public static Path saveTrainingCache(Path dir, String symbol, int month, float[][][] X, float[][] y) throws IOException {
+    public static Path saveTrainingCache(Path dir, String symbol, int month, float[][][] X, float[][] y, boolean useZip) throws IOException {
         if (X == null || X.length == 0 || y == null || y.length == 0) {
             throw new IllegalArgumentException("Empty training cache");
         }
         Files.createDirectories(dir);
-        String fileName = String.format(Locale.ROOT, "%s-%d-%s.bin", symbol, month, UUID.randomUUID());
+        String extension = useZip ? "zip" : "bin";
+        String fileName = String.format(Locale.ROOT, "%s-%d-%s.%s", symbol, month, UUID.randomUUID(), extension);
         Path file = dir.resolve(fileName);
-        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
-                Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)))) {
-            out.writeInt(TRAINING_CACHE_MAGIC);
-            out.writeInt(1);
-            int xSamples = X.length;
-            int seqLen = X[0].length;
-            int features = X[0][0].length;
-            int ySamples = y.length;
-            int yCols = y[0].length;
-            out.writeInt(xSamples);
-            out.writeInt(seqLen);
-            out.writeInt(features);
-            out.writeInt(ySamples);
-            out.writeInt(yCols);
-
-            for (float[][] seq : X) {
-                for (int j = 0; j < seqLen; j++) {
-                    float[] row = seq[j];
-                    for (int k = 0; k < features; k++) {
-                        out.writeFloat(row[k]);
-                    }
-                }
+        if (useZip) {
+            try (ZipOutputStream zipOut = new ZipOutputStream(new BufferedOutputStream(
+                    Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING),
+                    (1 << 20) * BUFFER_READ_MB
+            ))) {
+            zipOut.setMethod(ZipOutputStream.DEFLATED);
+            zipOut.setLevel(Deflater.BEST_SPEED);
+            zipOut.putNextEntry(new ZipEntry("cache.bin"));
+            DataOutputStream out = new DataOutputStream(zipOut);
+            writeTrainingCache(X, y, out);
+            out.flush();
+            Vesta.info("(idx:%d) 📀 Resultado guardado en: %s", month, dir);
+            zipOut.closeEntry();
             }
-
-            for (float[] row : y) {
-                for (int j = 0; j < yCols; j++) {
-                    out.writeFloat(row[j]);
-                }
+        } else {
+            try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
+                    Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING),
+                    (1 << 20) * BUFFER_READ_MB
+            ))) {
+                writeTrainingCache(X, y, out);
+                out.flush();
+                Vesta.info("(idx:%d) 📀 Resultado guardado en: %s", month, dir);
             }
         }
         return file;
     }
 
-    public static Pair<float[][][], float[][]> loadTrainingCache(Path file) throws IOException {
-        try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
-            int magic = in.readInt();
-            if (magic != TRAINING_CACHE_MAGIC) {
-                throw new IOException("Cache invalida: " + file);
-            }
-            int version = in.readInt();
-            if (version != 1) {
-                throw new IOException("Cache version invalida: " + version);
-            }
-            int xSamples = in.readInt();
-            int seqLen = in.readInt();
-            int features = in.readInt();
-            int ySamples = in.readInt();
-            int yCols = in.readInt();
+    private static void writeTrainingCache(float[][][] X, float[][] y, DataOutputStream out) throws IOException {
+        out.writeInt(TRAINING_CACHE_MAGIC);
+        out.writeInt(1);
+        int xSamples = X.length;
+        int seqLen = X[0].length;
+        int features = X[0][0].length;
+        int ySamples = y.length;
+        int yCols = y[0].length;
+        out.writeInt(xSamples);
+        out.writeInt(seqLen);
+        out.writeInt(features);
+        out.writeInt(ySamples);
+        out.writeInt(yCols);
 
-            float[][][] X = new float[xSamples][seqLen][features];
-            float[][] y = new float[ySamples][yCols];
-
-            for (int i = 0; i < xSamples; i++) {
-                float[][] seq = X[i];
-                for (int j = 0; j < seqLen; j++) {
-                    float[] row = seq[j];
-                    for (int k = 0; k < features; k++) {
-                        row[k] = in.readFloat();
-                    }
+        for (float[][] seq : X) {
+            for (int j = 0; j < seqLen; j++) {
+                float[] row = seq[j];
+                for (int k = 0; k < features; k++) {
+                    out.writeFloat(row[k]);
                 }
             }
-
-            for (int i = 0; i < ySamples; i++) {
-                float[] row = y[i];
-                for (int j = 0; j < yCols; j++) {
-                    row[j] = in.readFloat();
-                }
-            }
-            return new Pair<>(X, y);
         }
+
+        for (float[] row : y) {
+            for (int j = 0; j < yCols; j++) {
+                out.writeFloat(row[j]);
+            }
+        }
+    }
+
+    public static Pair<float[][][], float[][]> loadTrainingCache(Path file) throws IOException {
+        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+
+        if (name.endsWith(".zip")) {
+            try (ZipInputStream zipIn = new ZipInputStream(new BufferedInputStream(Files.newInputStream(file), (1 << 20) * BUFFER_READ_MB))) {
+                ZipEntry entry = zipIn.getNextEntry();
+
+                if (entry == null) {
+                    throw new IOException("Cache zip vacia: " + file);
+                }
+
+                DataInputStream in = new DataInputStream(zipIn);
+                Pair<float[][][], float[][]> pair = readTrainingCache(in, file);
+                zipIn.closeEntry();
+                return pair;
+            }
+        }
+
+        try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(file), (1 << 20) * BUFFER_READ_MB))) {
+            return readTrainingCache(in, file);
+        }
+    }
+
+    private static Pair<float[][][], float[][]> readTrainingCache(DataInputStream in, Path file) throws IOException {
+        int magic = in.readInt();
+        if (magic != TRAINING_CACHE_MAGIC) {
+            throw new IOException("Cache invalida: " + file);
+        }
+        int version = in.readInt();
+        if (version != 1) {
+            throw new IOException("Cache version invalida: " + version);
+        }
+        int xSamples = in.readInt();
+        int seqLen = in.readInt();
+        int features = in.readInt();
+        int ySamples = in.readInt();
+        int yCols = in.readInt();
+
+        float[][][] X = new float[xSamples][seqLen][features];
+        float[][] y = new float[ySamples][yCols];
+
+        for (int i = 0; i < xSamples; i++) {
+            float[][] seq = X[i];
+            for (int j = 0; j < seqLen; j++) {
+                float[] row = seq[j];
+                for (int k = 0; k < features; k++) {
+                    row[k] = in.readFloat();
+                }
+            }
+        }
+
+        for (int i = 0; i < ySamples; i++) {
+            float[] row = y[i];
+            for (int j = 0; j < yCols; j++) {
+                row[j] = in.readFloat();
+            }
+        }
+        return new Pair<>(X, y);
     }
 
     public static void deleteTrainingCache(Path file) {
@@ -199,7 +259,7 @@ public class IOdata {
         try {
             // Crear instancia del modelo
             Model model = Model.newInstance(Main.NAME_MODEL, device, "PyTorch");
-
+            VestaEngine.setRootManager(model.getNDManager());
             // Asignar la arquitectura (IMPORTANTE)
             model.setBlock(VestaEngine.getSequentialBlock());
 

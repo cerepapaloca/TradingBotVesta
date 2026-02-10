@@ -6,16 +6,18 @@ import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.io.IOMarket;
+import xyz.cereshost.io.IOdata;
+import xyz.cereshost.utils.ChartUtils;
 import xyz.cereshost.utils.EngineUtils;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.io.IOdata;
 import xyz.cereshost.packet.PacketHandler;
 import xyz.cereshost.strategy.BetaStrategy;
 import xyz.cereshost.strategy.DefaultStrategy;
 import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
@@ -24,13 +26,14 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "BTCUSDT"/* "BNBUSDT"*/);
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "XRPUSDT"/* "BNBUSDT"*/);
+    public static final String SYMBOL = "XRPUSDT";
     @NotNull
-    public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.CSV;
+    public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.LOCAL_ZIP;
     @NotNull
-    public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.CSV;
+    public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.LOCAL_ZIP;
 
-    public static final int MAX_MONTH_TRAINING = 24;//4 12+8;
+    public static final int MAX_MONTH_TRAINING = 12;//4 12+8;
 
 
     @Getter
@@ -99,15 +102,9 @@ public class Main {
 //                                new ChartUtils.DataPlot("Real", resultPrediction.stream().map(EngineUtils.ResultPrediction::realDir).toList())
 //                        ));
             }
-            case "backtest" -> {
-                String symbol = "BTCUSDC";
-
-                showDataBackTest(new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
-            }
-            case "trading" -> {
-                String symbol = "BTCUSDC";
-                new TradingLoopBinance(symbol, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
-            }
+            case "backtest" -> showDataBackTest(new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, SYMBOL).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
+            case "trading" -> new TradingLoopBinance(SYMBOL, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
+            case "extract" -> IOMarket.extractFirstBin(Path.of(IOMarket.STORAGE_DIR + "\\" + SYMBOL +"\\trades"));
         }
     }
 

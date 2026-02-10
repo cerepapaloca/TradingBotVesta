@@ -3,7 +3,7 @@ package xyz.cereshost.metrics;
 import ai.djl.training.Trainer;
 import ai.djl.training.listener.TrainingListenerAdapter;
 import org.jfree.data.xy.XYSeriesCollection;
-import xyz.cereshost.ChartUtils;
+import xyz.cereshost.utils.ChartUtils;
 import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.VestaEngine;
@@ -73,7 +73,7 @@ public class MetricsListener extends TrainingListenerAdapter {
 
                         )
                 );
-                datasetLoss = ChartUtils.plot("Training Losses TP/SL " + String.join(", ", symbols), "epochs",
+                datasetLoss = ChartUtils.plot("Training Losses Max/Min " + String.join(", ", symbols), "epochs",
                         List.of(new ChartUtils.DataPlot("Loss Max", List.of(l.tp()), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
                                 new ChartUtils.DataPlot("Loss Min", List.of(l.sl()), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
                                 new ChartUtils.DataPlot("Max", List.of(maxValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL),

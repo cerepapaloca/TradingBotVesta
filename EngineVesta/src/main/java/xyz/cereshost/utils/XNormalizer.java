@@ -8,7 +8,7 @@ import java.util.Arrays;
 /**
  * Normalizador robusto para X (features).
  */
-public class XNormalizer {
+public class XNormalizer implements Normalizer<float[][][]> {
 
     @Getter
     private float[] medians;
@@ -19,6 +19,7 @@ public class XNormalizer {
     @Setter
     private float minIqr = 1e-6f;
 
+    @Override
     public void fit(float[][][] X) {
         if (X == null || X.length == 0) {
             throw new IllegalArgumentException("X vacío");
@@ -58,6 +59,7 @@ public class XNormalizer {
         }
     }
 
+    @Override
     public float[][][] transform(float[][][] X) {
         if (medians == null || iqrs == null) {
             throw new IllegalStateException("Llama a fit() antes de transform()");
@@ -79,6 +81,7 @@ public class XNormalizer {
         return out;
     }
 
+    @Override
     public float[][][] inverseTransform(float[][][] Xnorm) {
         if (medians == null || iqrs == null) {
             throw new IllegalStateException("Llama a fit() antes de inverseTransform()");

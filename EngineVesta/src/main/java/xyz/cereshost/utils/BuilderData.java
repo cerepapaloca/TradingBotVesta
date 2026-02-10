@@ -2,9 +2,9 @@ package xyz.cereshost.utils;
 
 import ai.djl.util.Pair;
 import lombok.Getter;
+import lombok.Setter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.ta4j.core.*;
 import org.ta4j.core.indicators.ATRIndicator;
 import org.ta4j.core.indicators.RSIIndicator;
@@ -13,7 +13,6 @@ import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
 import org.ta4j.core.indicators.volume.NVIIndicator;
 import org.ta4j.core.num.DecimalNum;
 import org.ta4j.core.num.Num;
-import xyz.cereshost.ChartUtils;
 import xyz.cereshost.FinancialCalculation;
 import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
@@ -23,6 +22,7 @@ import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.io.IOdata;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.nio.file.Path;
@@ -35,14 +35,10 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
-    public static @NotNull Pair<float[][][], float[][]> fullBuild(@NotNull List<String> symbols, int maxMonth, int offset) {
+    public static @NotNull TrainingData buildTrainingData(@NotNull List<String> symbols, int maxMonth, int offset) {
         List<PairCache> cacheEntries = new ArrayList<>();
-        Path cacheDir;
-        try {
-            cacheDir = IOdata.createTrainingCacheDir();
-        } catch (Exception e) {
-            throw new RuntimeException("No se pudo crear el cache temporal: " + e.getMessage(), e);
-        }
+        long time = System.currentTimeMillis();
+        List<CompletableFuture<Object>> waitingCacheSave = new ArrayList<>();
         for (String symbol : symbols) {
             try {
                 List<Candle> allCandlesForChart = new ArrayList<>();
@@ -64,23 +60,23 @@ public class BuilderData {
                             System.gc();
                             Vesta.info("(idx:%d) ⬆️ Comenzado carga de datos", currentMonth);
                             Market market = IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, currentMonth);
+                            Vesta.info("(idx:%d) 📊 Convirtiendo velas (C:%d)", currentMonth, market.getCandleSimples().size());
                             List<Candle> candlesThisMonth = BuilderData.to1mCandles(market);
-                            Vesta.info("(idx:%d) 📊 Velas computadas (C:%d)", currentMonth, candlesThisMonth.size());
+
                             market.clear();
                             if (candlesThisMonth.size() <= LOOK_BACK + 2) {
                                 Vesta.warning("(idx:%d) insuficiente historial: " + candlesThisMonth.size() + " velas", currentMonth);
-                                return new MonthMarketCache(null, 0, 0, 0, 0, candlesThisMonth, false);
+                                return new MonthMarketCache(0, 0, 0, 0, candlesThisMonth, false);
                             }
-
+                            Vesta.info("(idx:%d) 📦 Exportando Pair (C:%d)", currentMonth, candlesThisMonth.size());
                             Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 20);
                             float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                             float[][] yraw = pair.getValue();
                             if (Xraw.length == 0) {
-                                return new MonthMarketCache(null, 0, 0, 0, 0, candlesThisMonth, false);
+                                return new MonthMarketCache(0, 0, 0, 0, candlesThisMonth, false);
                             }
-                            // Guarda el resultado del pair
-                            Path cacheFile = IOdata.saveTrainingCache(cacheDir, symbol, currentMonth, Xraw, yraw);
-                            Vesta.info("(idx:%d) 💿 Guardando resultado Pair en: %s", currentMonth, cacheFile);
+
+
                             int samples = Xraw.length;
                             int seqLen = Xraw[0].length;
                             int features = Xraw[0][0].length;
@@ -89,10 +85,21 @@ public class BuilderData {
                                 candlesThisMonth.clear();
                             }
                             pair = null;
-                            return new MonthMarketCache(cacheFile, samples, seqLen, features, yCols, candlesThisMonth, true);
+                            // Guarda el resultado del pair
+                            Vesta.info("(idx:%d) 💿 Guardando resultado del Pair", currentMonth);
+                            MonthMarketCache cache = new MonthMarketCache(samples, seqLen, features, yCols, candlesThisMonth, true);
+                            waitingCacheSave.add(CompletableFuture.supplyAsync(() -> {
+                                try {
+                                    Path path = IOdata.saveTrainingCache(IOdata.createTrainingCacheDir(), symbol, currentMonth, Xraw, yraw, false);
+                                    cache.setCacheFile(path);
+                                } catch (IOException ignored) {}
+                                return new Object();
+                            }, VestaEngine.EXECUTOR_WRITE_CACHE_BUILD));
+                            return cache;
                         } catch (Exception e) {
                             Vesta.error("(idx:%d) Error procesando mes: " + e.getMessage(), currentMonth);
-                            return new MonthMarketCache(null, 0, 0, 0, 0, Collections.emptyList(), false);
+                            e.printStackTrace();
+                            return new MonthMarketCache(0, 0, 0, 0, Collections.emptyList(), false);
                         }
                     }, VestaEngine.EXECUTOR_BUILD);
 
@@ -110,7 +117,7 @@ public class BuilderData {
                                 allCandlesForChart.addAll(result.candles);
                             }
 
-                            if (result.cacheFile != null && result.samples > 0) {
+                            if (result.samples > 0) {
                                 // Añadir objeto que indica que se guardó caché del pair
                                 cacheEntries.add(result);
                                 Vesta.info("(%d/%d) ✅ procesado: %d muestras (%s)", month, maxMonth, result.samples, symbol);
@@ -118,6 +125,7 @@ public class BuilderData {
                         }
                     } catch (InterruptedException | ExecutionException e) {
                         Vesta.error("(idx:%d) Error procesando mes para " + symbol + ": " + e.getMessage(), months.get(i));
+                        e.printStackTrace();
                         Thread.currentThread().interrupt();
                     }
                 }
@@ -129,10 +137,16 @@ public class BuilderData {
                 Vesta.error("Error construyendo data para " + symbol + ": " + e.getMessage());
                 e.printStackTrace();
             }
-
-
         }
 
+        Vesta.info("💤 Esperando que termine de escribir en disco");
+        for (CompletableFuture<Object>  future : waitingCacheSave) {
+            try {
+                future.get();
+            } catch (InterruptedException | ExecutionException e) {
+                e.printStackTrace();
+            }
+        }
         if (cacheEntries.isEmpty()) {
             throw new RuntimeException("No se generó data de entrenamiento válida.");
         }
@@ -143,31 +157,42 @@ public class BuilderData {
         int features = cacheEntries.get(0).features;
         int yCols = cacheEntries.get(0).yCols;
 
-        float[][][] X_final = new float[totalSamples][seqLen][features];
-        float[][] y_final = new float[totalSamples][yCols];
+        long delta = (System.currentTimeMillis() - time);
+        Vesta.info("✅ Construcción completada de %s (S: %d) +T: %dm %.2fs", String.join(", ", symbols), totalSamples, delta/60_000,(float) ((delta/1000)%60));
 
-        int currentIdx = 0;
+
+
+        List<Path> paths = new ArrayList<>();
+
+
+        System.gc();
         // Cargar la cache guardada
-        for (PairCache entry : cacheEntries) {
-            try {
-                Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(entry.cacheFile);
-                float[][][] xPart = pair.getKey();
-                float[][] yPart = pair.getValue();
-                int len = xPart.length;
+//        int currentIdx = 0;
+//        float[][][] X_final = new float[totalSamples][seqLen][features];
+//        float[][] y_final = new float[totalSamples][yCols];
+//        for (PairCache entry : cacheEntries) {
+//            try {
+//                Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(entry.cacheFile);
+//                float[][][] xPart = pair.getKey();
+//                float[][] yPart = pair.getValue();
+//                pair = null;
+//                int len = xPart.length;
+//
+//                System.arraycopy(xPart, 0, X_final, currentIdx, len);
+//                System.arraycopy(yPart, 0, y_final, currentIdx, len);
+//                xPart = null;
+//                yPart = null;
+//                currentIdx += len;
+//                Vesta.info("💿 Datos recuperados de " + entry.cacheFile);
+//            } catch (Exception e) {
+//                throw new RuntimeException("Error cargando cache temporal: " + entry.cacheFile, e);
+//            } finally {
+//                IOdata.deleteTrainingCache(entry.cacheFile);
+//            }
+//        }
 
-                System.arraycopy(xPart, 0, X_final, currentIdx, len);
-                System.arraycopy(yPart, 0, y_final, currentIdx, len);
-                currentIdx += len;
-                Vesta.info("💿 Datos recuperados de " + entry.cacheFile);
-            } catch (Exception e) {
-                throw new RuntimeException("Error cargando cache temporal: " + entry.cacheFile, e);
-            } finally {
-                IOdata.deleteTrainingCache(entry.cacheFile);
-            }
-        }
 
-
-        return new Pair<>(X_final, y_final);
+        return new TrainingData(cacheEntries.stream().map(PairCache::getCacheFile).toList(), totalSamples, seqLen, features, yCols);
     }
 
     @Getter
@@ -175,22 +200,23 @@ public class BuilderData {
         final List<Candle> candles;
         final boolean hasData;
 
-        MonthMarketCache(Path cacheFile, int samples, int seqLen, int features, int yCols, List<Candle> candles, boolean hasData) {
-            super(cacheFile, samples, seqLen, features, yCols);
+        MonthMarketCache(int samples, int seqLen, int features, int yCols, List<Candle> candles, boolean hasData) {
+            super(samples, seqLen, features, yCols);
             this.candles = candles;
             this.hasData = hasData;
         }
     }
 
+    @Setter
+    @Getter
     private static class PairCache {
-        final Path cacheFile;
+        Path cacheFile;
         final int samples;
         final int seqLen;
         final int features;
         final int yCols;
 
-        PairCache(Path cacheFile, int samples, int seqLen, int features, int yCols) {
-            this.cacheFile = cacheFile;
+        PairCache(int samples, int seqLen, int features, int yCols) {
             this.samples = samples;
             this.seqLen = seqLen;
             this.features = features;
@@ -457,7 +483,6 @@ public class BuilderData {
             }
             idx++;
         }
-        tradesByMinute.clear();
         closes.clear();
         Vesta.info("Se elimino %d por dar resultado NA o Infinito", remove);
         return candles;
@@ -500,10 +525,10 @@ public class BuilderData {
         List<Float> fList = new ArrayList<>();
 
         // 1-4: Precios relativos (Log Returns)
-        fList.add((float) Math.log(Math.clamp(curr.high() / prev.high(), 1e-7, Double.POSITIVE_INFINITY)));
-        fList.add((float) Math.log(Math.clamp(curr.open() / prev.open(), 1e-7, Double.POSITIVE_INFINITY)));
-        fList.add((float) Math.log(Math.clamp(curr.close() / prev.close(), 1e-7, Double.POSITIVE_INFINITY)));
-        fList.add((float) Math.log(Math.clamp(curr.low() / prev.low(), 1e-7, Double.POSITIVE_INFINITY)));
+        fList.add((float) Math.log(curr.high() / prev.high()));
+        fList.add((float) Math.log(curr.open() / prev.open()));
+        fList.add((float) Math.log(curr.close() / prev.close()));
+        fList.add((float) Math.log(curr.low() / prev.low()));
 
         fList.add(curr.direccion());
         fList.add((float) Math.log(curr.amountTrades()));

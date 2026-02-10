@@ -19,7 +19,7 @@ import java.util.Arrays;
  *
  * Nota: MAD = median(|x - median|)
  */
-public class YNormalizer {
+public class YNormalizer implements Normalizer<float[][]> {
 
     private float[] medians;
     private float[] mads;
@@ -27,6 +27,7 @@ public class YNormalizer {
     private static final float EPSILON = 1e-8f;
     private int numOutputs;
 
+    @Override
     public void fit(float[][] y) {
         if (y == null || y.length == 0) {
             throw new IllegalArgumentException("Los datos y no pueden ser nulos o vacíos");
@@ -71,6 +72,7 @@ public class YNormalizer {
         }
     }
 
+    @Override
     public float[][] transform(float[][] y) {
         if (medians == null) throw new IllegalStateException("Normalizador no ajustado");
         float[][] normalized = new float[y.length][numOutputs];
@@ -86,6 +88,7 @@ public class YNormalizer {
         return normalized;
     }
 
+    @Override
     public float[][] inverseTransform(float[][] yNorm) {
         float[][] original = new float[yNorm.length][yNorm[0].length];
         for (int i = 0; i < yNorm.length; i++) {
