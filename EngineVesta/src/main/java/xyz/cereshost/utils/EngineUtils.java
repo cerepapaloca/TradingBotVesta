@@ -411,7 +411,8 @@ public class EngineUtils {
             int total = 0;
 
             for (ResultEvaluate prediction : resultEvaluate) {
-                if (prediction.getPredDirection() == prediction.getRealDirection()) {
+                ;
+                if (filterDirectionByExtremes(prediction.realTP(), prediction.realSL()).toOperation().equals(filterDirectionByExtremes(prediction.predTP(), prediction.predSL()).toOperation())) {
                     hits++;
                 }
                 total++;

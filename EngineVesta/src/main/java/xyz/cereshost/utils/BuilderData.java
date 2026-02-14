@@ -158,7 +158,7 @@ public class BuilderData {
         int yCols = cacheEntries.get(0).yCols;
 
         long delta = (System.currentTimeMillis() - time);
-        Vesta.info("✅ Construcción completada de %s (S: %d) +T: %dm %.2fs", String.join(", ", symbols), totalSamples, delta/60_000,(float) ((delta/1000)%60));
+        Vesta.info("✅ Construcción completada de %s (S: %d) +T: %dm %ds", String.join(", ", symbols), totalSamples, delta/60_000,((delta/1000)%60));
 
 
 
@@ -167,32 +167,37 @@ public class BuilderData {
 
         System.gc();
         // Cargar la cache guardada
-//        int currentIdx = 0;
-//        float[][][] X_final = new float[totalSamples][seqLen][features];
-//        float[][] y_final = new float[totalSamples][yCols];
-//        for (PairCache entry : cacheEntries) {
-//            try {
-//                Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(entry.cacheFile);
-//                float[][][] xPart = pair.getKey();
-//                float[][] yPart = pair.getValue();
-//                pair = null;
-//                int len = xPart.length;
-//
-//                System.arraycopy(xPart, 0, X_final, currentIdx, len);
-//                System.arraycopy(yPart, 0, y_final, currentIdx, len);
-//                xPart = null;
-//                yPart = null;
-//                currentIdx += len;
-//                Vesta.info("💿 Datos recuperados de " + entry.cacheFile);
-//            } catch (Exception e) {
-//                throw new RuntimeException("Error cargando cache temporal: " + entry.cacheFile, e);
-//            } finally {
-//                IOdata.deleteTrainingCache(entry.cacheFile);
-//            }
-//        }
 
 
-        return new TrainingData(cacheEntries.stream().map(PairCache::getCacheFile).toList(), totalSamples, seqLen, features, yCols);
+        if (maxMonth > 5){
+            return new TrainingData(cacheEntries.stream().map(PairCache::getCacheFile).toList(), totalSamples, seqLen, features, yCols);
+        }else {
+            int currentIdx = 0;
+            float[][][] X_final = new float[totalSamples][seqLen][features];
+            float[][] y_final = new float[totalSamples][yCols];
+            for (PairCache entry : cacheEntries) {
+                try {
+                    Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(entry.cacheFile);
+                    float[][][] xPart = pair.getKey();
+                    float[][] yPart = pair.getValue();
+                    pair = null;
+                    int len = xPart.length;
+
+                    System.arraycopy(xPart, 0, X_final, currentIdx, len);
+                    System.arraycopy(yPart, 0, y_final, currentIdx, len);
+                    xPart = null;
+                    yPart = null;
+                    currentIdx += len;
+                    Vesta.info("💿 Datos recuperados de " + entry.cacheFile);
+                } catch (Exception e) {
+                    throw new RuntimeException("Error cargando cache temporal: " + entry.cacheFile, e);
+                } finally {
+                    IOdata.deleteTrainingCache(entry.cacheFile);
+                }
+            }
+
+            return new TrainingData(new Pair<>(X_final, y_final));
+        }
     }
 
     @Getter
@@ -234,7 +239,7 @@ public class BuilderData {
 
         if (samples <= 0) return new Pair<>(new float[0][0][0], new float[0][0]);
 
-        float[][][] X = new float[samples][lookBack][features];
+        float[][][] X = new float[samples][lookBack][FEATURES];
         float[][] y = new float[samples][5];
 
         for (int i = 0; i < samples; i++) {
@@ -516,35 +521,62 @@ public class BuilderData {
     }
 
 
-    @Getter
-    private static int features;
+    public final static int FEATURES;
+
+    private static final double SAFE_EPS = 1e-8;
+
+    private static float safeLogRatio(double numerator, double denominator) {
+        if (!Double.isFinite(numerator) || !Double.isFinite(denominator)) return 0f;
+        if (numerator <= 0.0 || denominator <= 0.0) return 0f;
+        double ratio = numerator / denominator;
+        if (!Double.isFinite(ratio) || ratio <= 0.0) return 0f;
+        double v = Math.log(ratio);
+        return Double.isFinite(v) ? (float) v : 0f;
+    }
+
+    private static float safeLog1p(double value) {
+        if (!Double.isFinite(value)) return 0f;
+        if (value <= -1.0) return 0f;
+        double v = Math.log1p(Math.max(0.0, value));
+        return Double.isFinite(v) ? (float) v : 0f;
+    }
+
+    private static float safeDiv(double numerator, double denominator) {
+        if (!Double.isFinite(numerator) || !Double.isFinite(denominator)) return 0f;
+        if (Math.abs(denominator) < SAFE_EPS) return 0f;
+        double v = numerator / denominator;
+        return Double.isFinite(v) ? (float) v : 0f;
+    }
+
+    private static float safeFloat(double value) {
+        return Double.isFinite(value) ? (float) value : 0f;
+    }
 
     public static float @NotNull [] extractFeatures(@NotNull Candle curr, @NotNull Candle prev) {
 
-        double prevClose = prev.close() <= 0 ? 1.0 : prev.close();
         List<Float> fList = new ArrayList<>();
 
         // 1-4: Precios relativos (Log Returns)
-        fList.add((float) Math.log(curr.high() / prev.high()));
-        fList.add((float) Math.log(curr.open() / prev.open()));
-        fList.add((float) Math.log(curr.close() / prev.close()));
-        fList.add((float) Math.log(curr.low() / prev.low()));
+        fList.add(safeLogRatio(curr.high(), prev.high()));
+        fList.add(safeLogRatio(curr.open(), prev.open()));
+        fList.add(safeLogRatio(curr.close(), prev.close()));
+        fList.add(safeLogRatio(curr.low(), prev.low()));
 
-        fList.add(curr.direccion());
-        fList.add((float) Math.log(curr.amountTrades()));
+        fList.add(safeFloat(curr.direccion()));
+        fList.add(safeLog1p(curr.amountTrades()));
 
         // Volúmenes relativos
-        fList.add((float) curr.volRatioToMean());
-        fList.add((float) curr.volZscore());
-        fList.add((float) curr.volPerAtr());
+        fList.add(safeFloat(curr.volRatioToMean()));
+        fList.add(safeFloat(curr.volZscore()));
+        fList.add(safeFloat(curr.volPerAtr()));
 //        fList.add((float) Math.log(curr.quoteVolume() / prevClose));
 //        fList.add((float) Math.log((curr.buyQuoteVolume() - prev.buyQuoteVolume()) / curr.buyQuoteVolume()));// Dan 0
 //        fList.add((float) Math.log((curr.sellQuoteVolume() - prev.sellQuoteVolume()) / curr.sellQuoteVolume()));
 
         // Delta y Buy Ratio
         double totalVol = curr.buyQuoteVolume() + curr.sellQuoteVolume();
-        fList.add((totalVol == 0) ? 0 : (float) (curr.deltaUSDT() / totalVol));
-        fList.add((float) curr.buyRatio());
+        fList.add(safeDiv(curr.deltaUSDT(), totalVol));
+        fList.add(safeFloat(curr.buyRatio()));
 
 //        fList.add((float) Math.log(curr.bidLiquidity() / prevClose));
 //        fList.add((float) Math.log(curr.askLiquidity() / prevClose));
@@ -555,17 +587,17 @@ public class BuilderData {
 //        fList.add((float) (curr.spread() / curr.close()));
 
         // RSI
-        fList.add((float) curr.rsi4()/100);
-        fList.add((float) curr.rsi8()/100);
-        fList.add((float) curr.rsi16()/100);
+        fList.add(safeDiv(curr.rsi4(), 100.0));
+        fList.add(safeDiv(curr.rsi8(), 100.0));
+        fList.add(safeDiv(curr.rsi16(), 100.0));
 
         // MACD
-        fList.add((float) (curr.macdVal() / curr.close()));
-        fList.add((float) (curr.macdSignal() / curr.close()));
-        fList.add((float) (curr.macdHist() / curr.close()));
+        fList.add(safeDiv(curr.macdVal(), curr.close()));
+        fList.add(safeDiv(curr.macdSignal(), curr.close()));
+        fList.add(safeDiv(curr.macdHist(), curr.close()));
 
         // NVI
-        fList.add((float) (curr.nvi() / curr.close()));
+        fList.add(safeDiv(curr.nvi(), curr.close()));
 
         // Bollinger
         double bbUpper = curr.upperBand();
@@ -573,23 +605,18 @@ public class BuilderData {
         double bbMiddle = curr.middleBand();
 
         double bbRange = bbUpper - bbLower;
-        float bbBandwidth = 0f;
-        if (bbMiddle > 0 && bbRange > 0) {
-            bbBandwidth = (float) (bbRange / bbMiddle);
-        }
-        float bbPos = 0f;
-        if (bbRange > 0) {
-            bbPos = (float) ((curr.close() - bbMiddle) / bbRange);
-        }
+        float bbBandwidth = safeDiv(bbRange, bbMiddle);
+        float bbPos = safeDiv(curr.close() - bbMiddle, bbRange);
 
         fList.add(bbBandwidth);
         fList.add(bbPos);
         // ATR
-        fList.add((float) (curr.atr14() / curr.close()));
+        fList.add(safeDiv(curr.atr14(), curr.close()));
 
         float[] f = new float[fList.size()];
         for (int i = 0; i < fList.size(); i++) {
-            f[i] = fList.get(i);
+            float v = fList.get(i);
+            f[i] = Float.isFinite(v) ? v : 0f;
         }
         return f;
     }
@@ -621,7 +648,7 @@ public class BuilderData {
 
 
     static {
-        features = extractFeatures(
+        FEATURES = extractFeatures(
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,

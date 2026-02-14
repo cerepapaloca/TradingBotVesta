@@ -4,21 +4,20 @@ import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.util.Pair;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.Main;
 import xyz.cereshost.common.Utils;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.VestaEngine;
+import xyz.cereshost.utils.BuilderData;
+import xyz.cereshost.utils.TrainingData;
 import xyz.cereshost.utils.XNormalizer;
 import xyz.cereshost.utils.YNormalizer;
 
 import java.io.*;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
-import java.util.Locale;
-import java.util.Properties;
-import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.*;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -44,14 +43,9 @@ public class IOdata {
     }
 
     private static boolean flipflop;
-    private static UUID uuid = UUID.randomUUID();
-
-    public static void newInstanceCache(){
-        uuid = UUID.randomUUID();
-    }
 
     public static Path createTrainingCacheDir() throws IOException {
-        Path dir = Path.of(CACHE_DIR, "cache", uuid.toString());
+        Path dir = new CacheProperties(VestaEngine.LOOK_BACK, BuilderData.FEATURES, 5, Main.SYMBOLS_TRAINING, Main.MAX_MONTH_TRAINING, -1).getPath();
         Files.createDirectories(dir);
         return dir;
     }
@@ -309,6 +303,68 @@ public class IOdata {
         try (OutputStream os = Files.newOutputStream(propsPath)) {
             props.store(os, "Model properties");
         }
+    }
+
+    public static void saveCacheProperties(CacheProperties cacheProperties) throws IOException {
+        Path cache = cacheProperties.getPath();
+        String s = Utils.GSON.toJson(cacheProperties);
+        saveOut(cache, s, "cacheProperties");
+    }
+
+    @Nullable
+    public static CacheProperties loadCacheProperties() throws IOException {
+        Path cacheDir = createTrainingCacheDir();
+        if (!Files.exists(cacheDir)) return null;
+        Path dir = cacheDir.resolve("cacheProperties.json");
+        if (!Files.exists(dir)) return null;
+        CacheProperties cache = Utils.GSON.fromJson(Files.readString(dir), CacheProperties.class);
+        if (cache.symbol.isEmpty()){
+            return null;
+        }else {
+            return cache;
+        }
+    }
+
+    public record CacheProperties(int lookback, int features, int outputs, List<String> symbol, int monthData, int sizeData) {
+
+        @NotNull
+        public UUID getUUID() {
+            return UUID.nameUUIDFromBytes(String.format("L: %d F: %d O: %d S: %s M: %d", lookback, features, outputs, symbol, monthData).getBytes(StandardCharsets.UTF_8));
+        }
+
+        public Path getPath() {
+            return Paths.get(CACHE_DIR, "cache", this.getUUID().toString());
+        }
+    };
+
+    private static Path getDir() throws IOException {
+        try (var stream = Files.list(Paths.get(CACHE_DIR, "cache"))) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .max(Comparator.comparingLong(p -> {
+                        try {
+                            return Files.getLastModifiedTime(p).toMillis();
+                        } catch (IOException e) {
+                            return Long.MIN_VALUE;
+                        }
+                    })).orElse(null);
+        }
+    }
+
+    public static boolean isBuiltData() throws IOException {
+        return loadCacheProperties() != null;
+    }
+
+    public static TrainingData getBuiltData() throws IOException {
+        CacheProperties cacheProperties = loadCacheProperties();
+        List<Path> cacheFiles = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(Path.of(CACHE_DIR, "cache", cacheProperties.getUUID().toString()))) {
+            for (Path path : stream) {
+                String name = path.getFileName().toString().toLowerCase();
+                if (name.endsWith(".zip") || name.endsWith(".bin")) cacheFiles.add(path);
+            }
+        }
+        return new TrainingData(cacheFiles, cacheProperties.sizeData, cacheProperties.lookback, cacheProperties.features, cacheProperties.outputs);
     }
 
 

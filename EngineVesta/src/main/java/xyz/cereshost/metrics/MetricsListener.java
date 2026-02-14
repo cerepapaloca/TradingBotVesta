@@ -25,8 +25,8 @@ public class MetricsListener extends TrainingListenerAdapter {
     private final List<String> symbols = new ArrayList<>();
 
     private int count = 1;
-
-    public void startTraining() {
+    @Override
+    public void onTrainingBegin (Trainer trainer) {
         startTime = System.currentTimeMillis();
     }
 
@@ -45,7 +45,7 @@ public class MetricsListener extends TrainingListenerAdapter {
 //        float daeValidation = result.getValidateEvaluation("3_dir");
 //        float daelsValidation = result.getValidateEvaluation("2_dir");
         // Calucar porgreso
-        double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH* (Main.MAX_MONTH_TRAINING/VestaEngine.SPLIT_DATASET) *VestaEngine.EPOCH_SUB);
+        double progress = (double) trainer.getTrainingResult().getEpoch() / (VestaEngine.EPOCH* (Main.MAX_MONTH_TRAINING) *VestaEngine.EPOCH_SUB);
         long time = System.currentTimeMillis();
         long delta = Math.abs(lastTime - time);
         // Mostrar mensaje
@@ -66,10 +66,10 @@ public class MetricsListener extends TrainingListenerAdapter {
             VestaLoss.LossReport l = customLoss.awaitNextBatchData();
             if (datasetLoss == null && datasetNormal == null && datasetRateDireccion == null) {
                 datasetNormal = ChartUtils.plot("Training Loss/MAE " + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("Loss T", List.of(lossTrain), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
-                                new ChartUtils.DataPlot("MAE T", List.of(maeTrain), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
-                                new ChartUtils.DataPlot("Loss V", List.of(lossValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL),
-                                new ChartUtils.DataPlot("MAE V", List.of(maeValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL)
+                        List.of(new ChartUtils.DataPlot("Loss T", List.of(lossTrain), new Color(108, 217, 91), ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("MAE T", List.of(maeTrain), Color.PINK, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("Loss V", List.of(lossValidation), new Color(108, 217, 91), ChartUtils.DataPlot.StyleLine.NORMAL),
+                                new ChartUtils.DataPlot("MAE V", List.of(maeValidation), Color.PINK, ChartUtils.DataPlot.StyleLine.NORMAL)
 
                         )
                 );

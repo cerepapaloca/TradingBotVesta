@@ -33,7 +33,7 @@ public class Main {
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.LOCAL_ZIP;
 
-    public static final int MAX_MONTH_TRAINING = 12;//4 12+8;
+    public static final int MAX_MONTH_TRAINING = 14;//4 12+8;
 
 
     @Getter

@@ -1,6 +1,8 @@
 package xyz.cereshost.utils;
 
 
+import ai.djl.training.Trainer;
+import ai.djl.training.listener.TrainingListener;
 import ai.djl.util.Pair;
 import lombok.AccessLevel;
 import lombok.Data;
@@ -8,6 +10,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import xyz.cereshost.Main;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.io.IOdata;
@@ -21,11 +24,11 @@ import java.util.function.BiFunction;
 @SuppressWarnings("DataFlowIssue")
 @Getter
 @Setter
-public class TrainingData {
+public class TrainingData implements TrainingListener {
 
     private static final int INDEX_FOR_VALIDATION = 0;
     private static final int INDEX_FOR_TEST = 1;
-    private static final int SPLITS_PAIRS = 6;
+    private static final int SPLITS_PAIRS = 1;
 
     private final boolean loadInRam;
     private final int samplesSize;
@@ -136,7 +139,7 @@ public class TrainingData {
             if (trainingList.isEmpty()) {
                 throw new IllegalStateException("No hay data de entrenamiento para cargar.");
             }
-            return getPairNormalizeFromDisk(trainingList,  idx % trainingList.size());
+            return getPairNormalizeFromDisk(trainingList.get(idx % trainingList.size()));
         }
     }
 
@@ -144,7 +147,7 @@ public class TrainingData {
         if (loadInRam){
             return valNormalize;
         }else {
-            return getPairNormalizeFromDisk(files, INDEX_FOR_VALIDATION);
+            return getPairNormalizeFromDisk(files.get(INDEX_FOR_VALIDATION));
         }
     }
 
@@ -152,18 +155,18 @@ public class TrainingData {
         if (loadInRam){
             return testNormalize;
         }else {
-            return getPairNormalizeFromDisk(files, INDEX_FOR_TEST);
+            return getPairNormalizeFromDisk(files.get(INDEX_FOR_TEST));
         }
     }
 
-    private @NotNull Pair<float[][][], float[][]> getPairNormalizeFromDisk(@Nullable List<Path> files, int index) {
+    private @NotNull Pair<float[][][], float[][]> getPairNormalizeFromDisk(@Nullable Path files) {
 
         try {
-            Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(files.get(index));
+            Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(files);
+            EngineUtils.cleanNaNValues(pair.getKey());
+            EngineUtils.cleanNaNValues(pair.getValue());
             float[][][] x = xNormalizer.transform(pair.getKey());
             float[][] y = yNormalizer.transform(pair.getValue());
-            EngineUtils.cleanNaNValues(x);
-            EngineUtils.cleanNaNValues(y);
             return new Pair<>(x, y);
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -219,6 +222,8 @@ public class TrainingData {
         }
         Vesta.info("📦 Normalizando X");
         XNormalizer xNormalizer = new XNormalizer();
+        EngineUtils.cleanNaNValues(X_final);
+        EngineUtils.cleanNaNValues(y_final);
         xNormalizer.fit(X_final);
         this.xNormalizer = xNormalizer;
         Vesta.info("📦 Normalizando Y");
@@ -233,19 +238,15 @@ public class TrainingData {
 
     private void computeNormalizeFromRAM(){
         try{
+            // Verificar NaN sólo en arrays normalizados (por si acaso)
+            EngineUtils.cleanNaNValues(pair.getKey());
+            EngineUtils.cleanNaNValues(pair.getValue());
             BiFunction<long[], long[], float[][][]> slice3D = getSlice3D(pair.getKey());
             int trainSizeLocal = (int) getTrainSize();
             int valSizeLocal = getValSize();
             splitSample split = getSplitSample(slice3D, trainSizeLocal, valSizeLocal, samplesSize, pair.getValue());
             Normalize result = getNormalize(split);
-            // Verificar NaN sólo en arrays normalizados (por si acaso)
-            EngineUtils.cleanNaNValues(result.getX_train_norm());
-            EngineUtils.cleanNaNValues(result.getX_val_norm());
-            EngineUtils.cleanNaNValues(result.getX_test_norm());
 
-            EngineUtils.cleanNaNValues(result.getY_train_norm());
-            EngineUtils.cleanNaNValues(result.getY_val_norm());
-            EngineUtils.cleanNaNValues(result.getY_test_norm());
 
             trainNormalize = new Pair<>(result.getX_train_norm(), result.getY_train_norm());
             valNormalize = new Pair<>(result.getX_val_norm(), result.getY_val_norm());
@@ -261,66 +262,63 @@ public class TrainingData {
     private int index = 0;
     private int maxLoaded = 1;
     private ArrayDeque<CompletableFuture<Pair<float[][][], float[][]>>> pairsLoaded = new ArrayDeque<>();
+    @Nullable
+    private Random random = null;
+    private AutoStopListener autoStopListener = null;
+    private ModeData modeData = null;
 
-    public void preLoad(int amount){
+
+    public void preLoad(int amount, ModeData mode){
+        this.modeData = mode;
         maxLoaded = amount;
-        List<Path> trainingList = files.subList(2, files.size());
-        for (int i = 0; i < amount; i++){
-            pairsLoaded.add(CompletableFuture.supplyAsync(() -> {
-                try {
-                    return normalizePair(IOdata.loadTrainingCache(trainingList.get(amount)));
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }));
+        switch (mode){
+            case RAMDOM -> this.random = new Random();
+            case CHANGE_WHEN_MEMORIZING -> this.autoStopListener = new AutoStopListener(() -> {
+                index++;
+                autoStopListener.reset();
+                var v = pairsLoaded.pollFirst();
+                pairsLoaded.clear();
+                pairsLoaded.add(v);
+            });
+        }
+        if (files != null){
+            List<Path> trainingList = files.subList(2, files.size());
+            for (int i = 0; i < amount; i++){
+                int j = i;
+                pairsLoaded.add(CompletableFuture.supplyAsync(() ->
+                    getPairNormalizeFromDisk(trainingList.get(j))
+                ));
+            }
         }
     }
 
     public Pair<float[][][], float[][]> nextData(){
+        if (modeData == null){
+            throw new IllegalStateException("ModeData is null");
+        }
+
+        switch (modeData){
+            case RAMDOM -> index = Math.abs(random.nextInt());
+            case SECUENCIAL -> index++;
+        }
         Pair<float[][][], float[][]> result;
         if (loadInRam){
             result = EngineUtils.getSingleSplitWithLabels(trainNormalize.getKey(), trainNormalize.getValue(), SPLITS_PAIRS, index % SPLITS_PAIRS);
-            index++;
         }else {
             try {
                 result = pairsLoaded.pollFirst().get();
                 List<Path> trainingList = files.subList(2, files.size());
                 while (pairsLoaded.size() < maxLoaded) {
-                    pairsLoaded.add(CompletableFuture.supplyAsync(() -> {
-                        try {
-                            return normalizePair(IOdata.loadTrainingCache(trainingList.get(index % trainingList.size())));
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }, VestaEngine.EXECUTOR_TRAINING));
-                    index++;
+                    pairsLoaded.add(CompletableFuture.supplyAsync(() ->
+                            getPairNormalizeFromDisk(trainingList.get(index % trainingList.size())), VestaEngine.EXECUTOR_TRAINING)
+                    );
                 }
-                StringBuilder sb = new StringBuilder();
-                for (CompletableFuture<Pair<float[][][], float[][]>> task :  pairsLoaded) {
-                    if (task.isDone()){
-                        sb.append("🟩");
-                    }else {
-                        sb.append("🟥");
-                    }
-                }
-                Vesta.info("Carga de datos: [%s]", sb.toString());
             } catch (InterruptedException | ExecutionException e) {
                 throw new RuntimeException(e);
             }
         }
 
         return result;
-    }
-
-    private Pair<float[][][], float[][]> normalizePair(Pair<float[][][], float[][]> pair){
-        float[][][] xRaw = pair.getKey();
-        float[][] yRaw = pair.getValue();
-        EngineUtils.cleanNaNValues(xRaw);
-        EngineUtils.cleanNaNValues(yRaw);
-        float[][][] x = xNormalizer.transform(xRaw);
-        float[][] y = yNormalizer.transform(yRaw);
-        pair = null;
-        return new Pair<>(x, y);
     }
 
     public static @NotNull BiFunction<long[], long[], float[][][]> getSlice3D(float[][][] xCombined) {
@@ -387,6 +385,26 @@ public class TrainingData {
         return new Normalize(xNormalizer, yNormalizer, X_train_norm.get(), X_val_norm.get(), X_test_norm.get(), y_train_norm.get(), y_val_norm.get(), y_test_norm.get());
     }
 
+    public void onEpoch(Trainer trainer) {
+        if (autoStopListener != null) autoStopListener.onEpoch(trainer);
+    }
+
+    @Override
+    public void onTrainingBatch(Trainer trainer, BatchData batchData) {}
+
+    @Override
+    public void onValidationBatch(Trainer trainer, BatchData batchData) {}
+
+    @Override
+    public void onTrainingBegin(Trainer trainer) {}
+
+    @Override
+    public void onTrainingEnd(Trainer trainer) {}
+
+    public IOdata.CacheProperties getCacheProperties(List<String> market) {
+        return new IOdata.CacheProperties(lookback, features, yCols, market, Main.MAX_MONTH_TRAINING, samplesSize);
+    }
+
     @Getter
     @Data
     public static final class Normalize {
@@ -417,6 +435,12 @@ public class TrainingData {
         private void clearY_test_norm() {
             Arrays.fill(this.y_test_norm, null);
         }
+    }
+
+    public enum ModeData{
+        SECUENCIAL,
+        RAMDOM,
+        CHANGE_WHEN_MEMORIZING
     }
 
 }

@@ -169,14 +169,14 @@ public class TemporalTransformerBlock extends AbstractBlock {
                                     oftenClearCache
                             )[0]; // [1,1,T,T]
 
-// Slice correcto (mask 0/1) y expandir a [B, seq, seq]
+            // Slice correcto (mask 0/1) y expandir a [B, seq, seq]
             NDArray slicedMask2d =
                     baseMask.get(
                             new NDIndex("0, 0, 0:" + seqLength + ", 0:" + seqLength)
                     ); // [seq,seq]
             NDArray slicedMask3d = slicedMask2d.expandDims(0); // [1,seq,seq]
 
-// EXPANDIR A BATCH (OBLIGATORIO EN DJL)
+            // EXPANDIR A BATCH (OBLIGATORIO EN DJL)
             currentMask = slicedMask3d.repeat(0, (int) batchSize); // [B,seq,seq]
             currentMask = currentMask.toDevice(manager.getDevice(), false);
             NDList attentionInput = new NDList(projectedInput, currentMask);

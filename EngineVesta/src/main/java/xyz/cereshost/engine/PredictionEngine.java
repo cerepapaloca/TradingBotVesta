@@ -27,7 +27,7 @@ import java.util.List;
 public class PredictionEngine {
 
     public static final double THRESHOLD_PRICE = 0.002;
-    public static final double THRESHOLD_RELATIVE = 0.08;
+    public static final double THRESHOLD_RELATIVE = 0.06;
 
     private final Model model;
     private final XNormalizer xNormalizer;

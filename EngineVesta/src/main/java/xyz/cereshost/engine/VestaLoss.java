@@ -23,13 +23,12 @@ public class VestaLoss extends Loss {
     private static final float DIRECTION_MEMORY_DECAY = 0.8f;
     private static final float DIRECTION_MEMORY_LR = 1.0f - DIRECTION_MEMORY_DECAY;
     private static final float BIAS_PENALTY_SCALE = 0f;
-    public static final float DELTA = 1.5f;
 
     private volatile CompletableFuture<LossReport> dataRequest = null;
     private NDArray directionMemory = null;
 
-    public VestaLoss(String name) {
-        super(name);
+    public VestaLoss() {
+        super("Vesta Loss");
     }
 
     @SneakyThrows
@@ -47,18 +46,20 @@ public class VestaLoss extends Loss {
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
         NDManager manager = target.getManager();
-        NDArray lossTP = trueParts.get(0).sub(predParts.get(0))
-                .pow(EngineUtils.floatToNDArray(2f, manager))
-                .add(EngineUtils.floatToNDArray(DELTA*DELTA, manager))
-                .sqrt()
-                .sub(EngineUtils.floatToNDArray(DELTA, manager))
-                .mean();
-        NDArray lossSL = trueParts.get(1).sub(predParts.get(1))
-                .pow(EngineUtils.floatToNDArray(2f, manager))
-                .add(EngineUtils.floatToNDArray(DELTA*DELTA, manager))
-                .sqrt()
-                .sub(EngineUtils.floatToNDArray(DELTA, manager))
-                .mean();
+        NDArray lossTP = computeMaxMIn(trueParts.get(0), predParts.get(0));
+        NDArray lossSL = computeMaxMIn(trueParts.get(1), predParts.get(1));
+//        NDArray lossTP = trueParts.get(0).mean().sub(predParts.get(0).mean())
+//                .pow(EngineUtils.floatToNDArray(2f, manager))
+//                .add(EngineUtils.floatToNDArray(DELTA*DELTA, manager))
+//                .sqrt()
+//                .sub(EngineUtils.floatToNDArray(DELTA, manager))
+//                ;
+//        NDArray lossSL = trueParts.get(1).mean().sub(predParts.get(1).mean())
+//                .pow(EngineUtils.floatToNDArray(2f, manager))
+//                .add(EngineUtils.floatToNDArray(DELTA*DELTA, manager))
+//                .sqrt()
+//                .sub(EngineUtils.floatToNDArray(DELTA, manager))
+//                ;
         NDArray lLong = EngineUtils.floatToNDArray(0f, manager);// directionalPenaltySoft(trueParts.get(2), predParts.get(2)).mul(EngineUtils.floatToNDArray(0f, manager));
         //NDArray clippedNeutralPred = clipNeutralGradient(trueParts.get(3), predParts.get(3), NEUTRAL_GRAD_CLIP);
         NDArray lNeutral = EngineUtils.floatToNDArray(0f, manager);// binaryCrossEntropy(trueParts.get(3), predParts.get(3)).mul(EngineUtils.floatToNDArray(0f, manager));
@@ -124,6 +125,22 @@ public class VestaLoss extends Loss {
         NDArray clipped = diff.maximum(clipMin).minimum(clipMax);
         return neutralTrue.add(clipped);
     }
+
+    public NDArray computeMaxMIn(NDArray trueND, NDArray predND){
+        NDArray diff = trueND.sub(predND).abs().pow(EngineUtils.floatToNDArray(2f, predND.getManager()));
+        return diff.mean();
+    }
+
+//    public NDArray computeMaxMIn(NDArray trueND, NDArray predND){
+//        NDManager manager = predND.getManager();
+//        NDArray diff = trueND.sub(predND).abs();
+//        NDArray weightBase = trueND.maximum(EngineUtils.floatToNDArray(0f, manager));
+//        NDArray weight = weightBase
+//                .pow(EngineUtils.floatToNDArray(LOSS_WEIGHT_POWER, manager))
+//                .mul(EngineUtils.floatToNDArray(LOSS_WEIGHT_ALPHA, manager))
+//                .add(EngineUtils.floatToNDArray(1f, manager));
+//        return diff.mul(weight).mean();
+//    }
 
     private NDArray computeDirectionalBiasPenalty(NDList trueParts, NDList predParts, NDManager batchManager) {
         NDArray trueDir = NDArrays.concat(new NDList(trueParts.get(2), trueParts.get(3), trueParts.get(4)), 1);   // [B,3]

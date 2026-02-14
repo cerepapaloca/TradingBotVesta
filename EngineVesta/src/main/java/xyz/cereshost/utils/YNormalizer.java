@@ -1,9 +1,5 @@
 package xyz.cereshost.utils;
 
-import org.jetbrains.annotations.NotNull;
-
-import java.util.Arrays;
-
 /**
  * Normalizador para Y en tu esquema:
  * - Y shape esperado: [samples][5] con columnas:
@@ -13,17 +9,14 @@ import java.util.Arrays;
  *   3: Neutral (one-hot)
  *   4: Short (one-hot)
  *
- * - fit(y): calcula mediana y MAD para TP/SL (columnas 0 y 1)
- * - transform(y): normaliza columnas 0 y 1, deja columnas 2..4 intactas
- * - inverseTransform(yNorm): reconstruye TP/SL a escala original
- *
- * Nota: MAD = median(|x - median|)
+ * - fit(y): calcula media/desviaciÃ³n en log1p(TP/SL)
+ * - transform(y): aplica log1p y z-score a columnas 0 y 1, deja columnas 2..4 intactas
+ * - inverseTransform(yNorm): revierte z-score y log1p
  */
 public class YNormalizer implements Normalizer<float[][]> {
 
-    private float[] medians;
-    private float[] mads;
-    private float[] mins; // Nuevo: para almacenar los mínimos por columna
+    private float[] means;
+    private float[] stds;
     private static final float EPSILON = 1e-8f;
     private int numOutputs;
 
@@ -34,52 +27,59 @@ public class YNormalizer implements Normalizer<float[][]> {
         }
 
         numOutputs = y[0].length;
-        medians = new float[numOutputs];
-        mads = new float[numOutputs];
-        mins = new float[numOutputs];
+        means = new float[numOutputs];
+        stds = new float[numOutputs];
         int rows = y.length;
         for (int col = 0; col < numOutputs; col++) {
             // Solo normalizar las primeras 2 columnas (TP y SL)
             if (col < 2) {
-                int size = 0;
-                float[] values = new float[rows];
+                double sum = 0.0;
+                double sumSq = 0.0;
+                int count = 0;
                 for (float[] row : y) {
                     if (col < row.length) {
-                        values[size++] = row[col];
+                        float v = row[col];
+                        if (Float.isNaN(v) || Float.isInfinite(v)) continue;
+                        if (v < 0f) v = 0f;
+                        double lv = Math.log1p(v);
+                        sum += lv;
+                        sumSq += lv * lv;
+                        count++;
                     }
                 }
 
-                if (size == 0) continue;
-
-                if (size < values.length) {
-                    values = Arrays.copyOf(values, size);
+                if (count == 0) {
+                    means[col] = 0f;
+                    stds[col] = 1f;
+                    continue;
                 }
 
-                Arrays.parallelSort(values);
-                float minVal = values[0];
-                float med = median(values);
-                float deviation = mad(values, med);
+                double mean = sum / count;
+                double variance = (sumSq / count) - (mean * mean);
+                double std = Math.sqrt(Math.max(variance, EPSILON));
 
-                medians[col] = med;
-                mads[col] = Math.max(deviation, EPSILON);
-                mins[col] = minVal;
+                means[col] = (float) mean;
+                stds[col] = (float) std;
             } else {
                 // Columnas one-hot (LONG, NEUTRAL, SHORT) no se normalizan
-                medians[col] = 0.0f;
-                mads[col] = 1.0f;
-                mins[col] = 0.0f;
+                means[col] = 0.0f;
+                stds[col] = 1.0f;
             }
         }
     }
 
     @Override
     public float[][] transform(float[][] y) {
-        if (medians == null) throw new IllegalStateException("Normalizador no ajustado");
+        if (means == null || stds == null) throw new IllegalStateException("Normalizador no ajustado");
         float[][] normalized = new float[y.length][numOutputs];
         for (int i = 0; i < y.length; i++) {
             for (int col = 0; col < numOutputs; col++) {
                 if (col < 2) {
-                    normalized[i][col] = (y[i][col] - mins[col]) / mads[col];
+                    float raw = y[i][col];
+                    if (!Float.isFinite(raw) || raw < 0f) raw = 0f;
+                    double lv = Math.log1p(raw);
+                    float z = (float) ((lv - means[col]) / stds[col]);
+                    normalized[i][col] = Float.isFinite(z) ? z : 0f;
                 } else {
                     normalized[i][col] = y[i][col];
                 }
@@ -94,27 +94,14 @@ public class YNormalizer implements Normalizer<float[][]> {
         for (int i = 0; i < yNorm.length; i++) {
             for (int col = 0; col < yNorm[i].length; col++) {
                 if (col < 2) {
-                    original[i][col] = (yNorm[i][col] * mads[col]) + mins[col];
+                    double lv = (yNorm[i][col] * stds[col]) + means[col];
+                    double v = Math.expm1(lv);
+                    original[i][col] = Double.isFinite(v) && v > 0.0 ? (float) v : 0f;
                 } else {
                     original[i][col] = yNorm[i][col];
                 }
             }
         }
         return original;
-    }
-
-    private float median(float @NotNull [] values) {
-        int n = values.length;
-        return (n % 2 == 0) ? (values[n/2 - 1] + values[n/2]) / 2.0f : values[n/2];
-    }
-
-    private float mad(float @NotNull [] values, float median) {
-        float[] medians = new float[values.length];
-        int idx = 0;
-        for (float v : values) {
-            medians[idx++] = Math.abs(v - median);
-        }
-        Arrays.parallelSort(medians);
-        return median(medians);
     }
 }

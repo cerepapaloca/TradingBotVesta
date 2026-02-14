@@ -12,20 +12,14 @@ import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.utils.EngineUtils;
 
 @Builder
-public class Softmax extends AbstractBlock {
+public class CosLinear extends AbstractBlock {
 
 
     private static final byte VERSION = 1;
 
-    private final float temperature;
-
     @Builder
-    private Softmax(float temperature) {
+    private CosLinear() {
         super(VERSION);
-        if (temperature <= 0f) {
-            throw new IllegalArgumentException("temperature must be > 0");
-        }
-        this.temperature = temperature;
     }
 
     @Override
@@ -36,24 +30,16 @@ public class Softmax extends AbstractBlock {
             ai.djl.util.PairList<String, Object> params
     ) {
         NDArray input = inputs.singletonOrThrow();
+        NDManager manager = ps.getManager();
 
+        NDArray output = input.mul(EngineUtils.floatToNDArray((float) Math.PI, manager)).cos().mul(input);
         // input / temperature
-        NDArray scaled = input.div(EngineUtils.floatToNDArray(temperature, input.getManager()));
 
-        // estabilidad numérica
-        NDArray max = scaled.max(new int[]{-1}, true);
-        NDArray shifted = scaled.sub(max);
-
-        NDArray exp = shifted.exp();
-        NDArray sum = exp.sum(new int[]{-1}, true);
-
-        NDArray output = exp.div(sum);
         return new NDList(output);
     }
 
     @Override
     public Shape[] getOutputShapes(@NotNull Shape[] inputShapes) {
-        // Softmax no cambia la forma
         return inputShapes;
     }
 
@@ -62,7 +48,5 @@ public class Softmax extends AbstractBlock {
             @NotNull NDManager manager,
             @NotNull DataType dataType,
             @NotNull Shape... inputShapes
-    ) {
-        // No tiene parámetros entrenables
-    }
+    ) {}
 }

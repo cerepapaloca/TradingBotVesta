@@ -56,32 +56,23 @@ public class BackTestEngine {
         // Variables de estado
         double initialBalance = balance;
 
-
         // Loop principal
         for (int i = startIndex; i < totalSamples - 1; i++) {
-
             // Obtener predicción
             List<Candle> window = allCandles.subList(i - lookBack, i + 1);
             PredictionEngine.PredictionResult prediction = engine.predictNextPriceDetail(window, market.getSymbol());
 
-
-
             // Consultar estrategia
             strategy.executeStrategy(prediction, operations);
 
-            if (operations.getLastOpenOperation().isEmpty()){
-                stats.nothing++;
-            }
-
+            if (operations.getLastOpenOperation().isEmpty())stats.nothing++;
             for (TradingBackTest.OpenOperationBackTest setup : operations.getLastOpenOperation()){
                 if (setup != null && setup.getDireccion() != Trading.DireccionOperation.NEUTRAL) {
                     switch (setup.getDireccion()) {
                         case LONG -> stats.longs++;
                         case SHORT -> stats.shorts++;
                     }
-                } else {
-                    stats.nothing++;
-                }
+                } else stats.nothing++;
             }
 
             // Inicia la simulaciónn de una vela de duración

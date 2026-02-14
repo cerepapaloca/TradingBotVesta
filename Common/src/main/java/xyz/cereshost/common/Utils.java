@@ -11,6 +11,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 @UtilityClass
 public class Utils {
@@ -53,4 +55,11 @@ public class Utils {
             throw new RuntimeException(e);
         }
     }
+//
+//    public static void main(String[] args) throws IOException, InterruptedException {
+//        System.out.println("Hola Mundo");
+//        LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(2));
+//        System.out.print("Hola Mundo\r");
+//        System.out.print("Adios Mundo");
+//    }
 }
