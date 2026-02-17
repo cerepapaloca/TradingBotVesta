@@ -40,8 +40,8 @@ public class MetricsListener extends TrainingListenerAdapter {
 //        float daeTrain = result.getTrainEvaluation("3_dir");
 //        float daelsTrain = result.getTrainEvaluation("2_dir");
         float maeValidation = result.getValidateEvaluation("mae");
-        float minValidation = result.getValidateEvaluation("min_diff");
-        float maxValidation = result.getValidateEvaluation("max_diff");
+        float minValidation = result.getValidateEvaluation("relative_diff");
+        float maxValidation = result.getValidateEvaluation("distance_diff");
 //        float daeValidation = result.getValidateEvaluation("3_dir");
 //        float daelsValidation = result.getValidateEvaluation("2_dir");
         // Calucar porgreso
@@ -74,10 +74,10 @@ public class MetricsListener extends TrainingListenerAdapter {
                         )
                 );
                 datasetLoss = ChartUtils.plot("Training Losses Max/Min " + String.join(", ", symbols), "epochs",
-                        List.of(new ChartUtils.DataPlot("Loss Max", List.of(l.tp()), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
-                                new ChartUtils.DataPlot("Loss Min", List.of(l.sl()), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
-                                new ChartUtils.DataPlot("Max", List.of(maxValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL),
-                                new ChartUtils.DataPlot("Min", List.of(minValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL)
+                        List.of(new ChartUtils.DataPlot("Loss Distancia", List.of(l.tp()), Color.GREEN, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("Loss Relativo", List.of(l.sl()), Color.RED, ChartUtils.DataPlot.StyleLine.DISCONTINUA),
+                                new ChartUtils.DataPlot("Distancia", List.of(maxValidation), Color.GREEN, ChartUtils.DataPlot.StyleLine.NORMAL),
+                                new ChartUtils.DataPlot("Relativo", List.of(minValidation), Color.RED, ChartUtils.DataPlot.StyleLine.NORMAL)
                         )
                 );
 //                datasetDireccion = ChartUtils.plot("Training Losses Dirección" + String.join(", ", symbols), "epochs",
@@ -104,14 +104,14 @@ public class MetricsListener extends TrainingListenerAdapter {
             datasetNormal.getSeries("MAE T").add(count, maeTrain);
             datasetNormal.getSeries("Loss V").add(count, lossValidation);
             datasetNormal.getSeries("MAE V").add(count, maeValidation);
-            datasetLoss.getSeries("Max").add(count, maxValidation);
-            datasetLoss.getSeries("Min").add(count, minValidation);
+            datasetLoss.getSeries("Distancia").add(count, maxValidation);
+            datasetLoss.getSeries("Relativo").add(count, minValidation);
 //            datasetRateDireccion.getSeries("DAE T").add(count, daeTrain);
 //            datasetRateDireccion.getSeries("DAELS T").add(count, daelsTrain);
 //            datasetRateDireccion.getSeries("DAE V").add(count, daeValidation);
 //            datasetRateDireccion.getSeries("DAELS V").add(count, daelsValidation);
-            datasetLoss.getSeries("Loss Max").add(count, l.tp());
-            datasetLoss.getSeries("Loss Min").add(count, l.sl());
+            datasetLoss.getSeries("Loss Distancia").add(count, l.tp());
+            datasetLoss.getSeries("Loss Relativo").add(count, l.sl());
 //            datasetDireccion.getSeries( "Loss L").add(count, l.longL());
 //            datasetDireccion.getSeries("Loss S").add(count, l.shortL());
 //            datasetDireccion.getSeries( "Loss N").add(count, l.neutralL());

@@ -249,15 +249,15 @@ public class ChartUtils {
             for (float[] floats : y) {
                 if (floats.length >= 2) {
                     float tp = floats[0];
-                    float sl = floats[1];
+                    float sl = floats[2];
                     tpValues.add(tp);
                     slValues.add(-sl);
                 }
             }
 
             // Crear dataset para TP y SL
-            XYSeries tpSeries = new XYSeries("TP (Take Profit)");
-            XYSeries slSeries = new XYSeries("SL (Stop Loss)");
+            XYSeries tpSeries = new XYSeries("Distancia");
+            XYSeries slSeries = new XYSeries("Relativo");
 
             for (int i = 0; i < tpValues.size(); i++) {
                 tpSeries.add(i, tpValues.get(i));
@@ -270,7 +270,7 @@ public class ChartUtils {
 
             // Crear gráfico
             JFreeChart chart = ChartFactory.createScatterPlot(
-                    title + " - " + symbol + " (Distribución de TP y SL)",
+                    title + " - " + symbol + " (Distribución de Distancia y Relativo)",
                     "Índice de Muestra",
                     "Valor (Log Return)",
                     dataset
@@ -463,15 +463,15 @@ public class ChartUtils {
             JTabbedPane tabbedPane = new JTabbedPane();
             results.sort(Comparator.comparingDouble(EngineUtils.ResultEvaluate::tpDiff));
             for (EngineUtils.ResultEvaluate r : results) {
-                actualTP.add(r.realTP());
-                predictedTP.add(r.predTP());
-                tpError.add(Math.abs(r.realTP() - r.predTP()));
+                actualTP.add(r.getRealTP());
+                predictedTP.add((float) r.getTpPrice());
+                tpError.add(Math.abs(r.getRealTP() - (float) r.getTpPrice()));
             }
             results.sort(Comparator.comparingDouble(EngineUtils.ResultEvaluate::lsDiff));
             for (EngineUtils.ResultEvaluate r : results) {
-                actualSL.add(r.realSL());
-                predictedSL.add(r.predSL());
-                slError.add(Math.abs(r.realSL() - r.predSL()));
+                actualSL.add(r.getRealSL());
+                predictedSL.add((float) r.getSlPrice());
+                slError.add(Math.abs(r.getRealSL() - (float) r.getSlPrice()));
             }
 
             // Gráfico 1: TP predicho vs real
@@ -566,13 +566,13 @@ public class ChartUtils {
         List<Float> predRatios = new ArrayList<>();
 
         for (EngineUtils.ResultEvaluate r : results) {
-            if (r.realSL() != 0) {
-                realRatios.add(r.realTP() / r.realSL());
+            if (r.getRealSL() != 0) {
+                realRatios.add(r.getRealTP() / r.getRealSL());
             }else {
                 realRatios.add(0f);
             }
-            if (r.predSL() != 0) {
-                predRatios.add(r.predTP() / r.predSL());
+            if (r.getSlPrice() != 0) {
+                predRatios.add((float) (r.getTpPrice() / r.getSlPrice()));
             }else {
                 predRatios.add(0f);
             }
@@ -928,18 +928,15 @@ public class ChartUtils {
             XYSeries neutralSeries = new XYSeries("NEUTRAL");
             XYSeries shortSeries = new XYSeries("SHORT");
 
-            for (EngineUtils.ResultEvaluate pred : predictions) {
-                float real = pred.realDir();
-                float predVal = pred.predDir();
-
-                if (real > THRESHOLD_RELATIVE) {
-                    longSeries.add(real, predVal);
-                } else if (real < -THRESHOLD_RELATIVE) {
-                    shortSeries.add(real, predVal);
-                } else {
-                    neutralSeries.add(real, predVal);
-                }
-            }
+              for (EngineUtils.ResultEvaluate pred : predictions) {
+                  float real = pred.getRealDir();
+                  float predVal = pred.getPredDir();
+                  switch (pred.getPredDirection()){
+                      case LONG -> longSeries.add(real, predVal);
+                      case SHORT -> shortSeries.add(real, predVal);
+                      case NEUTRAL -> neutralSeries.add(real, predVal);
+                  }
+              }
 
             XYSeriesCollection dataset = new XYSeriesCollection();
             dataset.addSeries(longSeries);
@@ -999,9 +996,9 @@ public class ChartUtils {
             for (EngineUtils.ResultEvaluate pred : predictions) {
                 float error = pred.dirDiff();
 
-                if (pred.realDir() > THRESHOLD_RELATIVE) {
+                if (pred.getRealDir() > THRESHOLD_RELATIVE) {
                     longErrors.add(error);
-                } else if (pred.realDir() < -THRESHOLD_RELATIVE) {
+                } else if (pred.getRealDir() < -THRESHOLD_RELATIVE) {
                     shortErrors.add(error);
                 } else {
                     neutralErrors.add(error);

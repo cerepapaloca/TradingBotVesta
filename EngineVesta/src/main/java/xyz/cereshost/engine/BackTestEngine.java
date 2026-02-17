@@ -35,6 +35,7 @@ public class BackTestEngine {
         this.engine = engine;
         this.strategy = strategy;
         this.stats = new BackTestStats(market);
+        currentPrice = market.getCandleSimples().getFirst().open();
 
     }
 

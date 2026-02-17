@@ -7,6 +7,8 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.util.Pair;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import lombok.Getter;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
@@ -18,16 +20,18 @@ import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.io.IOdata;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.utils.EngineUtils;
+import xyz.cereshost.utils.PredictionUtils;
 
 import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
 
+
 @Getter
 public class PredictionEngine {
 
-    public static final double THRESHOLD_PRICE = 0.002;
-    public static final double THRESHOLD_RELATIVE = 0.06;
+    public static final double THRESHOLD_PRICE = 0.002; // No se usa
+    public static final double THRESHOLD_RELATIVE = 0.5;
 
     private final Model model;
     private final XNormalizer xNormalizer;
@@ -46,8 +50,9 @@ public class PredictionEngine {
     }
 
     /**
-     * Hace la inferencia en el modelo para dos salidas (TP y SL).
-     * Devuelve los valores RAW desnormalizados (Log Returns para TP y SL).
+     * Hace la inferencia en el modelo.
+     * Devuelve los valores desnormalizados para el output 0 (magnitud) y raw para el output 2 (ratio).
+     * Formato: [magnitud, 0, ratio, 0, 0]
      */
     public float[] predictRaw(float[][][] inputSequence) {
         try (NDManager manager = NDManager.newBaseManager(device)) {
@@ -80,22 +85,27 @@ public class PredictionEngine {
             // Verificar la forma de la salida
             long[] shape = prediction.getShape().getShape();
             if (shape[shape.length - 1] != 5) {
-                throw new RuntimeException("El modelo debe tener 3 salidas (TP, SL, Dirección). Forma actual: " + prediction.getShape());
+                throw new RuntimeException("El modelo debe tener 5 salidas. Forma actual: " + prediction.getShape());
             }
 
-            // Reorganizar el array plano en [batch_size, 2]
+            // Reorganizar el array plano en [batch_size, 5]
             int batch = (int) shape[0];
             float[][] output2D = new float[batch][5];
 
             for (int i = 0; i < batch; i++) {
-                for (int j = 0; j < 5; j++) {
-                    output2D[i][j] = normalizedOutput[i * 5 + j];
-                }
+                int base = i * 5;
+                output2D[i][0] = normalizedOutput[base];
+                output2D[i][1] = 0f;
+                output2D[i][2] = normalizedOutput[base + 2];
+                output2D[i][3] = 0f;
+                output2D[i][4] = 0f;
             }
 
-            // Des normalizar salidas
+            // Des normalizar solo output 0 (magnitud)
             float[][] denormalized = yNormalizer.inverseTransform(output2D);
-            return denormalized[0];
+            float mag = denormalized[0][0];
+            float ratio = output2D[0][2];
+            return new float[]{mag, 0f, ratio, 0f, 0f};
         } catch (Exception e) {
             Vesta.error("Error en predictRaw: " + e.getMessage());
             e.printStackTrace();
@@ -122,60 +132,63 @@ public class PredictionEngine {
         // Inferencia
         float[] rawPredictions = predictRaw(XWithSymbol); // Output del modelo
 
-        float maxLog = rawPredictions[0];
-        float minLog = rawPredictions[1];
+        float totalMoveRatio = rawPredictions[0];
+        float ratioRaw = rawPredictions[2];
 
         float currentPrice = (float) subList.getLast().close();
-        float maxPrice = (float) (currentPrice * Math.exp(maxLog));
-        float minPrice = (float) (currentPrice * Math.exp(minLog));
-
-        EngineUtils.DirectionFilterResult decision = EngineUtils.filterDirectionByExtremes(maxLog, minLog);
-        int direction = decision.direction();
-
-        float tpLogReturn;
-        float slLogReturn;
-        float tpPrice;
-        float slPrice;
-
-        if (direction > 0) {
-            tpLogReturn = decision.maxMove();
-            slLogReturn = decision.minMove();
-            tpPrice = maxPrice;
-            slPrice = minPrice;
-        } else if (direction < 0) {
-            tpLogReturn = decision.minMove();
-            slLogReturn = decision.maxMove();
-            tpPrice = minPrice;
-            slPrice = maxPrice;
-        } else {
-            tpLogReturn = 0f;
-            slLogReturn = 0f;
-            tpPrice = currentPrice;
-            slPrice = currentPrice;
+        if (currentPrice <= 0f) {
+            return new PredictionResult(currentPrice, currentPrice, currentPrice, 0f, 0f, 0f, 0);
         }
 
+        float ratio = PredictionUtils.clampRatio(ratioRaw);
+        float totalMove = Math.max(0f, totalMoveRatio) * currentPrice;
+
+        float[] moves = PredictionUtils.splitMoves(totalMove, ratio);
+        float upMove = moves[0];
+        float downMove = moves[1];
+
+        float maxDownMove = currentPrice * 0.999f;
+        if (downMove > maxDownMove) {
+            downMove = maxDownMove;
+        }
+
+        int direction = PredictionUtils.directionFromRatioRaw(ratio);
+
+        float tpLogReturn = 0f;
+        float slLogReturn = 0f;
+        float tpPrice = currentPrice;
+        float slPrice = currentPrice;
+
+        if (direction > 0) {
+            tpPrice = currentPrice + upMove;
+            slPrice = currentPrice - downMove;
+            tpLogReturn = (float) Math.log(tpPrice / currentPrice);
+            slLogReturn = (float) Math.log(currentPrice / slPrice);
+        } else if (direction < 0) {
+            tpPrice = currentPrice - downMove;
+            slPrice = currentPrice + upMove;
+            tpLogReturn = (float) Math.log(currentPrice / tpPrice);
+            slLogReturn = (float) Math.log(slPrice / currentPrice);
+        }
+        float confidence = Float.isFinite(ratio) ? Math.abs(ratio) : 0f;
         return new PredictionResult(
-                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, decision.confidence(), direction
+                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, confidence, direction
         );
     }
 
-    public record PredictionResult(
-            double currentPrice,
-            double tpPrice,       // Precio de Take Profit
-            double slPrice,       // Precio de Stop Loss
-            double tpLogReturn,   // Log return para TP (positivo)
-            double slLogReturn,   // Log return para SL (positivo)
-            double confident,
-            int direction   // -1 Short, 0 Neutral, 1 Long
-    ) {
+    @Data
+    @AllArgsConstructor
+    public static class PredictionResult {
+        private final double currentPrice;
+        private final double tpPrice;       // Precio de Take Profit
+        private final double slPrice;       // Precio de Stop Loss
+        private final double tpLogReturn;   // Log return para TP (positivo)
+        private final double slLogReturn;   // Log return para SL (positivo)
+        private final double confident;
+        private final int direction;   // -1 Short, 0 Neutral, 1 Long
+
         public Trading.DireccionOperation directionOperation() {
-            if (direction > 0) {
-                return Trading.DireccionOperation.LONG;
-            }
-            if (direction < 0) {
-                return Trading.DireccionOperation.SHORT;
-            }
-            return Trading.DireccionOperation.NEUTRAL;
+            return EngineUtils.directionToOperation(direction);
         }
         public double getTpDistance() {
             return Math.abs(tpPrice - currentPrice);
@@ -202,16 +215,11 @@ public class PredictionEngine {
         }
     }
 
-    public static float computeDirection(float[] probs) {
-        float rawDirection = probs[0] - probs[2];
-
-        // 2. Confianza: Solo nos importa si NO es Neutral.
-        // Si neutral es 0.9, confidence es 0.1.
-        float confidence = 1.0f - probs[1];
-
-        // 3. Resultado directo: Sin umbrales, sin "if", sin "force to 0".
-        // Esto permite que el scatter plot muestre nubes reales en lugar de líneas.
-        return rawDirection * confidence;
+    private static int directionFromRatioRaw(float ratio) {
+        if (!Float.isFinite(ratio)) return 0;
+        if (ratio > 0f) return 1;  // ratio positivo => domina el máximo => LONG
+        if (ratio < 0f) return -1; // ratio negativo => domina el mínimo => SHORT
+        return 0;
     }
 
     @Contract("_ -> new")

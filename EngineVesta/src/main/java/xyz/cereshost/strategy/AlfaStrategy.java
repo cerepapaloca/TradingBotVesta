@@ -1,9 +1,8 @@
 package xyz.cereshost.strategy;
 
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.engine.BackTestEngine;
-import xyz.cereshost.trading.Trading;
 import xyz.cereshost.engine.PredictionEngine;
+import xyz.cereshost.trading.Trading;
 
 public class AlfaStrategy implements TradingStrategy {
     @Override

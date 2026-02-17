@@ -3,6 +3,8 @@ package xyz.cereshost.io;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.luben.zstd.ZstdInputStream;
+import com.github.luben.zstd.ZstdOutputStream;
 import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.DataSource;
@@ -17,6 +19,9 @@ import java.io.*;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -26,7 +31,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
 
 import static xyz.cereshost.io.KlinesSerializable.parseKlineLine;
 import static xyz.cereshost.io.TradeSerializable.parseTradeLine;
@@ -40,13 +44,20 @@ public class IOMarket {
     private static final int BATCH_SIZE = 50_000;
     public static final String STORAGE_DIR = "data";
     public static final int BUFFER_READ_MB = 50;
+    private static final int ZSTD_LEVEL = 1;
+    private static final String EXT_ZIP = ".zip";
+    private static final String EXT_BIN = ".bin";
+    private static final String EXT_ZST = ".zst";
+    private static final String EXT_BIN_ZST = ".bin.zst";
+    // Base de referencia para indices diarios (ajustar si cambia el dataset)
+    private static final LocalDate BASE_DATE = LocalDate.of(2025, 12, 31);
 
 
     public static Market loadMarkets(DataSource data, String s) throws InterruptedException, IOException {
         return loadMarkets(data, s, -1);
     }
 
-    public static Market loadMarkets(DataSource data, String s, int monthCVS) throws InterruptedException, IOException {
+    public static Market loadMarkets(DataSource data, String s, int dayIndex) throws InterruptedException, IOException {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicLong lastUpdate = new AtomicLong();
         AtomicReference<Market> marketFinal = new AtomicReference<>(null);
@@ -117,29 +128,28 @@ public class IOMarket {
                 latch.countDown();
             }
             case LOCAL_ZIP -> {
-                // Normalizar monthCVS a >= 1
-                int monthIndex = Math.max(1, monthCVS);
-                // offset: 0 -> most recent (Dec 2025), 1 -> one month back (Nov 2025), ...
-                int offset = monthIndex - 1;
-
-                int targetYear = 2025 - (offset / 12);
-                int targetMonth = 12 - (offset % 12);
+                // Normalizar dayIndex a >= 1
+                int normalizedDayIndex = Math.max(1, dayIndex);
+                LocalDate targetDate = resolveDateFromDayIndex(normalizedDayIndex);
+                int targetYear = targetDate.getYear();
+                int targetMonth = targetDate.getMonthValue();
+                int targetDay = targetDate.getDayOfMonth();
 
                 long timeTotal = System.currentTimeMillis();
-                Vesta.info("%d/%02d (idx=%d) 💾 Leyendo zip local de klines", targetYear, targetMonth, monthIndex);
-                File klineFile = ensureFileCached(baseDir, s, "klines", targetYear, targetMonth);
+                Vesta.info("%d/%02d/%02d (idx=%d) 💾 Leyendo zst local de klines", targetYear, targetMonth, targetDay, normalizedDayIndex);
+                File klineFile = ensureFileCached(baseDir, s, "klines", targetDate);
                 Deque<CandleSimple> candles = parseKlinesFromFile(klineFile);
-                Vesta.info("%d/%02d (idx=%d) 💾 Leyendo zip local de trades", targetYear, targetMonth, monthIndex);
-                File tradeFile = ensureFileCached(baseDir, s, "trades", targetYear, targetMonth);
+                Vesta.info("%d/%02d/%02d (idx=%d) 💾 Leyendo zst local de trades", targetYear, targetMonth, targetDay, normalizedDayIndex);
+                File tradeFile = ensureFileCached(baseDir, s, "trades", targetDate);
                 Deque<Trade> trades = parseTradesFromFile(tradeFile);
                 if (candles.isEmpty() || trades.isEmpty()) {
-                    Vesta.info("⚠️ Datos incompletos o corruptos para %s en %d/%02d (idx=%d)", s, targetYear, targetMonth, monthIndex);
+                    Vesta.info("Datos incompletos o corruptos para %s en %d/%02d/%02d (idx=%d)", s, targetYear, targetMonth, targetDay, normalizedDayIndex);
                     latch.countDown();
                     return marketFinal.get();
                 }
                 int sizeCandles = candles.size();
                 int sizeTrades = trades.size();
-                Vesta.info("%d/%02d (idx=%d) 🔒 Asegurando orden de los datos", targetYear, targetMonth, monthIndex);
+                Vesta.info("%d/%02d/%02d (idx=%d) 🔒 Asegurando orden de los datos", targetYear, targetMonth, targetDay, normalizedDayIndex);
                 LinkedHashSet<CandleSimple> candlesSorted = Market.sortInChunks(candles, 10_000, CandleSimple::openTime);
                 LinkedHashSet<Trade> tradeSorted = Market.sortInChunks(trades, 10_000, Trade::time);
 
@@ -153,7 +163,7 @@ public class IOMarket {
                 long commonStart = Math.max(minTimeCandles, minTimeTrades);
                 long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
 
-                Vesta.info("%d/%02d (idx=%d) ✂️ Ajustando %s a ventana común: %d - %d", targetYear, targetMonth, monthIndex, s, commonStart, commonEnd);
+                Vesta.info("%d/%02d/%02d (idx=%d) ✂️ Ajustando %s a ventana comun: %d - %d", targetYear, targetMonth, targetDay, normalizedDayIndex, s, commonStart, commonEnd);
                 // borrar por inicio
                 while (!candlesSorted.isEmpty() && candlesSorted.getFirst().openTime() < commonStart) {
                     candlesSorted.removeFirst();
@@ -179,8 +189,8 @@ public class IOMarket {
                 marketFinal.set(market);
                 lastUpdate.set(System.currentTimeMillis());
 
-                Vesta.info("%d/%02d (idx=%d) ✅ Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
-                        targetYear, targetMonth, monthIndex, s, sizeCandles, sizeTrades, (float) (System.currentTimeMillis() - timeTotal) / 1000);
+                Vesta.info("%d/%02d/%02d (idx=%d) 🟩 Mercado cargado desde DISCO: %s (C: %d, T: %d) en %.2fs",
+                        targetYear, targetMonth, targetDay, normalizedDayIndex, s, sizeCandles, sizeTrades, (float) (System.currentTimeMillis() - timeTotal) / 1000);
 
                 latch.countDown();
             }
@@ -189,149 +199,146 @@ public class IOMarket {
         return marketFinal.get();
     }
 
+    public static LocalDate resolveDateFromDayIndex(int dayIndex) {
+        int normalized = Math.max(1, dayIndex);
+        return BASE_DATE.minusDays(normalized - 1L);
+    }
 
-    private static File ensureFileCached(String baseDir, String symbol, String type, int year, int month) throws IOException {
-        String monthStr = String.format("%02d", month);
-        // Nombre del archivo según convención de Binance
-        String baseName = String.format("%s-%s-%d-%s", symbol, (type.equals("klines") ? "1m" : "trades"), year, monthStr);
-        String fileNameZip = baseName + ".zip";
-        String fileNameBin = baseName + ".bin";
-        // Estructura: ./data/ETHUSDT/klines/ETHUSDT-1m-2025-12.zip
-        File dir = new File(baseDir + File.separator + symbol + File.separator + type);
+    public static int resolveDayIndex(LocalDate date) {
+        long days = ChronoUnit.DAYS.between(date, BASE_DATE);
+        return (int) days + 1;
+    }
+
+    public static YearMonth resolveMonthFromIndex(int monthIndex) {
+        int normalized = Math.max(1, monthIndex);
+        return YearMonth.from(BASE_DATE).minusMonths(normalized - 1L);
+    }
+
+
+    private static File ensureFileCached(String baseDir, String symbol, String type, LocalDate date) throws IOException {
+        String monthStr = String.format("%02d", date.getMonthValue());
+        String dayStr = String.format("%02d", date.getDayOfMonth());
+        String dateStr = String.format("%d-%s-%s", date.getYear(), monthStr, dayStr);
+        // Nombre del archivo segun convencion de Binance (daily)
+        String baseName = type.equals("klines")
+                ? String.format("%s-1m-%s", symbol, dateStr)
+                : String.format("%s-trades-%s", symbol, dateStr);
+        String fileNameZip = baseName + EXT_ZIP;
+        String fileNameBin = baseName + EXT_BIN;
+        String fileNameBinZst = baseName + EXT_BIN_ZST;
+        // Estructura: ./data/ETHUSDT/klines/2025-12/ETHUSDT-1m-2025-12-01.bin.zst
+        File dir = new File(baseDir + File.separator + symbol + File.separator + type + File.separator + date.getYear() + "-" + monthStr);
         if (!dir.exists()) {
             dir.mkdirs(); // Crea la estructura de carpetas si no existe
         }
 
         File targetFileZip = new File(dir, fileNameZip);
         File targetFileBin = new File(dir, fileNameBin);
+        File targetFileBinZst = new File(dir, fileNameBinZst);
 
-        if (targetFileZip.exists() && targetFileZip.length() > 0) {
-            // Vesta.info("   -> Usando caché local: " + targetFile.getPath());
-            return targetFileZip;
-        }else if (targetFileBin.exists() && targetFileBin.length() > 0) {
+        if (targetFileBin.exists() && targetFileBin.length() > 0) {
             return targetFileBin;
+        } else if (targetFileBinZst.exists() && targetFileBinZst.length() > 0) {
+            return targetFileBinZst;
+        } else if (targetFileZip.exists() && targetFileZip.length() > 0) {
+            convertZipToBinZst(targetFileZip, targetFileBinZst, type);
+            safeDelete(targetFileZip);
+            return targetFileBinZst;
         }
 
         // Construir URL de descarga
         String urlTypePath = type.equals("klines") ? "klines" : "trades"; // URL path segment
         String urlInterval = type.equals("klines") ? "/1m" : ""; // Trades no tienen intervalo en la URL
 
-        String urlString = String.format("https://data.binance.vision/data/futures/um/monthly/%s/%s%s/%s",
+        String urlString = String.format("https://data.binance.vision/data/futures/um/daily/%s/%s%s/%s",
                 urlTypePath, symbol, urlInterval, fileNameZip);
 
-        Vesta.info("⬇️ Descargando nuevo archivo: " + fileNameZip + " (" + urlString + ")");
+        Vesta.info("📥 Descargando nuevo archivo: " + fileNameZip + " (" + urlString + ")");
 
         try (InputStream in = new URL(urlString).openStream()) {
             Files.copy(in, targetFileZip.toPath(), StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            // Si falla la descarga, borramos el archivo vacío/corrupto para no romper ejecuciones futuras
-            if(targetFileZip.exists()) targetFileZip.delete();
+            // Si falla la descarga, borramos el archivo vacio/corrupto para no romper ejecuciones futuras
+            if (targetFileZip.exists()) targetFileZip.delete();
             throw new IOException("Fallo al descargar " + urlString, e);
         }
+        Vesta.info("✅ Descargando completada: " + fileNameZip);
+        convertZipToBinZst(targetFileZip, targetFileBinZst, type);
+        safeDelete(targetFileZip);
 
-        try {
-            ensureBinCache(targetFileZip, type);
-        } catch (Exception e) {
-            Vesta.info("Error creando cache binario: " + e.getMessage());
-        }
-
-        return targetFileZip;
+        return targetFileBinZst;
     }
 
     /**
-     * Cambiar el nombre del archivo que se hace referencia
-     * @param zipFile el archivo a cambiar
-     * @return el nombre cambiado
+     * Cambia el nombre de referencia al binario comprimido.
+     * @param dataFile el archivo base (zip/bin/bin.zst)
+     * @return el nombre del binario (bin o bin.zst)
      */
-
-    public static String binEntryName(File zipFile) {
-        String name = zipFile.getName();
-        if (name.endsWith(".zip")) {
-            name = name.substring(0, name.length() - 4);
-        }
-        if (name.endsWith(".bin")) {
+    public static String binEntryName(File dataFile) {
+        String name = dataFile.getName();
+        if (name.endsWith(EXT_BIN_ZST)) {
             return name;
-        }else {
-            return name + ".bin";
         }
+        if (name.endsWith(EXT_ZIP)) {
+            name = name.substring(0, name.length() - EXT_ZIP.length());
+        }
+        if (name.endsWith(EXT_ZST)) {
+            name = name.substring(0, name.length() - EXT_ZST.length());
+        }
+        if (name.endsWith(EXT_BIN)) {
+            return name;
+        }
+        return name + EXT_BIN_ZST;
     }
 
     /**
-     * Transforma la referencia de un archivo .zip a .bin
-     * @param zipFile el a cambiar
-     * @return el archivo con la extension .bin
+     * Transforma la referencia de un archivo base a binario.
+     * @param dataFile el archivo base
+     * @return el archivo con la extension .bin o .bin.zst
      */
-
-    private static File binFileForZip(File zipFile) {
-        File parent = zipFile.getParentFile();
-        String name = binEntryName(zipFile);
+    private static File binFileForZip(File dataFile) {
+        File parent = dataFile.getParentFile();
+        String name = binEntryName(dataFile);
         return parent == null ? new File(name) : new File(parent, name);
     }
 
-    private static boolean hasZipEntry(File zipFile, String entryName) throws IOException {
-        try (ZipFile zip = new ZipFile(zipFile)) {
-            return zip.getEntry(entryName) != null;
-        }
-    }
-
-    private static void ensureBinCache(File zipFile, String type) throws IOException {
-        String entryName = binEntryName(zipFile);
-        if (hasZipEntry(zipFile, entryName)) {
-            return;
-        }
-        Path temp = Files.createTempFile(zipFile.getParentFile().toPath(), entryName, ".tmp");
-        File binTemp = temp.toFile();
-        try {
-            if ("trades".equals(type)) {
-                buildTradeBinFromZip(zipFile, binTemp);
-            } else if ("klines".equals(type)) {
-                buildKlineBinFromZip(zipFile, binTemp);
-            }
-            rewriteZipWithBinEntry(zipFile, entryName, out -> {
-                try (InputStream in = new BufferedInputStream(new FileInputStream(binTemp), (1 << 20) * BUFFER_READ_MB)) {
-                    copyStream(in, out);
-                }
-            });
-        } finally {
-            if (binTemp.exists()) {
-                binTemp.delete();
-            }
-        }
-    }
-
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    private synchronized static Deque<CandleSimple> parseKlinesFromFile(File file) {
+    private static Deque<CandleSimple> parseKlinesFromFile(File file) {
         Deque<CandleSimple> list = new ArrayDeque<>();
-        if (!file.exists()) return list;
         KlinesSerializable parse = new KlinesSerializable();
 
         Deque<CandleSimple> cached1 = parseFromBin(binFileForZip(file), parse);
         if (cached1 != null) {
             return cached1;
         }
-        Deque<CandleSimple> cached2 = parseFromBinInZip(file, parse);
-        if (cached2 != null) {
-            return cached2;
+        if (!file.exists()) return list;
+        if (file.getName().endsWith(EXT_ZIP)) {
+            Deque<CandleSimple> cached2 = parseFromBinInZip(file, parse);
+            if (cached2 != null) {
+                return cached2;
+            }
         }
 
         return parseFromCSVandWriteBin(file, parse, parse);
     }
 
-    private synchronized static Deque<Trade> parseTradesFromFile(File file) {
+    private static Deque<Trade> parseTradesFromFile(File file) {
         Deque<Trade> list = new ArrayDeque<>();
-        if (!file.exists()) return list;
         TradeSerializable parseCSV = new TradeSerializable();
 
         Deque<Trade> cached1 = parseFromBin(binFileForZip(file), parseCSV);
         if (cached1 != null) {
             return cached1;
         }
-        // En el caso de que .bin exista dentro del .zip
-        Deque<Trade> cached2 = parseFromBinInZip(file, parseCSV);
-        if (cached2 != null) {
-            return cached2;
+        if (!file.exists()) return list;
+        // En el caso de que .bin exista dentro del .zip (legacy)
+        if (file.getName().endsWith(EXT_ZIP)) {
+            Deque<Trade> cached2 = parseFromBinInZip(file, parseCSV);
+            if (cached2 != null) {
+                return cached2;
+            }
         }
 
         return parseFromCSVandWriteBin(file, parseCSV, parseCSV);
@@ -340,6 +347,7 @@ public class IOMarket {
     private static <T> @NotNull Deque<T> parseFromCSVandWriteBin(File file, SerializableCSV<T> SerializableCSV, SerializableBin<T> SerializableBin) {
         Deque<T> list = new ArrayDeque<>();
         if (!file.exists()) return list;
+        if (!file.getName().endsWith(EXT_ZIP)) return list;
 
 
         int threads = Math.max(1, Runtime.getRuntime().availableProcessors());
@@ -347,7 +355,7 @@ public class IOMarket {
         int batchSize = BATCH_SIZE;
         Deque<FutureTask<List<T>>> tasks = new ArrayDeque<>(maxInFlight);
 
-        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), (1 << 20) * BUFFER_READ_MB))) { // CAMBIO: FileInputStream
+        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(file), (1 << 20) * BUFFER_READ_MB))) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (!entry.isDirectory() && entry.getName().endsWith(".csv")) {
@@ -378,14 +386,19 @@ public class IOMarket {
                 drainTask(tasks, list);
             }
         } catch (Exception e) {
-            Vesta.info("Error procesando Klines locales: " + e.getMessage());
+            Vesta.info("Error procesando datos locales: " + e.getMessage());
         }
+        boolean wrote = false;
         if (!list.isEmpty()) {
             try {
                 SerializableBin.writeBin(file, list);
+                wrote = true;
             } catch (Exception e) {
-                Vesta.info("Error guardando Klines binario: " + e.getMessage());
+                Vesta.info("Error guardando binario: " + e.getMessage());
             }
+        }
+        if (wrote) {
+            safeDelete(file);
         }
         return list;
     }
@@ -420,10 +433,18 @@ public class IOMarket {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     private static <T> Deque<T> parseFromBin(File binFile, SerializableBin<T> parseMethod) {
-        if (!binFile.exists() || binFile.length() == 0) {
+        File candidate = binFile;
+        if (candidate.getName().endsWith(EXT_BIN_ZST)) {
+            File raw = new File(candidate.getParentFile(),
+                    candidate.getName().substring(0, candidate.getName().length() - EXT_ZST.length()));
+            if (raw.exists() && raw.length() > 0) {
+                candidate = raw;
+            }
+        }
+        if (!candidate.exists() || candidate.length() == 0) {
             return null;
         }
-        try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(binFile), (1 << 20) * BUFFER_READ_MB))) {
+        try (DataInputStream in = openBinInputStream(candidate)) {
             return parseMethod.readBin(in);
         } catch (Exception e) {
             Vesta.info("Error leyendo binario: " + e.getMessage());
@@ -431,10 +452,33 @@ public class IOMarket {
         }
     }
 
+    private static DataInputStream openBinInputStream(File binFile) throws IOException {
+        InputStream in = new BufferedInputStream(new FileInputStream(binFile), (1 << 20) * BUFFER_READ_MB);
+        if (binFile.getName().endsWith(EXT_ZST)) {
+            in = new ZstdInputStream(in);
+        }
+        return new DataInputStream(in);
+    }
+
+    private static DataOutputStream openBinOutputStream(File binFile, boolean useZstd) throws IOException {
+        OutputStream out = new BufferedOutputStream(new FileOutputStream(binFile), (1 << 20) * BUFFER_READ_MB);
+        if (useZstd) {
+            ZstdOutputStream zOut = new ZstdOutputStream(out);
+            zOut.setLevel(ZSTD_LEVEL);
+            zOut.setWorkers(Math.min(8, Runtime.getRuntime().availableProcessors()));
+            out = zOut;
+        }
+        return new DataOutputStream(out);
+    }
+
     private static <T> Deque<T> parseFromBinInZip(File zipFile, SerializableBin<T> parse) {
         String entryName = binEntryName(zipFile);
         try (ZipFile zip = new ZipFile(zipFile)) {
             ZipEntry entry = zip.getEntry(entryName);
+            if (entry == null && entryName.endsWith(EXT_BIN_ZST)) {
+                String legacyEntry = entryName.substring(0, entryName.length() - EXT_ZST.length());
+                entry = zip.getEntry(legacyEntry);
+            }
             if (entry == null) {
                 return null;
             }
@@ -456,35 +500,15 @@ public class IOMarket {
     }
 
     public static void rewriteZipWithBinEntry(File zipFile, String entryName, BinWriter writer) throws IOException {
-        Path temp = Files.createTempFile(zipFile.getParentFile().toPath(), zipFile.getName(), ".tmp");
+        File parent = zipFile.getParentFile();
+        File binFile = parent == null ? new File(entryName) : new File(parent, entryName);
+        Path temp = Files.createTempFile(parent == null ? Paths.get(".") : parent.toPath(), binFile.getName(), ".tmp");
         try {
-            try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), (1 << 20) * BUFFER_READ_MB));
-                 ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(temp), (1 << 20) * BUFFER_READ_MB))) {
-                ZipEntry entry;
-                byte[] buffer = new byte[(1 << 20) * BUFFER_READ_MB];
-                while ((entry = zis.getNextEntry()) != null) {
-                    if (entry.isDirectory()) {
-                        continue;
-                    }
-                    if (entryName.equals(entry.getName())) {
-                        continue;
-                    }
-                    ZipEntry outEntry = new ZipEntry(entry.getName());
-                    zos.putNextEntry(outEntry);
-                    int read;
-                    while ((read = zis.read(buffer)) != -1) {
-                        zos.write(buffer, 0, read);
-                    }
-                    zos.closeEntry();
-                }
-                ZipEntry binEntry = new ZipEntry(entryName);
-                zos.putNextEntry(binEntry);
-                DataOutputStream out = new DataOutputStream(zos);
+            try (DataOutputStream out = openBinOutputStream(temp.toFile(), binFile.getName().endsWith(EXT_ZST))) {
                 writer.write(out);
                 out.flush();
-                zos.closeEntry();
             }
-            Files.move(temp, zipFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            Files.move(temp, binFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -498,12 +522,31 @@ public class IOMarket {
         }
     }
 
+    private static void convertZipToBinZst(File zipFile, File binZstFile, String type) throws IOException {
+        if ("trades".equals(type)) {
+            buildTradeBinFromZip(zipFile, binZstFile);
+        } else if ("klines".equals(type)) {
+            buildKlineBinFromZip(zipFile, binZstFile);
+        } else {
+            throw new IOException("Tipo no soportado: " + type);
+        }
+    }
+
+    private static void safeDelete(File file) {
+        if (file == null) return;
+        try {
+            Files.deleteIfExists(file.toPath());
+        } catch (IOException ignored) {
+            // no-op
+        }
+    }
+
     private static void buildTradeBinFromZip(File zipFile, File binFile) throws IOException {
         if (binFile.getParentFile() != null) {
             Files.createDirectories(binFile.getParentFile().toPath());
         }
         try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), (1 << 20) * BUFFER_READ_MB));
-             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(binFile), (1 << 20) * BUFFER_READ_MB))) {
+             DataOutputStream out = openBinOutputStream(binFile, binFile.getName().endsWith(EXT_ZST))) {
             out.writeInt(TRADE_BIN_MAGIC);
             out.writeInt(BIN_VERSION);
             ZipEntry entry;
@@ -531,7 +574,7 @@ public class IOMarket {
             Files.createDirectories(binFile.getParentFile().toPath());
         }
         try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zipFile), (1 << 20) * BUFFER_READ_MB));
-             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(binFile), (1 << 20) * BUFFER_READ_MB))) {
+             DataOutputStream out = openBinOutputStream(binFile, binFile.getName().endsWith(EXT_ZST))) {
             out.writeInt(KLINE_BIN_MAGIC);
             out.writeInt(BIN_VERSION);
             ZipEntry entry;
@@ -565,16 +608,40 @@ public class IOMarket {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     public static void extractFirstBin(Path folder) throws IOException {
-        Vesta.info("ℹ️ Comenzado extracción en " + folder);
+        Vesta.info("Comenzando extraccion en " + folder);
         if (!Files.isDirectory(folder)) {
             throw new IllegalArgumentException("No es una carpeta");
         }
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.zip")) {
-            for (Path zipPath : stream) {
-                Vesta.info("📦 Extrayendo de " + zipPath.toString());
-                extractBinFromZip(zipPath);
+        boolean extracted = false;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*" + EXT_BIN_ZST)) {
+            for (Path binPath : stream) {
+                extracted = true;
+                Vesta.info("Extrayendo de " + binPath.toString());
+                extractBinFromZst(binPath);
             }
         }
+        if (!extracted) {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*" + EXT_ZIP)) {
+                for (Path zipPath : stream) {
+                    Vesta.info("Extrayendo de " + zipPath.toString());
+                    extractBinFromZip(zipPath);
+                }
+            }
+        }
+    }
+
+    private static void extractBinFromZst(Path binZstPath) throws IOException {
+        String name = binZstPath.getFileName().toString();
+        String outName = name.endsWith(EXT_ZST) ? name.substring(0, name.length() - EXT_ZST.length()) : name;
+        Path outputPath = binZstPath.getParent().resolve(outName);
+        try (InputStream in = new ZstdInputStream(new BufferedInputStream(Files.newInputStream(binZstPath), (1 << 20) * BUFFER_READ_MB));
+             OutputStream out = new BufferedOutputStream(Files.newOutputStream(
+                     outputPath,
+                     StandardOpenOption.CREATE,
+                     StandardOpenOption.TRUNCATE_EXISTING), (1 << 20) * BUFFER_READ_MB)) {
+            copyStream(in, out);
+        }
+        System.out.println("Extraido: " + outputPath);
     }
 
     private static void extractBinFromZip(Path zipPath) throws IOException {
@@ -599,10 +666,12 @@ public class IOMarket {
                     }
 
                     // Solo el primer .bin
-                    System.out.println("Extraído: " + outputPath);
+                    System.out.println("Extraido: " + outputPath);
                     break;
                 }
             }
         }
     }
 }
+
+

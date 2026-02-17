@@ -1,8 +1,6 @@
 package xyz.cereshost.utils;
 
 
-import ai.djl.training.Trainer;
-import ai.djl.training.listener.TrainingListener;
 import ai.djl.util.Pair;
 import lombok.AccessLevel;
 import lombok.Data;
@@ -24,7 +22,7 @@ import java.util.function.BiFunction;
 @SuppressWarnings("DataFlowIssue")
 @Getter
 @Setter
-public class TrainingData implements TrainingListener {
+public class TrainingData {
 
     private static final int INDEX_FOR_VALIDATION = 0;
     private static final int INDEX_FOR_TEST = 1;
@@ -159,6 +157,21 @@ public class TrainingData implements TrainingListener {
         }
     }
 
+    public void closePosTraining(){
+        trainNormalize = null;
+        valNormalize = null;
+        pair = null;
+        pairsLoaded.clear();
+    }
+
+    public void closeAll(){
+        trainNormalize = null;
+        valNormalize = null;
+        testNormalize = null;
+        pair = null;
+        pairsLoaded.clear();
+    }
+
     private @NotNull Pair<float[][][], float[][]> getPairNormalizeFromDisk(@Nullable Path files) {
 
         try {
@@ -271,15 +284,8 @@ public class TrainingData implements TrainingListener {
     public void preLoad(int amount, ModeData mode){
         this.modeData = mode;
         maxLoaded = amount;
-        switch (mode){
-            case RAMDOM -> this.random = new Random();
-            case CHANGE_WHEN_MEMORIZING -> this.autoStopListener = new AutoStopListener(() -> {
-                index++;
-                autoStopListener.reset();
-                var v = pairsLoaded.pollFirst();
-                pairsLoaded.clear();
-                pairsLoaded.add(v);
-            });
+        if (Objects.requireNonNull(mode) == ModeData.RAMDOM) {
+            this.random = new Random();
         }
         if (files != null){
             List<Path> trainingList = files.subList(2, files.size());
@@ -385,22 +391,6 @@ public class TrainingData implements TrainingListener {
         return new Normalize(xNormalizer, yNormalizer, X_train_norm.get(), X_val_norm.get(), X_test_norm.get(), y_train_norm.get(), y_val_norm.get(), y_test_norm.get());
     }
 
-    public void onEpoch(Trainer trainer) {
-        if (autoStopListener != null) autoStopListener.onEpoch(trainer);
-    }
-
-    @Override
-    public void onTrainingBatch(Trainer trainer, BatchData batchData) {}
-
-    @Override
-    public void onValidationBatch(Trainer trainer, BatchData batchData) {}
-
-    @Override
-    public void onTrainingBegin(Trainer trainer) {}
-
-    @Override
-    public void onTrainingEnd(Trainer trainer) {}
-
     public IOdata.CacheProperties getCacheProperties(List<String> market) {
         return new IOdata.CacheProperties(lookback, features, yCols, market, Main.MAX_MONTH_TRAINING, samplesSize);
     }
@@ -440,7 +430,6 @@ public class TrainingData implements TrainingListener {
     public enum ModeData{
         SECUENCIAL,
         RAMDOM,
-        CHANGE_WHEN_MEMORIZING
     }
 
 }

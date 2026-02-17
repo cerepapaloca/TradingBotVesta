@@ -7,6 +7,7 @@ import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.io.IOdata;
+import xyz.cereshost.strategy.AlfaStrategy;
 import xyz.cereshost.utils.ChartUtils;
 import xyz.cereshost.utils.EngineUtils;
 import xyz.cereshost.engine.PredictionEngine;
@@ -26,8 +27,8 @@ public class Main {
 
     public static final String NAME_MODEL = "VestaIA";
 
-    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "XRPUSDT"/* "BNBUSDT"*/);
-    public static final String SYMBOL = "XRPUSDT";
+    public static final List<String> SYMBOLS_TRAINING = List.of(/*"SOLUSDT/*/ "ETHUSDT"/* "BNBUSDT"*/);
+    public static final String SYMBOL = "ETHUSDT";
     @NotNull
     public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.LOCAL_ZIP;
     @NotNull
@@ -54,7 +55,7 @@ public class Main {
                 //checkEngines();
 
 
-                VestaEngine.TrainingTestsResults result = VestaEngine.trainingModel(symbols);
+                VestaEngine.TrainingTestsResults result = VestaEngine.trainingModel(List.of(SYMBOL));
                 EngineUtils.ResultsEvaluate evaluateResult = result.evaluate();
                 BackTestEngine.BackTestResult backtestResult = result.backtest();
 
@@ -102,8 +103,8 @@ public class Main {
 //                                new ChartUtils.DataPlot("Real", resultPrediction.stream().map(EngineUtils.ResultPrediction::realDir).toList())
 //                        ));
             }
-            case "backtest" -> showDataBackTest(new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, SYMBOL).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new BetaStrategy()).run());
-            case "trading" -> new TradingLoopBinance(SYMBOL, PredictionEngine.loadPredictionEngine("VestaIA"), new DefaultStrategy()).startCandleLoop();
+            case "backtest" -> showDataBackTest(new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, SYMBOL).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new AlfaStrategy()).run());
+            case "trading" -> new TradingLoopBinance(SYMBOL, PredictionEngine.loadPredictionEngine("VestaIA"), new AlfaStrategy()).startCandleLoop();
             case "extract" -> IOMarket.extractFirstBin(Path.of(IOMarket.STORAGE_DIR + "\\" + SYMBOL +"\\trades"));
         }
     }

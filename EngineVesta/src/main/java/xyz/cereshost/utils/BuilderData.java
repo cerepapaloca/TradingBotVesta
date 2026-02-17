@@ -25,20 +25,26 @@ import xyz.cereshost.io.IOdata;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
+    public static final int DEFAULT_FUTURE_WINDOW = 3;
+
     public static @NotNull TrainingData buildTrainingData(@NotNull List<String> symbols, int maxMonth, int offset) {
         List<PairCache> cacheEntries = new ArrayList<>();
         long time = System.currentTimeMillis();
         List<CompletableFuture<Object>> waitingCacheSave = new ArrayList<>();
+        int futureWindow = DEFAULT_FUTURE_WINDOW;
         for (String symbol : symbols) {
             try {
                 List<Candle> allCandlesForChart = new ArrayList<>();
@@ -52,24 +58,44 @@ public class BuilderData {
                         .toList();
 
                 // Crear lista de futuros para procesar cada mes de forma asincrónica
+                AtomicInteger totalDays = new AtomicInteger();;
+                AtomicInteger doneDays = new AtomicInteger();
                 List<CompletableFuture<MonthMarketCache>> futures = new ArrayList<>();
                 for (int month = maxMonth + offset; month > offset; month--) {
                     final int currentMonth = month;
+                    YearMonth targetMonth = IOMarket.resolveMonthFromIndex(currentMonth);
+                    int daysInMonth = targetMonth.lengthOfMonth();
+                    totalDays.addAndGet(daysInMonth);
                     CompletableFuture<MonthMarketCache> future = CompletableFuture.supplyAsync(() -> {
                         try {
                             System.gc();
-                            Vesta.info("(idx:%d) ⬆️ Comenzado carga de datos", currentMonth);
-                            Market market = IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, currentMonth);
-                            Vesta.info("(idx:%d) 📊 Convirtiendo velas (C:%d)", currentMonth, market.getCandleSimples().size());
-                            List<Candle> candlesThisMonth = BuilderData.to1mCandles(market);
+                            Vesta.info("(idx:%d) Comenzado carga de datos", currentMonth);
 
-                            market.clear();
+                            List<Candle> candlesThisMonth = new ArrayList<>(daysInMonth * 1500);
+                            for (int day = 1; day <= daysInMonth; day++) {
+                                LocalDate date = targetMonth.atDay(day);
+                                int dayIndex = IOMarket.resolveDayIndex(date);
+                                Vesta.info("(idx:%d) ⬆️ Cargando dia %s", currentMonth, date);
+                                Market market = IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_TRAINING_MODEL, symbol, dayIndex);
+                                if (market == null) {
+                                    Vesta.warning("(idx:%d) Mercado vacio para %s", currentMonth, date);
+                                    continue;
+                                }
+                                Vesta.info("(idx:%d) 📊 Convirtiendo velas (dia %s, C:%d)", currentMonth, date, market.getCandleSimples().size());
+                                List<Candle> candlesDay = BuilderData.to1mCandles(market, futureWindow);
+                                market.clear();
+                                if (!candlesDay.isEmpty()) {
+                                    candlesThisMonth.addAll(candlesDay);
+                                }
+                                doneDays.getAndIncrement();
+                                Vesta.info("(idx:%d) (%d/%d) (%d/%d) ✅ Dia cargado", currentMonth, day, daysInMonth, doneDays.get(), totalDays.get());
+                            }
                             if (candlesThisMonth.size() <= LOOK_BACK + 2) {
                                 Vesta.warning("(idx:%d) insuficiente historial: " + candlesThisMonth.size() + " velas", currentMonth);
                                 return new MonthMarketCache(0, 0, 0, 0, candlesThisMonth, false);
                             }
                             Vesta.info("(idx:%d) 📦 Exportando Pair (C:%d)", currentMonth, candlesThisMonth.size());
-                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, 20);
+                            Pair<float[][][], float[][]> pair = BuilderData.build(candlesThisMonth, LOOK_BACK, futureWindow);
                             float[][][] Xraw = addSymbolFeature(pair.getKey(), symbol);
                             float[][] yraw = pair.getValue();
                             if (Xraw.length == 0) {
@@ -282,13 +308,17 @@ public class BuilderData {
                 minValue = minBody;
             }
 
-            double maxLog = (entryPrice > 0 && maxValue > 0) ? Math.log(maxValue / entryPrice) : 0.0;
-            double minLog = (entryPrice > 0 && minValue > 0) ? Math.log(minValue / entryPrice) : 0.0;
-
-            // 3. ASIGNACION DE ETIQUETAS (Y): [Max, Min, 0, 0, 0]
-            y[i][0] = (float) maxLog;
-            y[i][1] = Math.abs((float) minLog);
-            y[i][2] = 0f;
+            // 3. ASIGNACION DE ETIQUETAS (Y):
+            // 1° output: longitud total entre máximos y mínimos (mechas), normalizada por entryPrice
+            double totalMove = upMove + downMove;
+            y[i][0] = (float) ((entryPrice > 0) ? Math.max(0.0, totalMove / entryPrice) : 0.0);
+            // 2° output: sin uso
+            y[i][1] = 0f;
+            // 3° output: proporción [-1,1] (positivo si domina el mínimo, negativo si domina el máximo)
+            double maxMove = Math.max(upMove, downMove);
+            double ratio = maxMove > 0 ? (downMove - upMove) / maxMove : 0.0;
+            y[i][2] = (float) -ratio; // Cuando es negativo es Short y si es positio es long
+            // 4° y 5° outputs: sin uso
             y[i][3] = 0f;
             y[i][4] = 0f;
         }
@@ -297,6 +327,10 @@ public class BuilderData {
     }
 
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
+        return to1mCandles(market, DEFAULT_FUTURE_WINDOW);
+    }
+
+    public static @NotNull List<Candle> to1mCandles(@NotNull Market market, int futureWindow) {
 
         //market.sortd();
         int remove = 0;
@@ -481,7 +515,9 @@ public class BuilderData {
                         facadeBand.lower().getValue(idx).doubleValue(),
                         facadeBand.bandwidth().getValue(idx).doubleValue(),
                         facadeBand.percentB().getValue(idx).doubleValue(),
-                        atr14.getValue(idx).doubleValue()
+                        atr14.getValue(idx).doubleValue(),
+                        0.0,
+                        0.0
                 ));
             } catch (IllegalArgumentException ignored) {
                 remove++;
@@ -490,7 +526,77 @@ public class BuilderData {
         }
         closes.clear();
         Vesta.info("Se elimino %d por dar resultado NA o Infinito", remove);
-        return candles;
+
+        if (futureWindow <= 0 || candles.isEmpty()) {
+            return candles;
+        }
+
+        List<Candle> withFuture = new ArrayList<>(candles.size());
+        for (int i = 0; i < candles.size(); i++) {
+            Candle c = candles.get(i);
+
+            double futureRange = 0.0;
+            double futureRatio = 0.0;
+            if (i >= futureWindow) {
+                double entryPrice = c.close();
+                if (entryPrice > 0.0) {
+                    double maxWick = -Double.MAX_VALUE;
+                    double minWick = Double.MAX_VALUE;
+                    for (int f = i - futureWindow; f < i; f++) {
+                        Candle past = candles.get(f);
+                        if (past.high() > maxWick) maxWick = past.high();
+                        if (past.low() < minWick) minWick = past.low();
+                    }
+                    double upMove = Math.abs(maxWick - entryPrice);
+                    double downMove = Math.abs(entryPrice - minWick);
+                    double totalMove = upMove + downMove;
+                    futureRange = totalMove / entryPrice;
+                    double maxMove = Math.max(upMove, downMove);
+                    double ratio = maxMove > 0.0 ? (downMove - upMove) / maxMove : 0.0;
+                    futureRatio = -ratio; // positivo = long, negativo = short
+                }
+            }
+
+            withFuture.add(new Candle(
+                    c.openTime(),
+                    c.open(),
+                    c.high(),
+                    c.low(),
+                    c.close(),
+                    c.direccion(),
+                    c.amountTrades(),
+                    c.volumeBase(),
+                    c.quoteVolume(),
+                    c.buyQuoteVolume(),
+                    c.sellQuoteVolume(),
+                    c.volRatioToMean(),
+                    c.volZscore(),
+                    c.volPerAtr(),
+                    c.deltaUSDT(),
+                    c.buyRatio(),
+                    c.bidLiquidity(),
+                    c.askLiquidity(),
+                    c.depthImbalance(),
+                    c.midPrice(),
+                    c.spread(),
+                    c.rsi4(),
+                    c.rsi8(),
+                    c.rsi16(),
+                    c.macdVal(),
+                    c.macdSignal(),
+                    c.macdHist(),
+                    c.nvi(),
+                    c.upperBand(),
+                    c.middleBand(),
+                    c.lowerBand(),
+                    c.bandwidth(),
+                    c.percentB(),
+                    c.atr14(),
+                    futureRange,
+                    futureRatio
+            ));
+        }
+        return withFuture;
     }
 
 
@@ -653,13 +759,14 @@ public class BuilderData {
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
                 1,1,1, 1, 1, 1, 1,1,1,1,1,
-                        1, 1 ,1 ,1, 1),
+                        1, 1 ,1 ,1, 1, 0, 0),
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
                 1,1,1, 1, 1, 1,1,1,1,1,1, 1,
-                        1,1,1, 1)
+                        1,1,1, 1, 0, 0)
         ).length + 2; // más 2 por que tiene sumar el feature del símbolo en el que esta y todos los símbolos que puede estar
     }
 
 }
+

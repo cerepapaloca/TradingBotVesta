@@ -7,16 +7,21 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.index.NDIndex;
 import ai.djl.ndarray.types.Shape;
+import ai.djl.nn.Block;
+import ai.djl.nn.Parameter;
 import ai.djl.training.Trainer;
 import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.training.dataset.Dataset;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.trading.Trading;
+import xyz.cereshost.utils.PredictionUtils;
 
 import java.io.IOException;
 import java.nio.FloatBuffer;
@@ -29,6 +34,7 @@ import static xyz.cereshost.engine.PredictionEngine.THRESHOLD_RELATIVE;
 public class EngineUtils {
 
     public static final float MIN_DIRECTION_RATIO = 2.0f;
+    public static final float THRESHOLD_RATIO = 0.5f;
 
     public record DirectionFilterResult(
             int direction,
@@ -68,14 +74,8 @@ public class EngineUtils {
         return new DirectionFilterResult(direction, absMax, absMin, ratio, confidence);
     }
 
-    public static float @NotNull [] directionToOneHot(int direction) {
-        if (direction > 0) {
-            return new float[]{1f, 0f, 0f};
-        }
-        if (direction < 0) {
-            return new float[]{0f, 0f, 1f};
-        }
-        return new float[]{0f, 1f, 0f};
+    public static int directionFromRatio(float ratio) {
+        return PredictionUtils.directionFromRatioThreshold(ratio, THRESHOLD_RATIO);
     }
 
     public static @NotNull Trading.DireccionOperation directionToOperation(int direction) {
@@ -295,8 +295,8 @@ public class EngineUtils {
             int chunkSize // Recomendado: 512 o 1024
     ) {
         long totalSamples = X_test.getShape().get(0);
-        int targetCols = (int) y_test.getShape().get(1); // Dinamico: usualmente 5 [Max, Min, 0, 0, 0]
-        int predCols = 5; // Formato Vesta: [Max, Min, 0, 0, 0]
+        int targetCols = (int) y_test.getShape().get(1); // Dinamico: usualmente 5
+        int predCols = 5; // Formato Vesta: 5 salidas
 
         double totalMaeUP = 0;
         double totalMaeDOWN = 0;
@@ -325,45 +325,42 @@ public class EngineUtils {
                     int targetIdx = i * targetCols;
                     int predIdx = i * predCols;
 
-                    // Extraer Target (ajusta los indices segun tu estructura real)
-                    float rawRealTP = yTestFlat[targetIdx];
-                    float rawRealSL = yTestFlat[targetIdx + 1];
+                    // Extraer Target: output0 (magnitud total) y output2 (ratio)
+                    float rawRealMag = yTestFlat[targetIdx];
+                    float rawRealRatio = yTestFlat[targetIdx + 2];
 
                     // Extraer Prediccion
-                    float rawPredTP = yPredFlat[predIdx];
-                    float rawPredSL = yPredFlat[predIdx + 1];
+                    float rawPredMag = yPredFlat[predIdx];
+                    float rawPredRatio = yPredFlat[predIdx + 2];
 
-                    // 5. Desnormalizacion (TP y SL)
-                    float[][] denormTarget = yNormalizer.inverseTransform(new float[][]{{rawRealTP, rawRealSL, 0, 0, 0}});
-                    float[][] denormPred = yNormalizer.inverseTransform(new float[][]{{rawPredTP, rawPredSL, 0, 0, 0}});
+                    // 5. Desnormalizacion (solo output0)
+                    float[][] denormTarget = yNormalizer.inverseTransform(new float[][]{{rawRealMag, 0, 0, 0, 0}});
+                    float[][] denormPred = yNormalizer.inverseTransform(new float[][]{{rawPredMag, 0, 0, 0, 0}});
 
-                    float realTP = denormTarget[0][0];
-                    float realSL = denormTarget[0][1];
-                    float predTP = denormPred[0][0];
-                    float predSL = denormPred[0][1];
+                    float realTotal = Math.max(0f, denormTarget[0][0]);
+                    float predTotal = Math.max(0f, denormPred[0][0]);
+                    float realRatio = PredictionUtils.clampRatio(rawRealRatio);
+                    float predRatio = PredictionUtils.clampRatio(rawPredRatio);
 
-                    DirectionFilterResult realDecision = filterDirectionByExtremes(realTP, realSL);
-                    DirectionFilterResult predDecision = filterDirectionByExtremes(predTP, predSL);
-                    float rawRealDir = realDecision.direction();
-                    float predDirection = predDecision.direction();
-                    float[] predOneHot = directionToOneHot(predDecision.direction());
-                    float[] realOneHot = directionToOneHot(realDecision.direction());
+                    float[] realMoves = PredictionUtils.splitMoves(realTotal, realRatio);
+                    float[] predMoves = PredictionUtils.splitMoves(predTotal, predRatio);
+                    float realUp = realMoves[0];
+                    float realDown = realMoves[1];
+                    float predUp = predMoves[0];
+                    float predDown = predMoves[1];
+
+                    float rawRealDir = realRatio;
+                    float predDirection = predRatio;
 
                     // 6. Acumular metricas
-                    totalMaeUP += Math.abs(realTP - predTP);
-                    totalMaeDOWN += Math.abs(realSL - predSL);
+                    totalMaeUP += Math.abs(realUp - predUp);
+                    totalMaeDOWN += Math.abs(realDown - predDown);
                     totalMaeDir += Math.abs(rawRealDir - predDirection);
 
                     // 7. Guardar resultado individual
                     allResults.add(new ResultEvaluate(
-                            predTP, predSL, predDirection,
-                            realTP, realSL, rawRealDir,
-                            predOneHot[0],
-                            realOneHot[0],
-                            predOneHot[1],
-                            realOneHot[1],
-                            predOneHot[2],
-                            realOneHot[2],
+                            predUp, predDown, predDirection,
+                            realUp, realDown, rawRealDir,
                             start + i // Indice global
                     ));
                 }
@@ -380,7 +377,7 @@ public class EngineUtils {
 
         Vesta.info("Evaluacion Finalizada -> MAE TP: %.6f, MAE SL: %.6f, MAE Dir: %.6f", avgMaeUP, avgMaeDOWN, avgMaeDir);
 
-        return new ResultsEvaluate("VestaIA_Chunked", avgMaeUP, avgMaeDOWN, allResults);
+        return new ResultsEvaluate("VestaIA", avgMaeUP, avgMaeDOWN, allResults);
     }
 
     public record ResultsEvaluate(
@@ -403,7 +400,7 @@ public class EngineUtils {
 
             }
             int total = fails + hits;
-            return total > 0 ? ((float) hits / total) *100 : 0;
+            return total > 0 ? ((float) hits / total) *100 : -1;
         }
 
         public float hitRateAdvanced() {
@@ -411,25 +408,26 @@ public class EngineUtils {
             int total = 0;
 
             for (ResultEvaluate prediction : resultEvaluate) {
-                ;
-                if (filterDirectionByExtremes(prediction.realTP(), prediction.realSL()).toOperation().equals(filterDirectionByExtremes(prediction.predTP(), prediction.predSL()).toOperation())) {
+                int realDir = directionFromRatio(prediction.getRealDir());
+                int predDir = directionFromRatio(prediction.getPredDir());
+                if (realDir == predDir) {
                     hits++;
                 }
                 total++;
             }
 
-            return total > 0 ? ((float) hits / total) * 100 : 0;
+            return total > 0 ? ((float) hits / total) * 100 : -1;
         }
 
         public float hitRateSafe() {
             int hits = 0;
             int fails = 0;
 
-            float threshold = (float) THRESHOLD_RELATIVE;
+            float threshold = THRESHOLD_RATIO;
 
             for (ResultEvaluate prediction : resultEvaluate) {
-                float pred = prediction.predDir();
-                float real = prediction.realDir();
+                float pred = prediction.getPredDir();
+                float real = prediction.getRealDir();
                 if (real > threshold) { // Long real
                     if (pred > threshold) hits++;
                     else fails++;
@@ -443,13 +441,13 @@ public class EngineUtils {
 
             int total = hits + fails;
             // A / (A + B) * 100
-            return total > 0 ? ((float) hits / total) * 100f : 0f;
+            return total > 0 ? ((float) hits / total) * 100f : -1f;
         }
 
         public int @NotNull [] hitRateLongOneFloat() {
             int[] hits = new int[3];
             for (ResultEvaluate prediction : resultEvaluate){
-                if (prediction.realDir() > THRESHOLD_RELATIVE){
+                if (prediction.getRealDir() > THRESHOLD_RATIO){
                     computeDir(hits, prediction);
                 }
             }
@@ -459,7 +457,7 @@ public class EngineUtils {
         public int @NotNull [] hitRateShortOneFloat() {
             int[] hits = new int[3];
             for (ResultEvaluate prediction : resultEvaluate){
-                if (prediction.realDir() < -THRESHOLD_RELATIVE){
+                if (prediction.getRealDir() < -THRESHOLD_RATIO){
                     computeDir(hits, prediction);
                 }
             }
@@ -469,7 +467,7 @@ public class EngineUtils {
         public int @NotNull [] hitRateNeutralOneFloat() {
             int[] hits = new int[3];
             for (ResultEvaluate prediction : resultEvaluate){
-                if (prediction.realDir() > -THRESHOLD_RELATIVE && prediction.realDir() < THRESHOLD_RELATIVE) {
+                if (prediction.getRealDir() > -THRESHOLD_RATIO && prediction.getRealDir() < THRESHOLD_RATIO) {
                     computeDir(hits, prediction);
                 }
             }
@@ -498,8 +496,8 @@ public class EngineUtils {
             float threshold = (float) THRESHOLD_RELATIVE;
 
             for (ResultEvaluate prediction : resultEvaluate) {
-                float pred = prediction.predDir();
-                float real = prediction.realDir();
+                float pred = prediction.getPredDir();
+                float real = prediction.getRealDir();
 
                 // 1. FILTRO DE CONFIANZA:
                 // Solo evaluamos si el valor absoluto de la predicción supera el mínimo (ej: 0.7)
@@ -519,8 +517,8 @@ public class EngineUtils {
         }
 
         private void computeDir(int[] hits, @NotNull EngineUtils.ResultEvaluate prediction) {
-            boolean signalLong = prediction.predDir() > THRESHOLD_RELATIVE;
-            boolean signalShort = prediction.predDir() < -THRESHOLD_RELATIVE;
+            boolean signalLong = prediction.getPredDir() > THRESHOLD_RATIO;
+            boolean signalShort = prediction.getPredDir() < -THRESHOLD_RATIO;
             if (signalLong) {
                 hits[0]++; // Long
             } else if (signalShort) {
@@ -532,20 +530,34 @@ public class EngineUtils {
 
     }
 
-    public record ResultEvaluate(
-            float predTP, float predSL, float predDir,
-            float realTP, float realSL, float realDir,
-            float predLongSing, float realLongSing,
-            float predNeutralSing, float realNeutralSing,
-            float predShortSing, float realShortSing,
-            long timestamp
-    ) {
+    @Data
+    @EqualsAndHashCode(callSuper = true)
+    public static class ResultEvaluate extends PredictionEngine.PredictionResult {
+        private final float predDir;
+        private final float realTP;
+        private final float realSL;
+        private final float realDir;
+        private final long timestamp;
+
+        public ResultEvaluate(
+                float predTP, float predSL, float predDir,
+                float realTP, float realSL, float realDir,
+                long timestamp
+        ) {
+            super(0d, predTP, predSL, 0d, 0d, Math.abs(predDir), directionFromRatio(predDir));
+            this.predDir = predDir;
+            this.realTP = realTP;
+            this.realSL = realSL;
+            this.realDir = realDir;
+            this.timestamp = timestamp;
+        }
+
         public float lsDiff() {
-            return realSL - predSL;
+            return realSL - (float) getSlPrice();
         }
 
         public float tpDiff() {
-            return realTP - predTP;
+            return realTP - (float) getTpPrice();
         }
 
         public float dirDiff() {
@@ -553,31 +565,12 @@ public class EngineUtils {
         }
 
         public Trading.DireccionOperation getRealDirection() {
-            return getDireccion(realLongSing, realNeutralSing, realShortSing);
+            return directionToOperation(directionFromRatio(realDir));
         }
 
         public Trading.DireccionOperation getPredDirection() {
-            return getDireccion(predLongSing, predNeutralSing, predShortSing);
+            return directionToOperation(directionFromRatio(predDir));
         }
-    }
-
-    public static Trading.DireccionOperation getDireccion(float... sings) {
-
-        int maxIndex = 0;
-        float maxValue = sings[0];
-
-        for (int i = 1; i < sings.length; i++) {
-            if (sings[i] > maxValue) {
-                maxValue = sings[i];
-                maxIndex = i;
-            }
-        }
-        return switch (maxIndex) {
-            case 0 -> Trading.DireccionOperation.LONG;
-            case 1 -> Trading.DireccionOperation.NEUTRAL;
-            case 2 -> Trading.DireccionOperation.SHORT;
-            default -> throw new IllegalStateException("Unexpected value: " + maxIndex);
-        };
     }
 
     private static float[][][] extractSplit3D(float[][][] data, int startIndex, int endIndex) {
@@ -660,5 +653,44 @@ public class EngineUtils {
             ndArray.close();
         }
         cacheFloatsStatic.clear();
+    }
+
+
+    public void summary(Block modelo) {
+        System.out.println("-------------------------------------------------------------------");
+        System.out.printf("%-35s %-15s %-15s\n", "Capa (Tipo)", "Forma Salida", "Parámetros #");
+        System.out.println("===================================================================");
+
+        long totalParametros = 0;
+
+        // getChildren() nos permite ver los bloques que componen el modelo
+        for (Pair<String, Block> par : modelo.getChildren()) {
+            String nombreCapa = par.getKey();
+            Block capa = par.getValue();
+            String tipoCapa = capa.getClass().getSimpleName();
+
+            long parametrosCapa = 0;
+
+            // Recolectamos los parámetros específicos de esta capa
+            for (Parameter param : capa.getParameters().values()) {
+                if (param.isInitialized()) {
+                    parametrosCapa += param.getArray().getShape().size();
+                }
+            }
+            totalParametros += parametrosCapa;
+
+            // Formateamos el nombre para que se vea limpio (Ej: "Linear_1 (Linear)")
+            String nombreMostrado = nombreCapa + " (" + tipoCapa + ")";
+
+            // La forma de salida se marca como Dinámica por la naturaleza de DJL
+            // a menos que uses un ShapeRecordingNDManager durante un forward pass.
+            String formaSalida = "Dinámica";
+
+            Vesta.info("%-35s %-15s %-15,d", nombreMostrado, formaSalida, parametrosCapa);
+        }
+
+        Vesta.info("===================================================================");
+        Vesta.info("Total de parámetros: %,d\n", totalParametros);
+        Vesta.info("-------------------------------------------------------------------");
     }
 }

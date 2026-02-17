@@ -12,7 +12,8 @@ public class AutoStopListener extends TrainingListenerAdapter {
     private float lossLast = Float.MAX_VALUE;
 
     private static final float THRESHOLD_STOP = 6f;
-    private int epoch = 0;
+    private static final int MAX_GAMMA = 3;
+    private static final int MAX_BETA = 25;
     private final Runnable onStop;
 
     public AutoStopListener(){
@@ -30,8 +31,8 @@ public class AutoStopListener extends TrainingListenerAdapter {
     public void onEpoch(Trainer trainer) {
         var result = trainer.getTrainingResult();
 
-        float minValidation = result.getValidateEvaluation("min_diff");
-        float maxValidation = result.getValidateEvaluation("max_diff");
+        float minValidation = result.getValidateEvaluation("relative_diff");
+        float maxValidation = result.getValidateEvaluation("distance_diff");
         float lossValidation = result.getValidateLoss();
 
         if (minLast != Float.MAX_VALUE &&  maxLast!= Float.MAX_VALUE &&  lossLast != Float.MAX_VALUE) {
@@ -40,20 +41,19 @@ public class AutoStopListener extends TrainingListenerAdapter {
             float diffLoss = ((lossValidation - lossLast)/ lossLast)*100;
             float total = (diffMax + diffMin) + diffLoss*2;
             if (total > THRESHOLD_STOP*4) {
-                if (gamma > 2){
+                if (gamma > MAX_GAMMA){
                     onStop.run();
                 }
                 gamma++;
             }else gamma = 0;
             if (total > 0){
-                if (beta > 30){
+                if (beta > MAX_BETA){
                     onStop.run();
                 }
                 beta++;
             } else beta = 0;
             Vesta.info("Gamma:%d Beta:%d | %s %s %s = %s<%s".formatted(gamma, beta, diffMax, diffMin, diffLoss, (diffMax + diffMin) + diffLoss * 2, THRESHOLD_STOP * 4));
         }
-        epoch++;
         if (minLast > minValidation) minLast = minValidation;
         if (maxLast > maxValidation) maxLast = maxValidation;
         if (lossLast > lossValidation) lossLast = lossValidation;
@@ -63,8 +63,8 @@ public class AutoStopListener extends TrainingListenerAdapter {
         minLast = Float.MAX_VALUE;
         maxLast = Float.MAX_VALUE;
         lossLast = Float.MAX_VALUE;
-        epoch = 0;
         gamma = 0;
+        beta = 0;
     }
 
 }
