@@ -1,12 +1,15 @@
 package xyz.cereshost.strategy;
 
 import org.jetbrains.annotations.NotNull;
+import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.trading.Trading;
 
+import java.util.List;
+
 public class AlfaStrategy implements TradingStrategy {
     @Override
-    public void executeStrategy(PredictionEngine.@NotNull PredictionResult pred, Trading operations) {
+    public void executeStrategy(PredictionEngine.@NotNull PredictionResult pred, List<Candle> visibleCandles, Trading operations) {
         for (Trading.OpenOperation o : operations.getOpens()){
             if (o.getCountCandles() >= 60){
                 operations.close(Trading.ExitReason.TIMEOUT, o.getUuid());
@@ -30,5 +33,10 @@ public class AlfaStrategy implements TradingStrategy {
         }else {
             operations.log("No cumple con los mínimos para operar");
         }
+    }
+
+    @Override
+    public void closeOperation(Trading.CloseOperation closeOperation) {
+
     }
 }

@@ -10,6 +10,9 @@ import org.ta4j.core.indicators.ATRIndicator;
 import org.ta4j.core.indicators.RSIIndicator;
 import org.ta4j.core.indicators.bollinger.*;
 import org.ta4j.core.indicators.helpers.ClosePriceIndicator;
+import org.ta4j.core.indicators.supertrend.SuperTrendIndicator;
+import org.ta4j.core.indicators.supertrend.SuperTrendLowerBandIndicator;
+import org.ta4j.core.indicators.supertrend.SuperTrendUpperBandIndicator;
 import org.ta4j.core.indicators.volume.NVIIndicator;
 import org.ta4j.core.num.DecimalNum;
 import org.ta4j.core.num.Num;
@@ -39,7 +42,7 @@ import static xyz.cereshost.engine.VestaEngine.LOOK_BACK;
 
 public class BuilderData {
 
-    public static final int DEFAULT_FUTURE_WINDOW = 5;
+    public static final int DEFAULT_FUTURE_WINDOW = 30;
 
     public static @NotNull TrainingData buildTrainingData(@NotNull List<String> symbols, int maxMonth, int offset) {
         List<PairCache> cacheEntries = new ArrayList<>();
@@ -200,35 +203,36 @@ public class BuilderData {
         // Cargar la cache guardada
 
 
-        if (maxMonth > 5){
-            return new TrainingData(cacheEntries.stream().map(PairCache::getCacheFile).toList(), totalSamples, seqLen, features, yCols);
-        }else {
-            int currentIdx = 0;
-            float[][][] X_final = new float[totalSamples][seqLen][features];
-            float[][] y_final = new float[totalSamples][yCols];
-            for (PairCache entry : cacheEntries) {
-                try {
-                    Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(entry.cacheFile);
-                    float[][][] xPart = pair.getKey();
-                    float[][] yPart = pair.getValue();
-                    pair = null;
-                    int len = xPart.length;
+//        if (maxMonth > 5){
+//        }else {
+//            int currentIdx = 0;
+//            float[][][] X_final = new float[totalSamples][seqLen][features];
+//            float[][] y_final = new float[totalSamples][yCols];
+//            for (PairCache entry : cacheEntries) {
+//                try {
+//                    Pair<float[][][], float[][]> pair = IOdata.loadTrainingCache(entry.cacheFile);
+//                    float[][][] xPart = pair.getKey();
+//                    float[][] yPart = pair.getValue();
+//                    pair = null;
+//                    int len = xPart.length;
+//
+//                    System.arraycopy(xPart, 0, X_final, currentIdx, len);
+//                    System.arraycopy(yPart, 0, y_final, currentIdx, len);
+//                    xPart = null;
+//                    yPart = null;
+//                    currentIdx += len;
+//                    Vesta.info("💿 Datos recuperados de " + entry.cacheFile);
+//                } catch (Exception e) {
+//                    throw new RuntimeException("Error cargando cache temporal: " + entry.cacheFile, e);
+//                } finally {
+//                    IOdata.deleteTrainingCache(entry.cacheFile);
+//                }
+//            }
+//
+//            return new TrainingData(new Pair<>(X_final, y_final));
+//        }
+        return new TrainingData(cacheEntries.stream().map(PairCache::getCacheFile).toList(), totalSamples, seqLen, features, yCols);
 
-                    System.arraycopy(xPart, 0, X_final, currentIdx, len);
-                    System.arraycopy(yPart, 0, y_final, currentIdx, len);
-                    xPart = null;
-                    yPart = null;
-                    currentIdx += len;
-                    Vesta.info("💿 Datos recuperados de " + entry.cacheFile);
-                } catch (Exception e) {
-                    throw new RuntimeException("Error cargando cache temporal: " + entry.cacheFile, e);
-                } finally {
-                    IOdata.deleteTrainingCache(entry.cacheFile);
-                }
-            }
-
-            return new TrainingData(new Pair<>(X_final, y_final));
-        }
     }
 
     @Getter
@@ -261,7 +265,9 @@ public class BuilderData {
     }
 
     /**
-     * Construye tensores con features relativas y etiquetas [upMove, downMove, 0, 0, 0].
+     * Construye tensores con features relativas y etiquetas:
+     * [upMove, downMove, firstHitFlag, 0, 0]
+     * firstHitFlag: 0 si el mínimo se alcanza primero, 1 si el máximo se alcanza primero.
      */
     @Contract("_, _, _ -> new")
     public static @NotNull Pair<float[][][], float[][]> build(@NotNull List<Candle> candles, int lookBack, int futureWindow) {
@@ -285,25 +291,34 @@ public class BuilderData {
             // --- ESCANEO DEL FUTURO (Max/Min por mecha) ---
             double maxWick = -Double.MAX_VALUE;
             double minWick = Double.MAX_VALUE;
+            int maxIndex = -1;
+            int minIndex = -1;
 
             for (int f = 1; f <= futureWindow; f++) {
                 Candle future = candles.get(i + lookBack + f);
 
-                if (future.high() > maxWick) maxWick = future.high();
-                if (future.low() < minWick) minWick = future.low();
+                if (future.high() > maxWick) {
+                    maxWick = future.high();
+                    maxIndex = f;
+                }
+                if (future.low() < minWick) {
+                    minWick = future.low();
+                    minIndex = f;
+                }
             }
 
             double upMove = Math.abs(maxWick - entryPrice);
             double downMove = Math.abs(entryPrice - minWick);
+            float firstHitFlag = (maxIndex <= minIndex) ? 1f : 0f;
 
             // 3. ASIGNACION DE ETIQUETAS (Y):
-            // output 0: upMove (mecha) normalizada por entryPrice
-            y[i][0] = (float) ((entryPrice > 0) ? Math.max(0.0, upMove / entryPrice) : 0.0);
-            // output 1: downMove (mecha) normalizada por entryPrice
-            y[i][1] = (float) ((entryPrice > 0) ? Math.max(0.0, downMove / entryPrice) : 0.0);
+            // output 0: upMove (mecha) en porcentaje sobre entryPrice
+            y[i][0] = (float) ((entryPrice > 0) ? Math.max(0.0, (upMove / entryPrice)) : 0.0);
+            // output 1: downMove (mecha) en porcentaje sobre entryPrice
+            y[i][1] = (float) ((entryPrice > 0) ? Math.max(0.0, (downMove / entryPrice)) : 0.0);
 
-            // outputs 2..4: sin uso
-            y[i][2] = 0f;
+            // output 2: 0 si mínimo primero, 1 si máximo primero
+            y[i][2] = firstHitFlag;
             y[i][3] = 0f;
             y[i][4] = 0f;
         }
@@ -370,15 +385,18 @@ public class BuilderData {
             closes.add(cs.close());
         }
 
-
         RSIIndicator rsi4 = new RSIIndicator(indicator, 4);
         RSIIndicator rsi8 = new RSIIndicator(indicator, 8);
         RSIIndicator rsi16 = new RSIIndicator(indicator, 16);
 
+        // SuperTren
+        SuperTrendIndicator superTrend = new SuperTrendIndicator(series, 5, 0.4);
+
 
         // MACD
         //MACDIndicator macd = new MACDIndicator(indicator, 12, 26);
-        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 12, 26, 9);
+//        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 6, 16, 9);
+        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 10, 18, 6);
         double[] macdArr = macdRes.macd();
         double[] signalArr = macdRes.signal();
         double[] histArr = macdRes.histogram();
@@ -500,7 +518,8 @@ public class BuilderData {
                         facadeBand.lower().getValue(idx).doubleValue(),
                         facadeBand.bandwidth().getValue(idx).doubleValue(),
                         facadeBand.percentB().getValue(idx).doubleValue(),
-                        atr14.getValue(idx).doubleValue()
+                        atr14.getValue(idx).doubleValue(),
+                        (float) (superTrend.getValue(idx).floatValue() - close)
                 ));
             } catch (IllegalArgumentException ignored) {
                 remove++;
@@ -672,12 +691,12 @@ public class BuilderData {
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
                 1,1,1, 1, 1, 1, 1,1,1,1,1,
-                        1, 1 ,1 ,1, 1),
+                        1, 1 ,1 ,1, 1,1),
                 new Candle(
                 1,1,1,1,1,1,1,1,1,
                 1,1,1,1,1,1,1,1,1,
                 1,1,1, 1, 1, 1,1,1,1,1,1, 1,
-                        1,1,1, 1)
+                        1,1,1, 1, 1)
         ).length; // más 2 por que tiene sumar el feature del símbolo en el que esta y todos los símbolos que puede estar
     }
 

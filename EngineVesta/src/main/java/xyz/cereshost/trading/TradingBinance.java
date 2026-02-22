@@ -210,7 +210,7 @@ public class TradingBinance implements Trading {
 
             // 3. Registrar cierre
             double exitPrice = getTickerPrice(symbol);
-            CloseOperation closeOp = new CloseOperationReal(
+            CloseOperation closeOp = new BinanceCloseOperation(
                     exitPrice, System.currentTimeMillis(), op.getEntryTime(), reason, op.getUuid()
             );
 
@@ -222,11 +222,11 @@ public class TradingBinance implements Trading {
         }
     }
 
-    private void recordClose(@NotNull BinanceOpenOperation op, @NotNull ExitReason reason) {
+    private BinanceCloseOperation recordClose(@NotNull BinanceOpenOperation op, @NotNull ExitReason reason) {
         // En un caso real, obtendríamos el precio real de ejecución de la orden
         double estimatedExit = (reason.toString().contains("STOP")) ? op.getSlPrice() : op.getTpPrice();
 
-        CloseOperation closeOp = new CloseOperationReal(
+        BinanceCloseOperation closeOp = new BinanceCloseOperation(
                 estimatedExit,
                 System.currentTimeMillis(),
                 op.getEntryTime(),
@@ -234,6 +234,7 @@ public class TradingBinance implements Trading {
                 op.getUuid()
         );
         closedOperations.add(closeOp);
+        return closeOp;
     }
 
     // --- Clases Internas extendiendo las de Trading.java ---
@@ -252,8 +253,8 @@ public class TradingBinance implements Trading {
         }
     }
 
-    public static class CloseOperationReal extends CloseOperation {
-        public CloseOperationReal(double exitPrice, long exitTime, long entryTime, ExitReason reason, UUID uuidOpenOperation) {
+    public static class BinanceCloseOperation extends CloseOperation {
+        public BinanceCloseOperation(double exitPrice, long exitTime, long entryTime, ExitReason reason, UUID uuidOpenOperation) {
             super(exitPrice, exitTime, entryTime, reason, uuidOpenOperation);
         }
     }
@@ -358,9 +359,10 @@ public class TradingBinance implements Trading {
                         // Cancelar el TP restante
                         cancelOrder(symbol, op.getTpBinanceId(), op.isTpIsAlgo());
                         // Registrar cierre
-                        recordClose(op, op.getDireccion() == DireccionOperation.LONG ?
+                        var close = recordClose(op, op.getDireccion() == DireccionOperation.LONG ?
                                 ExitReason.LONG_STOP_LOSS : ExitReason.SHORT_STOP_LOSS);
                         it.remove();
+                        tradingLoopBinance.getStrategy().closeOperation(close);
                         return;
                     }
 
@@ -370,8 +372,9 @@ public class TradingBinance implements Trading {
                         // Cancelar el SL restante
                         cancelOrder(symbol, op.getSlBinanceId(), op.isSlIsAlgo());
                         // Registrar cierre
-                        recordClose(op, op.getDireccion() == DireccionOperation.LONG ?
+                        var close = recordClose(op, op.getDireccion() == DireccionOperation.LONG ?
                                 ExitReason.LONG_TAKE_PROFIT : ExitReason.SHORT_TAKE_PROFIT);
+                        tradingLoopBinance.getStrategy().closeOperation(close);
                         it.remove();
                     }
 

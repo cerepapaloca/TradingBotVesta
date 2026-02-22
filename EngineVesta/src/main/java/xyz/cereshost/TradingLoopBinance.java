@@ -8,7 +8,6 @@ import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
-import xyz.cereshost.io.IOdata;
 import xyz.cereshost.strategy.TradingStrategy;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.trading.TradingBinance;
@@ -32,6 +31,7 @@ public class TradingLoopBinance {
     private final Executor executor = Executors.newFixedThreadPool(6);
     private final TradingBinance trading;
     private final PredictionEngine engine;
+    @Getter
     private final TradingStrategy strategy;
 
     private static final ExecutorService WORKERS = Executors.newSingleThreadExecutor(r -> {
@@ -118,10 +118,12 @@ public class TradingLoopBinance {
         latch.await();
 
         List<Candle> allCandles = BuilderData.to1mCandles(market.get());
-        PredictionEngine.PredictionResult result = engine.predictNextPriceDetail(allCandles.subList(VestaEngine.LOOK_BACK, allCandles.size() - 1), symbol);
+        List<Candle> visible = allCandles.subList(VestaEngine.LOOK_BACK, allCandles.size() - 1);
+        PredictionEngine.PredictionResult result = engine.predictNextPriceDetail(visible, symbol);
         trading.getOpens().forEach(Trading.OpenOperation::next);
         trading.updateState(symbol);
-        strategy.executeStrategy(result, trading);
+        Candle visibleCandle = visible.get(visible.size() - 1);
+        strategy.executeStrategy(result, visible, trading);
     }
 
     public void stop(Exception e){

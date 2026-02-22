@@ -55,62 +55,57 @@ public class PredictionEngine {
      * Formato: [upMove, downMove, 0, 0, 0]
      */
     public float[] predictRaw(float[][][] inputSequence) {
-        try (NDManager manager = NDManager.newBaseManager(device)) {
-            //debugInputData(inputSequence);
-            int batchSize = inputSequence.length;
-            int sequenceLength = inputSequence[0].length;
-            int actualFeatures = inputSequence[0][0].length;
-            //debugInputData(inputSequence);
-            // Validación de dimensiones
-            if (actualFeatures != features) {
-                Vesta.warning("⚠️ Advertencia de dimensiones: El modelo espera " + features +
-                        " features, pero recibió " + actualFeatures);
-            }
-
-            // 1. Normalizar entrada (RobustScaling)
-            float[][][] normalizedInput = xNormalizer.transform(inputSequence);
-
-            // 2. Aplanar para DJL
-            float[] flatInput = EngineUtils.flatten3DArray(normalizedInput);
-            NDArray inputArray = manager.create(flatInput, new Shape(batchSize, sequenceLength, actualFeatures));
-
-            // 3. Forward Pass
-            var block = model.getBlock();
-            var parameterStore = new ai.djl.training.ParameterStore(manager, false);
-            NDList output = block.forward(parameterStore, new NDList(inputArray), false);
-
-            NDArray prediction = output.singletonOrThrow();
-            float[] normalizedOutput = prediction.toFloatArray();
-
-            // Verificar la forma de la salida
-            long[] shape = prediction.getShape().getShape();
-            if (shape[shape.length - 1] != 5) {
-                throw new RuntimeException("El modelo debe tener 5 salidas. Forma actual: " + prediction.getShape());
-            }
-
-            // Reorganizar el array plano en [batch_size, 5]
-            int batch = (int) shape[0];
-            float[][] output2D = new float[batch][5];
-
-            for (int i = 0; i < batch; i++) {
-                int base = i * 5;
-                output2D[i][0] = normalizedOutput[base];
-                output2D[i][1] = normalizedOutput[base + 1];
-                output2D[i][2] = 0f;
-                output2D[i][3] = 0f;
-                output2D[i][4] = 0f;
-            }
-
-            // Des normalizar outputs 0 y 1 (upMove/downMove)
-            float[][] denormalized = yNormalizer.inverseTransform(output2D);
-            float upMove = denormalized[0][0];
-            float downMove = denormalized[0][1];
-            return new float[]{upMove, downMove, 0f, 0f, 0f};
-        } catch (Exception e) {
-            Vesta.error("Error en predictRaw: " + e.getMessage());
-            e.printStackTrace();
-            return new float[]{0f, 0f, 0f, 0f, 0f};
+        NDManager manager = model.getNDManager();
+        int batchSize = inputSequence.length;
+        int sequenceLength = inputSequence[0].length;
+        int actualFeatures = inputSequence[0][0].length;
+        //debugInputData(inputSequence);
+        // Validación de dimensiones
+        if (actualFeatures != features) {
+            Vesta.warning("⚠️ Advertencia de dimensiones: El modelo espera " + features +
+                    " features, pero recibió " + actualFeatures);
         }
+
+        // 1. Normalizar entrada (RobustScaling)
+        float[][][] normalizedInput = xNormalizer.transform(inputSequence);
+
+        // 2. Aplanar para DJL
+        float[] flatInput = EngineUtils.flatten3DArray(normalizedInput);
+        NDArray inputArray = manager.create(flatInput, new Shape(batchSize, sequenceLength, actualFeatures));
+
+        // 3. Forward Pass
+        var block = model.getBlock();
+        var parameterStore = new ai.djl.training.ParameterStore(manager, false);
+        NDList output = block.forward(parameterStore, new NDList(inputArray), false);
+
+        NDArray prediction = output.singletonOrThrow();
+        float[] normalizedOutput = prediction.toFloatArray();
+
+        // Verificar la forma de la salida
+        long[] shape = prediction.getShape().getShape();
+        if (shape[shape.length - 1] != 5) {
+            throw new RuntimeException("El modelo debe tener 5 salidas. Forma actual: " + prediction.getShape());
+        }
+
+        // Reorganizar el array plano en [batch_size, 5]
+        int batch = (int) shape[0];
+        float[][] output2D = new float[batch][5];
+
+        for (int i = 0; i < batch; i++) {
+            int base = i * 5;
+            output2D[i][0] = normalizedOutput[base];
+            output2D[i][1] = normalizedOutput[base + 1];
+            output2D[i][2] = 0f;
+            output2D[i][3] = 0f;
+            output2D[i][4] = 0f;
+        }
+
+        // Des normalizar outputs 0 y 1 (upMove/downMove)
+        float[][] denormalized = yNormalizer.inverseTransform(output2D);
+        float upMove = denormalized[0][0] * 100.0f;
+        float downMove = denormalized[0][1] * 100.0f;
+//            manager.close();
+        return new float[]{upMove , downMove, 0f, 0f, 0f};
     }
 
     public PredictionResult predictNextPriceDetail(List<Candle> candles, String symbol) {
@@ -131,16 +126,16 @@ public class PredictionEngine {
         // Inferencia
         float[] rawPredictions = predictRaw(X); // Output del modelo
 
-        float upMoveRatio = rawPredictions[0];
-        float downMoveRatio = rawPredictions[1];
+        float upMovePercent = rawPredictions[0];
+        float downMovePercent = rawPredictions[1];
 
         float currentPrice = (float) subList.getLast().close();
         if (currentPrice <= 0f) {
             return new PredictionResult(currentPrice, currentPrice, currentPrice, 0f, 0f, 0f, 0);
         }
 
-        float upMove = Math.max(0f, upMoveRatio) * currentPrice;
-        float downMove = Math.max(0f, downMoveRatio) * currentPrice;
+        float upMove = Math.max(0f, upMovePercent) * currentPrice / 100f;
+        float downMove = Math.max(0f, downMovePercent) * currentPrice / 100f;
 
         float maxDownMove = currentPrice * 0.999f;
         if (downMove > maxDownMove) {
@@ -150,25 +145,25 @@ public class PredictionEngine {
         float ratio = ratioFromMoves(upMove, downMove);
         int direction = PredictionUtils.directionFromRatioRaw(ratio);
 
-        float tpLogReturn = 0f;
-        float slLogReturn = 0f;
+        float tpReturn = 0f;
+        float slReturn = 0f;
         float tpPrice = currentPrice;
         float slPrice = currentPrice;
 
         if (direction > 0) {
             tpPrice = currentPrice + upMove;
             slPrice = currentPrice - downMove;
-            tpLogReturn = (float) Math.log(tpPrice / currentPrice);
-            slLogReturn = (float) Math.log(currentPrice / slPrice);
+            tpReturn = (tpPrice - currentPrice) / currentPrice;
+            slReturn = (currentPrice - slPrice) / currentPrice;
         } else if (direction < 0) {
             tpPrice = currentPrice - downMove;
             slPrice = currentPrice + upMove;
-            tpLogReturn = (float) Math.log(currentPrice / tpPrice);
-            slLogReturn = (float) Math.log(slPrice / currentPrice);
+            tpReturn = (currentPrice - tpPrice) / currentPrice;
+            slReturn = (slPrice - currentPrice) / currentPrice;
         }
         float confidence = Float.isFinite(ratio) ? Math.abs(ratio) : 0f;
         return new PredictionResult(
-                currentPrice, tpPrice, slPrice, tpLogReturn, slLogReturn, confidence, direction
+                currentPrice, tpPrice, slPrice, tpReturn, slReturn, confidence, direction
         );
     }
 
@@ -185,8 +180,8 @@ public class PredictionEngine {
         private final double currentPrice;
         private final double tpPrice;       // Precio de Take Profit
         private final double slPrice;       // Precio de Stop Loss
-        private final double tpLogReturn;   // Log return para TP (positivo)
-        private final double slLogReturn;   // Log return para SL (positivo)
+        private final double tpReturn;   // Return ratio para TP (positivo)
+        private final double slReturn;   // Return ratio para SL (positivo)
         private final double confident;
         private final int direction;   // -1 Short, 0 Neutral, 1 Long
 
@@ -202,11 +197,11 @@ public class PredictionEngine {
         }
 
         public double getTpPercent() {
-            return (float) ((Math.exp(tpLogReturn) - 1.0) * 100.0);
+            return tpReturn * 100.0;
         }
 
         public double getSlPercent() {
-            return (float) ((Math.exp(slLogReturn) - 1.0) * 100.0);
+            return slReturn * 100.0;
         }
 
         public double getRatio(){

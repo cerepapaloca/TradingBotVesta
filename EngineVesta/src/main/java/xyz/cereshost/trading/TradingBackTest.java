@@ -90,6 +90,7 @@ public class TradingBackTest implements Trading {
                 backTestEngine.computeClose(closeOperation, open);
                 openOperations.remove(closeOperation.getUuidOpenOperation());
             }
+            backTestEngine.getStrategy().closeOperation(closeOperation);
         }
         closeOperations.clear();
     }

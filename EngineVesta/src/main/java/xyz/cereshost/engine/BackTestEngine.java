@@ -5,6 +5,7 @@ import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.utils.BuilderData;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
@@ -23,15 +24,15 @@ public class BackTestEngine {
 
     private final BackTestStats stats;
     private final List<CompleteTrade> extraStats = new ArrayList<>();
-    private final TradingBackTest operations = new TradingBackTest(this);
-    private final Market market;
-    private final PredictionEngine engine;
-    private final TradingStrategy strategy;
+    @NotNull private final TradingBackTest operations = new TradingBackTest(this);
+    @NotNull private final Market market;
+    @NotNull private final TradingStrategy strategy;
+    @Nullable private final PredictionEngine engine;
     private double balance = 1000.0;
     private double currentPrice;
     private long currentTime;
 
-    public BackTestEngine(Market market, PredictionEngine engine, TradingStrategy strategy) {
+    public BackTestEngine(@NotNull Market market, @Nullable PredictionEngine engine, @NotNull TradingStrategy strategy) {
         this.market = market;
         this.engine = engine;
         this.strategy = strategy;
@@ -44,13 +45,18 @@ public class BackTestEngine {
         this(market, engine, new AlfaStrategy());
     }
 
-    public BackTestResult run(){
+    public BackTestResult run() {
         List<Candle> allCandles = BuilderData.to1mCandles(market);
         allCandles.sort(Comparator.comparingLong(Candle::openTime));
+        return run(allCandles);
+    }
+
+    public BackTestResult run(List<Candle> allCandles){
+
 //        market.buildTradeCache(); // Crucial para velocidad
 
         int totalSamples = allCandles.size();
-        int lookBack = engine.getLookBack();
+        int lookBack = engine == null ? 1 : engine.getLookBack();
 
         // Empezamos donde tenemos datos suficientes
         int startIndex = lookBack + 1;
@@ -62,11 +68,16 @@ public class BackTestEngine {
         for (int i = startIndex; i < totalSamples - 1; i++) {
             // Obtener predicción
             List<Candle> window = allCandles.subList(i - lookBack, i + 1);
-            PredictionEngine.PredictionResult prediction = engine.predictNextPriceDetail(window, market.getSymbol());
-            stats.getAllTrades().add(new InCompleteTrade(currentPrice, prediction.getTpPrice(), prediction.getSlPrice(), currentTime));
+            PredictionEngine.PredictionResult prediction ;
+            if (engine != null) {
+                prediction = engine.predictNextPriceDetail(window, market.getSymbol());
+                stats.getAllTrades().add(new InCompleteTrade(currentPrice, prediction.getTpPrice(), prediction.getSlPrice(), currentTime));
+            }else {
+                prediction = null;
+            }
 
             // Consultar estrategia
-            strategy.executeStrategy(prediction, operations);
+            strategy.executeStrategy(prediction, window, operations);
 
             if (operations.getLastOpenOperation().isEmpty())stats.nothing++;
             for (TradingBackTest.OpenOperationBackTest setup : operations.getLastOpenOperation()){
@@ -263,7 +274,7 @@ public class BackTestEngine {
         }
 
         public double getRoiTPMinLong(){
-            double roi = 0;
+            double roi = 1;
             for (TradeResult tr : trades) if (tr.reason().equals(Trading.ExitReason.LONG_TAKE_PROFIT)) {
                 if (roi > tr.pnlPercent()){
                     roi = tr.pnlPercent();
@@ -273,7 +284,7 @@ public class BackTestEngine {
         }
 
         public double getRoiTPMinShort(){
-            double roi = 0;
+            double roi = 1;
             for (TradeResult tr : trades) if (tr.reason().equals(Trading.ExitReason.SHORT_TAKE_PROFIT)) {
                 if (roi > tr.pnlPercent()){
                     roi = tr.pnlPercent();

@@ -1,16 +1,18 @@
 package xyz.cereshost.strategy;
 
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.engine.BackTestEngine;
+import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.engine.PredictionEngine;
+
+import java.util.List;
 
 /**
  * Estrategia por defecto: Usa tal cual la predicción de la IA.
  */
 public class DefaultStrategy implements TradingStrategy {
     @Override
-    public void executeStrategy(PredictionEngine.@NotNull PredictionResult pred, Trading openOperations) {
+    public void executeStrategy(PredictionEngine.@NotNull PredictionResult pred, List<Candle> visibleCandles, Trading openOperations) {
         for (Trading.OpenOperation op : openOperations.getOpens()) if (op.getCountCandles() >= 1) openOperations.close(Trading.ExitReason.STRATEGY, op.getUuid());
         if (openOperations.openSize() == 0) {
             openOperations.open(
@@ -21,5 +23,10 @@ public class DefaultStrategy implements TradingStrategy {
                     1
             );
         }
+    }
+
+    @Override
+    public void closeOperation(Trading.CloseOperation closeOperation) {
+
     }
 }

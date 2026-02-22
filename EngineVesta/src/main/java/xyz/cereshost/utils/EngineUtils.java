@@ -333,27 +333,27 @@ public class EngineUtils {
                     float rawPredUp = yPredFlat[predIdx];
                     float rawPredDown = yPredFlat[predIdx + 1];
 
-                    // 5. Desnormalizacion (outputs 0 y 1)
+                    // 5. Desnormalizacion (outputs 0 y 1) en porcentaje
                     float[][] denormTarget = yNormalizer.inverseTransform(new float[][]{{rawRealUp, rawRealDown, 0, 0, 0}});
                     float[][] denormPred = yNormalizer.inverseTransform(new float[][]{{rawPredUp, rawPredDown, 0, 0, 0}});
 
-                    float realUp = Math.max(0f, denormTarget[0][0]);
-                    float realDown = Math.max(0f, denormTarget[0][1]);
-                    float predUp = Math.max(0f, denormPred[0][0]);
-                    float predDown = Math.max(0f, denormPred[0][1]);
+                    float realUpPercent = Math.max(0f, denormTarget[0][0] * 100.0f);
+                    float realDownPercent = Math.max(0f, denormTarget[0][1] * 100.0f);
+                    float predUpPercent = Math.max(0f, denormPred[0][0] * 100.0f);
+                    float predDownPercent = Math.max(0f, denormPred[0][1] * 100.0f);
 
-                    float rawRealDir = ratioFromMoves(realUp, realDown);
-                    float predDirection = ratioFromMoves(predUp, predDown);
+                    float rawRealDir = ratioFromMoves(realUpPercent, realDownPercent);
+                    float predDirection = ratioFromMoves(predUpPercent, predDownPercent);
 
                     // 6. Acumular metricas
-                    totalMaeUP += Math.abs(realUp - predUp);
-                    totalMaeDOWN += Math.abs(realDown - predDown);
+                    totalMaeUP += Math.abs(realUpPercent - predUpPercent);
+                    totalMaeDOWN += Math.abs(realDownPercent - predDownPercent);
                     totalMaeDir += Math.abs(rawRealDir - predDirection);
 
                     // 7. Guardar resultado individual
                     allResults.add(new ResultEvaluate(
-                            predUp, predDown, predDirection,
-                            realUp, realDown, rawRealDir,
+                            predUpPercent, predDownPercent, predDirection,
+                            realUpPercent, realDownPercent, rawRealDir,
                             start + i // Indice global
                     ));
                 }

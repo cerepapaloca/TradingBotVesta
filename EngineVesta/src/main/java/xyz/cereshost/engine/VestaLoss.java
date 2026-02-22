@@ -16,10 +16,17 @@ import java.util.concurrent.ExecutionException;
 
 public class VestaLoss extends Loss {
 
-    public record LossReport(float total, float max, float min) {}
+    public record LossReport(float total, float max, float min, float roi, float meanReal, float meanPred) {}
 
     private static final float RELATIVE_WEIGHT_ALPHA = 2.5f;
     private static final float ROI_SIGMOID_K = 5.0f;
+    private static final float DIRECTION_PENALTY_EXTRA = 1.0f;
+    private static final float DIRECTION_PENALTY_K = 5.0f;
+
+    // Debug: fuerza target constante para up/down/firstHit
+    private static final boolean FORCE_CONSTANT_TARGET = false;
+    private static final float CONSTANT_TARGET_VALUE = 0.01f;
+    private static final float CONSTANT_FIRST_HIT = 1.0f;
 
     private volatile CompletableFuture<LossReport> dataRequest = null;
 
@@ -33,43 +40,50 @@ public class VestaLoss extends Loss {
         NDArray yPred = prediction.singletonOrThrow();
         NDArray yTrue = target.singletonOrThrow();
 
+        NDManager manager = yTrue.getManager();
+
         // 1. Cálculos vectorizados rápidos (GPU)
         NDList trueParts = yTrue.split(new long[]{1, 2, 3, 4}, 1);
         NDList predParts = yPred.split(new long[]{1, 2, 3, 4}, 1);
-        NDArray totalLoss = computeExpectedRoiLoss(trueParts.get(0), trueParts.get(1), predParts.get(0), predParts.get(1));
-        NDArray lossUp = computeDistance(trueParts.get(0), predParts.get(0));
-        NDArray lossDown = computeDistance(trueParts.get(1), predParts.get(1));
+
+        NDArray trueUp;
+        NDArray trueDown;
+        NDArray trueFirstHit;
+        if (FORCE_CONSTANT_TARGET) {
+            trueUp = manager.full(trueParts.get(0).getShape(), CONSTANT_TARGET_VALUE);
+            trueDown = manager.full(trueParts.get(1).getShape(), CONSTANT_TARGET_VALUE);
+            trueFirstHit = manager.full(trueParts.get(2).getShape(), CONSTANT_FIRST_HIT);
+        }else {
+            trueUp = trueParts.get(0);
+            trueDown = trueParts.get(1);
+            trueFirstHit = trueParts.get(2);
+        }
+
+        NDArray lossUp = computeDistance(trueUp, predParts.get(0));
+        NDArray lossDown = computeDistance(trueDown, predParts.get(1));
+//        NDArray lossOrder = computeFirstHitLoss(trueUp, trueDown, trueFirstHit, predParts.get(2));
+
+        NDArray directionPenalty = computeDirectionPenalty(trueUp, trueDown, predParts.get(0), predParts.get(1));
+        NDArray totalLoss = lossUp.add(lossDown);//.mul(directionPenalty.mean());
         CompletableFuture<LossReport> request = dataRequest;
         if (request != null && !request.isDone()) {
             // Solo aquí pagamos el costo de sincronización GPU -> CPU
             request.complete(new LossReport(
                     totalLoss.getFloat(),
                     lossUp.getFloat(),
-                    lossDown.getFloat()
+                    lossDown.getFloat(),
+                    0,
+                    trueParts.get(0).add(trueParts.get(1)).mean().getFloat(),
+                    predParts.get(0).add(predParts.get(1)).mean().getFloat()
             ));
             dataRequest = null;
         }
         return totalLoss;
     }
 
-    private NDArray TPSLAdvance(NDList trueParts, NDArray slTrue, NDArray slPred) {
-        NDManager manager = slTrue.getManager();;
-        NDArray isNeutral = trueParts.get(3);
-        NDArray mask = isNeutral.mul(EngineUtils.floatToNDArray(-1f, manager)).add(EngineUtils.floatToNDArray(1f, manager));
-
-        NDArray loss = slTrue.sub(slPred)
-                .abs()
-                .mul(mask)
-                .mul(EngineUtils.floatToNDArray(0.7f, manager));
-
-        NDArray valid = mask.sum().maximum(EngineUtils.floatToNDArray(1e-7f, manager));
-
-        return loss.sum().div(valid);
-    }
-
     public NDArray computeDistance(NDArray trueND, NDArray predND){
         NDArray diff = trueND.sub(predND).abs();
-        return diff.mean();
+        return diff.max();
     }
     public NDArray computeRelative(NDArray trueND, NDArray predND){
         NDManager manager = trueND.getManager();
@@ -103,26 +117,33 @@ public class VestaLoss extends Loss {
     }
 
     /**
-     * Expected ROI loss (differentiable approximation).
-     * Assumes trueUp/trueDown represent reachable max/min magnitudes (>= 0) in the same scale as preds.
+     * Penaliza el orden de llegada a los límites usando una probabilidad en [0,1].
+     * trueFirstHit: 0 si mínimo primero, 1 si máximo primero.
+     * Se pondera por la diferencia absoluta entre límites (señal más fuerte cuando hay más separación).
      */
-    public NDArray computeExpectedRoiLoss(NDArray trueUp, NDArray trueDown, NDArray predUp, NDArray predDown) {
+    public NDArray computeFirstHitLoss(NDArray trueUp, NDArray trueDown, NDArray trueFirstHit, NDArray predFirstHit) {
         NDManager manager = trueUp.getManager();
-        NDArray zero = EngineUtils.floatToNDArray(0f, manager);
-
-        NDArray trueUpPos = trueUp.maximum(zero);
-        NDArray trueDownPos = trueDown.maximum(zero);
-
-        NDArray predUpPos = Activation.softPlus(predUp);
-        NDArray predDownPos = Activation.softPlus(predDown);
-
-        NDArray k = EngineUtils.floatToNDArray(ROI_SIGMOID_K, manager);
-        NDArray pTp = Activation.sigmoid(trueUpPos.sub(predUpPos).mul(k));
-        NDArray pSl = Activation.sigmoid(trueDownPos.sub(predDownPos).mul(k));
-
-        NDArray roi = pTp.mul(predUpPos).sub(pSl.mul(predDownPos));
-        return roi.mean().mul(EngineUtils.floatToNDArray(-1f, manager));
+        NDArray diff = trueUp.sub(trueDown).abs();
+        NDArray predProb = Activation.sigmoid(predFirstHit);
+        NDArray error = predProb.sub(trueFirstHit).abs();
+        return error.mul(diff).mean();
     }
+
+    /**
+     * Penaliza cuando la predicción invierte la dirección (up > down vs up < down).
+     * Retorna un factor multiplicativo: 1.0 si coincide, 2.0 si es opuesta.
+     */
+    public NDArray computeDirectionPenalty(NDArray trueUp, NDArray trueDown, NDArray predUp, NDArray predDown) {
+        NDManager manager = trueUp.getManager();
+        NDArray trueDiff = trueUp.sub(trueDown);
+        NDArray predDiff = predUp.sub(predDown);
+        NDArray product = trueDiff.mul(predDiff);
+        // Penalizacion suave: 1.0 cuando coincide, 1.0 + extra cuando es opuesta
+        NDArray mismatch = Activation.sigmoid(product.mul(EngineUtils.floatToNDArray(-DIRECTION_PENALTY_K, manager)));
+        return mismatch.mul(EngineUtils.floatToNDArray(DIRECTION_PENALTY_EXTRA, manager))
+                .add(EngineUtils.floatToNDArray(1f, manager));
+    }
+
     /**
      * Este método bloquea el hilo que lo llama hasta que el entrenamiento
      * termine el siguiente batch y devuelva los resultados.
@@ -134,7 +155,7 @@ public class VestaLoss extends Loss {
             return dataRequest.get();
         } catch (InterruptedException | ExecutionException e) {
             Thread.currentThread().interrupt();
-            return new LossReport(0,0,0);
+            return new LossReport(0,0,0, 0,0,0);
         }
     }
 

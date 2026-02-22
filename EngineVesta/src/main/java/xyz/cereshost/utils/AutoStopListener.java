@@ -12,8 +12,8 @@ public class AutoStopListener extends TrainingListenerAdapter {
     private float lossLast = Float.MAX_VALUE;
 
     private static final float THRESHOLD_STOP = 8f;
-    private static final int MAX_GAMMA = 15;
-    private static final int MAX_BETA = 35;
+    private static final int MAX_GAMMA = 35;
+    private static final int MAX_BETA = 50;
     private static final int MIN_EPOCH = 2;
     private final Runnable onStop;
 

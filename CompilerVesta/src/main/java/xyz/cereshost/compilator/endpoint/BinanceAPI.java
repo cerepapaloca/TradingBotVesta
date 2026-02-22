@@ -88,7 +88,7 @@ public class BinanceAPI {
             boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
             long id = trade.get("id").asLong();
             long time = trade.get("time").asLong();
-            trades.add(new Trade(id, time, price, quoteQty, isBuyerMaker));
+            trades.add(new Trade(time, price, quoteQty, isBuyerMaker));
         }
         return trades;
     }

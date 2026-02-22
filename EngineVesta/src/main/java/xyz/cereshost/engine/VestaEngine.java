@@ -2,6 +2,7 @@ package xyz.cereshost.engine;
 
 import ai.djl.Device;
 import ai.djl.Model;
+import ai.djl.basicmodelzoo.basic.Mlp;
 import ai.djl.engine.Engine;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDArrays;
@@ -10,14 +11,15 @@ import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.*;
 import ai.djl.nn.core.Linear;
+import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.norm.Dropout;
+import ai.djl.nn.transformer.TransformerEncoderBlock;
 import ai.djl.pytorch.engine.PtModel;
 import ai.djl.pytorch.engine.PtNDManager;
-import ai.djl.training.DefaultTrainingConfig;
-import ai.djl.training.EasyTrain;
-import ai.djl.training.Trainer;
-import ai.djl.training.TrainingConfig;
+import ai.djl.pytorch.jni.JniUtils;
+import ai.djl.training.*;
 import ai.djl.training.dataset.ArrayDataset;
+import ai.djl.training.initializer.Initializer;
 import ai.djl.training.listener.*;
 import ai.djl.training.optimizer.Optimizer;
 import ai.djl.training.tracker.Tracker;
@@ -30,6 +32,7 @@ import xyz.cereshost.Main;
 import xyz.cereshost.blocks.SoftPlusLogBlock;
 import xyz.cereshost.blocks.TemporalTransformerBlock;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.io.IOdata;
@@ -37,14 +40,11 @@ import xyz.cereshost.metrics.MAEEvaluator;
 import xyz.cereshost.metrics.MaxDiffEvaluator;
 import xyz.cereshost.metrics.MetricsListener;
 import xyz.cereshost.metrics.MinDiffEvaluator;
-import xyz.cereshost.utils.AutoStopListener;
-import xyz.cereshost.utils.BuilderData;
-import xyz.cereshost.utils.EngineUtils;
-import xyz.cereshost.utils.TrainingData;
+import xyz.cereshost.strategy.BetaStrategy;
+import xyz.cereshost.utils.*;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -53,10 +53,10 @@ import java.util.concurrent.Executors;
 public class VestaEngine {
 
     public static final int LOOK_BACK = 60*4;
-    public static final int EPOCH = 8*5;
+    public static final int EPOCH = 32;
     public static final int AUXILIAR_EPOCH = 1;
-    public static final int BACH_SIZE = 16;
-    public static final int SPLIT_DATA = 16;
+    public static final int BACH_SIZE = 1;
+    public static final int SPLIT_DATA = 128;//64*4;
 
     @Getter @Setter
     private static NDManager rootManager;
@@ -74,6 +74,8 @@ public class VestaEngine {
     @SuppressWarnings("UnusedAssignment")
     public static @NotNull TrainingTestsResults trainingModel(@NotNull List<String> symbols) throws TranslateException, IOException, InterruptedException, ExecutionException {
         Engine torch = Engine.getEngine("PyTorch");
+        JniUtils.setGraphExecutorOptimize(false);
+
         if (torch == null) {
             Vesta.error("PyTorch no está disponible. Engines disponibles:");
             for (String engine : Engine.getAllEngines()) {
@@ -81,7 +83,6 @@ public class VestaEngine {
             }
             throw new RuntimeException("PyTorch engine no encontrado");
         }
-
         Device device = Engine.getInstance().getDevices()[0];
         Vesta.info("Usando dispositivo: " + device);
         Vesta.info("Entrenando con " + symbols.size() + " símbolos: " + symbols);
@@ -95,8 +96,9 @@ public class VestaEngine {
             }else {
                 data = BuilderData.buildTrainingData(symbols,  Main.MAX_MONTH_TRAINING, 1);
                 IOdata.saveCacheProperties(data.getCacheProperties(symbols));
-                data.prepareNormalize();
+
             }
+            data.prepareNormalize();
 
             IOdata.saveYNormalizer(data.getYNormalizer());
             IOdata.saveXNormalizer(data.getXNormalizer());
@@ -117,7 +119,7 @@ public class VestaEngine {
             // Configuración de entrenamiento
             System.out.println();
             TrainingConfig config = new DefaultTrainingConfig(new VestaLoss())
-                    .optOptimizer(Optimizer.adamW()
+                    .optOptimizer(Optimizer.adam()
 //                            .optLearningRateTracker(Tracker.cosine()
 //                                    .setBaseValue(.000_1f)
 //                                    .optFinalValue(.000_000_001f)
@@ -132,18 +134,19 @@ public class VestaEngine {
 //                                    .build())
                             .optWeightDecays(0.0001f)
                             .optLearningRateTracker(Tracker.cyclical()
-                                    .optBaseValue(0.000_000_000_1f)
-                                    .optMaxValue(0.000_01f)
+                                    .optBaseValue(.000_000_01f)
+                                    .optMaxValue(.0001f)
                                     .optStepSizeDown(3_000)
                                     .optStepSizeUp(3_000)
                                     .build())
-                            .optClipGrad(2.5f)
-//                            .optLearningRateTracker(Tracker.fixed(.0001f))
+                            .optClipGrad(2f)
+//                            .optLearningRateTracker(Tracker.fixed(.004f))
                             .build())
                     .optDevices(Engine.getInstance().getDevices())
                     .addEvaluator(new MAEEvaluator())
                     .addEvaluator(new MaxDiffEvaluator())
                     .addEvaluator(new MinDiffEvaluator())
+                    .optInitializer(Initializer.ZEROS, Parameter.Type.BETA)
                     .optExecutorService(EXECUTOR_TRAINING)
 //                    .addTrainingListeners(TrainingListener.Defaults.logging())
                     .addTrainingListeners(
@@ -151,8 +154,8 @@ public class VestaEngine {
                             new EvaluatorTrainingListener(),
                             new LoggingTrainingListener()
                     )
-                    .addTrainingListeners(new MetricsListener())
-                    .addTrainingListeners(new AutoStopListener());
+                    .addTrainingListeners(new MetricsListener());
+//                    .addTrainingListeners(new AutoStopListener());
 
             int batchSize = BACH_SIZE;
             Trainer trainer = model.newTrainer(config);
@@ -172,17 +175,23 @@ public class VestaEngine {
             data.preLoad(2, TrainingData.ModeData.SECUENCIAL, SPLIT_DATA);
             ChunkDataset sampleTraining = computeDataset(data.nextTrainingData(), batchSize, managerTraining);
             ChunkDataset sampleVal = computeDataset(data.nextValidationData(), 256, managerTraining);
+
+
             for (int epoch = 0; epoch < EPOCH; epoch++) {
                 for (int idx = 0; idx < maxMonthTraining; idx++) {
                     CompletableFuture<ChunkDataset> sampleTrainingNext = CompletableFuture.supplyAsync(() ->
                             computeDataset(data.nextTrainingData(), batchSize, managerTraining), EXECUTOR_AUXILIAR_BUILD);
                     CompletableFuture<ChunkDataset> sampleValNext = CompletableFuture.supplyAsync(() ->
                             computeDataset(data.nextValidationData(), batchSize, managerTraining), EXECUTOR_AUXILIAR_BUILD);
+                    System.out.println(sampleTraining.dataset.size());
+//                    roiBackTest = (float) new BackTestEngine(market, predEngine, new BetaStrategy()).run(allCandles).roiPercent();
+
                     EasyTrain.fit(trainer, AUXILIAR_EPOCH, sampleTraining.dataset(), sampleVal.dataset());
                     NDArray xT = sampleTraining.x();
                     NDArray yT = sampleTraining.y();
                     NDArray xV = sampleVal.x();
                     NDArray yV = sampleVal.y();
+
                     EXECUTOR_TRAINING.submit(() -> {
                         xT.close();
                         yT.close();
@@ -200,6 +209,7 @@ public class VestaEngine {
                 }
                 if (stop) break;
             }
+            stop = true;
             managerTraining.close();
             data.closePosTraining();
             System.gc();
@@ -212,12 +222,9 @@ public class VestaEngine {
             NDArray y_test  = manager.create(pairTest.getValue());
             // Evaluar en conjunto de test si hay muestras
             Vesta.info("\nEvaluando modelo con Backtest Walk-Forward (15% data)...");
+            data.closeAll();
 
-            // 1. Crear instancia temporal de PredictionEngine con los datos recién entrenados
-            // Nota: Necesitamos un PredictionEngine para usar el método 'predictForBacktest'
-            // Como el modelo (PtModel) ya está en memoria, podemos pasarlo directamente.
-
-            // Necesitamos pasar un Model 'genérico', PtModel hereda de Model
+            EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, data.getYNormalizer(), 1024);
             PredictionEngine predEngine = new PredictionEngine(
                     data.getXNormalizer(),
                     data.getYNormalizer(),
@@ -225,17 +232,10 @@ public class VestaEngine {
                     data.getLookback(),
                     data.getFeatures()
             );
-            data.closeAll();
-            // 2. Ejecutar Backtest para cada símbolo (o solo el primero si combinaste)
-            // Como entrenaste combinando símbolos, lo ideal es probar en uno representativo o iterar.
-            // Aquí probamos con el primer símbolo de la lista para obtener el ROI
-            String testSymbol = symbols.get(0);
-            Market market = new Market(testSymbol);
-            for (int day = 7; day >= 1; day--) {
-                market.concat(IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols.get(0), day));
+            Market market = new Market(symbols.getFirst());
+            for (int day = 12; day >= 1; day--) {
+                market.concat(IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, symbols.getFirst(), day));
             }
-
-            EngineUtils.ResultsEvaluate evaluate = EngineUtils.evaluateModel(trainer, X_test, y_test, data.getYNormalizer(), 1024);
 
             BackTestEngine.BackTestResult simResult;
             simResult = new BackTestEngine(market, predEngine).run();
@@ -293,18 +293,14 @@ public class VestaEngine {
 //                .add(Linear.builder().setUnits(32).build());
 
         return new SequentialBlock()
-                .add(Linear.builder().setUnits(128).build())
-                .add(Linear.builder().setUnits(128).build())
-                .add(Linear.builder().setUnits(128).build())
-                .add(Linear.builder().setUnits(32).build())
+                .add(Linear.builder().setUnits(1024).build())
+                .add(Linear.builder().setUnits(1024).build())
+                .add(Linear.builder().setUnits(1024).build())
+                .add(Linear.builder().setUnits(1024).build())
+                .add(Linear.builder().setUnits(1024).build())
+                .add(Linear.builder().setUnits(512).build())
+                .add(Linear.builder().setUnits(512).build())
                 .add(Linear.builder().setUnits(1).build());
-//                .add(new LambdaBlock(ndArrays -> {
-//                    NDArray x =  ndArrays.singletonOrThrow();
-//                    NDArray x2 = x.mul(x);
-//                    NDArray sqrt = x2.add(EngineUtils.floatToNDArray(1f, x.getManager())).sqrt();
-//                    return new NDList(x.add(sqrt).log());
-//                }));
-//                .add(SoftPlusLogBlock.builder().build());
     }
 
     private static SequentialBlock getZeroHead() {
@@ -317,10 +313,10 @@ public class VestaEngine {
 
     private static void TTLHeader(SequentialBlock mainBlock) {
         mainBlock.add(TemporalTransformerBlock.builder()
-                        .setModelDim(256)
+                        .setModelDim(1024)
                         .setNumHeads(8)
-                        .setFeedForwardDim(8*256)
-                        .setDropoutRate(0.05f)
+                        .setFeedForwardDim(8*1024)
+                        .setDropoutRate(0.0f)
                         .setMaxSequenceLength(LOOK_BACK)
                         .setOftenClearCache(20)
                         .build())
@@ -335,10 +331,10 @@ public class VestaEngine {
                     ); // [B, 2H]
                     return new NDList(combined);
                 }))
-                .add(Linear.builder().setUnits(256).build())
-                .add(Linear.builder().setUnits(128).build())
-                .add(Linear.builder().setUnits(128).build());
+                .add(Linear.builder().setUnits(1024).build());
     }
+
+
 
     private static ChunkDataset computeDataset(Pair<float[][][], float[][]> pairNormalize, int batchSize, NDManager manager) {
         NDArray X_train = EngineUtils.concat3DArrayToNDArray(pairNormalize.getKey(), manager, 1024);
@@ -360,5 +356,4 @@ public class VestaEngine {
     }
 
     private record ChunkDataset(NDArray x, NDArray y, ArrayDataset dataset) {}
-
 }

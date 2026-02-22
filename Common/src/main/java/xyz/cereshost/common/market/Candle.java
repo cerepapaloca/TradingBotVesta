@@ -46,5 +46,7 @@ public record Candle(
         double bandwidth,
         double percentB,
 
-        double atr14
+        double atr14,
+
+        float superTrend
 ) {}

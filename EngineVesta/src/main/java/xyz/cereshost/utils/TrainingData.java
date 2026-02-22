@@ -53,7 +53,7 @@ public class TrainingData {
     }
 
     public TrainingData(@NotNull List<Path> files, int samplesTotal, int lookback, int features, int ycols) {
-        this.loadInRam = false;
+        this.loadInRam = files.isEmpty();
         this.files = files;
         this.samplesSize = samplesTotal;
         this.lookback = lookback;
@@ -266,7 +266,7 @@ public class TrainingData {
         if (Objects.requireNonNull(mode) == ModeData.RAMDOM) {
             this.random = new Random();
         }
-        if (files != null){
+        if (!loadInRam){
             List<Path> trainingList = files.subList(2, files.size());
             for (int i = 0; i < amount; i++){
                 int j = i;
@@ -279,6 +279,7 @@ public class TrainingData {
 
     private int indexValidation = 0;
 
+    @NotNull
     public Pair<float[][][], float[][]> nextValidationData() {
         if (loadInRam){
             return valNormalize;

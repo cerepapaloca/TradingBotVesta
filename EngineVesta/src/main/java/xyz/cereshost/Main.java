@@ -4,9 +4,11 @@ import ai.djl.translate.TranslateException;
 import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.Vesta;
+import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.strategy.AlfaStrategy;
+import xyz.cereshost.strategy.GammaStrategy;
 import xyz.cereshost.utils.BuilderData;
 import xyz.cereshost.utils.ChartUtils;
 import xyz.cereshost.utils.EngineUtils;
@@ -18,8 +20,8 @@ import xyz.cereshost.trading.Trading;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
 public class Main {
@@ -30,7 +32,7 @@ public class Main {
     @NotNull public static final String SYMBOL = "ETHUSDT";
     @NotNull public static final DataSource DATA_SOURCE_FOR_TRAINING_MODEL = DataSource.LOCAL_ZIP;
     @NotNull public static final DataSource DATA_SOURCE_FOR_BACK_TEST = DataSource.LOCAL_ZIP;
-    public static final int MAX_MONTH_TRAINING = 24;
+    public static final int MAX_MONTH_TRAINING = 3;
 
 
     @Getter
@@ -66,7 +68,7 @@ public class Main {
                 List<EngineUtils.ResultEvaluate> resultEvaluate = evaluateResult.resultEvaluate();
 
                 // Mostrar dispersión de predicción vs real
-                ChartUtils.plotPredictionVsRealScatter(resultEvaluate, "Presicion VS Real");
+                ChartUtils.plotPredictionVsRealScatter(resultEvaluate, "Predición VS Real");
 
                 // Mostrar distribución de errores por dirección
                 ChartUtils.plotErrorDistributionByDirection(resultEvaluate, "Error de distrución por distacia");
@@ -93,7 +95,31 @@ public class Main {
 //                                new ChartUtils.DataPlot("Real", resultPrediction.stream().map(EngineUtils.ResultPrediction::realDir).toList())
 //                        ));
             }
-            case "backtest" -> showDataBackTest(new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, SYMBOL).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new AlfaStrategy()).run());
+//            case "backtest" -> showDataBackTest(new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, SYMBOL).limit(3), PredictionEngine.loadPredictionEngine("VestaIA"), new AlfaStrategy()).run());
+            case "backtest" -> {
+                Market market = new Market("XRPUSDC");
+                List<CompletableFuture<Market>> task = new ArrayList<>();
+                for (int day = 365; day >= 1; day--) {
+                    int finalDay = day;
+                    task.add(CompletableFuture.supplyAsync(() -> {
+                        try {
+                            return Objects.requireNonNull(IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, "XRPUSDC", finalDay), "Dia: " + finalDay);                        } catch (InterruptedException | IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }, VestaEngine.EXECUTOR_AUXILIAR_BUILD));
+                }
+                for (CompletableFuture<Market> future : task) {
+                    Market m = future.get();
+                    market.concat(m);
+                }
+                Vesta.info("🔙 Ejecutando backtest...");
+                showDataBackTest(new BackTestEngine(market, null, new GammaStrategy()).run());
+//                HashMap<String, Double> roiMap = new HashMap<>(); IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, "XRPUSDC", 10)
+//                for (String symbol : Vesta.MARKETS_NAMES) {
+//                    roiMap.put(symbol, new BackTestEngine(IOMarket.loadMarkets(DATA_SOURCE_FOR_BACK_TEST, symbol, 34), null, new GammaStrategy()).run().roiPercent());
+//                }
+//                Vesta.info(roiMap.toString());
+            }
             case "trading" -> new TradingLoopBinance(SYMBOL, PredictionEngine.loadPredictionEngine("VestaIA"), new AlfaStrategy()).startCandleLoop();
             case "extract" -> IOMarket.extractFirstBin(Path.of(IOMarket.STORAGE_DIR + "\\" + SYMBOL +"\\trades"));
             case "diagnose" -> ModelDiagnostics.run();

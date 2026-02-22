@@ -38,6 +38,7 @@ public final class CausalMaskManager {
     private static final class MaskHolder {
         final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
         // Aquí guardamos el subManager y los NDArrays creados en dicho subManager
+        volatile NDManager rootManager;   // root manager asociado a este cache
         volatile NDManager subManager;    // creado con rootMgr.newSubManager()
         volatile NDArray mask;            // [1,1,T,T] float en subManager
         volatile NDArray invMask;         // 1 - mask en subManager
@@ -61,6 +62,7 @@ public final class CausalMaskManager {
             invMask = null;
             negInf = null;
             subManager = null;
+            rootManager = null;
         }
     }
 
@@ -87,7 +89,9 @@ public final class CausalMaskManager {
         // Fast read path
         holder.lock.readLock().lock();
         try {
-            if (holder.subManager != null && holder.mask != null && holder.invMask != null && holder.negInf != null) {
+            if (holder.subManager != null
+                    && holder.rootManager == rootMgr
+                    && holder.mask != null && holder.invMask != null && holder.negInf != null) {
                 return new NDArray[]{holder.mask, holder.invMask, holder.negInf};
             }
         } finally {
@@ -98,12 +102,18 @@ public final class CausalMaskManager {
         holder.lock.writeLock().lock();
         try {
             // double-check
-            if (holder.subManager == null || holder.mask == null || holder.invMask == null || holder.negInf == null) {
+            if (holder.subManager == null
+                    || holder.rootManager != rootMgr
+                    || holder.mask == null || holder.invMask == null || holder.negInf == null) {
                 // Create a subManager using the provided root manager to ensure correct device/context
                 // If holder already had a subManager but arrays missing, reuse it; otherwise create new
+                if (holder.subManager != null && holder.rootManager != rootMgr) {
+                    holder.closeAllAndSubManager();
+                }
                 if (holder.subManager == null) {
                     holder.subManager = rootMgr.newSubManager();
                 }
+                holder.rootManager = rootMgr;
                 NDManager mgr = holder.subManager;
 
                 // create mask in the subManager to avoid populating root manager memory
