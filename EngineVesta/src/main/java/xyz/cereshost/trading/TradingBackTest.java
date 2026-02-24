@@ -67,11 +67,6 @@ public class TradingBackTest implements Trading {
     }
 
     @Override
-    public void updateState(String symbol) {
-
-    }
-
-    @Override
     public Market getMarket() {
         return backTestEngine.getMarket();
     }
