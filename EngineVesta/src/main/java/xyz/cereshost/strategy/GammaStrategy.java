@@ -21,8 +21,7 @@ public class GammaStrategy implements TradingStrategy {
             if (o.getCountCandles() >= MAX_OPEN_CANDLES) operations.close(Trading.ExitReason.TIMEOUT, o.getUuid());
         }
 
-
-        if (operations.openSize() != 0) {
+        if (operations.hasOpenOperation()) {
             operations.log("Ya hay una operación abierta");
             return;
         }

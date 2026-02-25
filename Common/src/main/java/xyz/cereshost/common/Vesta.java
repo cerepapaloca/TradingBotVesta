@@ -54,6 +54,12 @@ public class Vesta {
         for (StackTraceElement element : exception.getStackTrace()) {
             builder.append(element.toString()).append("\n\t");
         }
+        for (Throwable throwable : exception.getSuppressed()) {
+            builder.append("[").append(throwable.getCause()).append("=").append(throwable.getMessage()).append("]").append("\n\t");
+            for (StackTraceElement element : throwable.getStackTrace()) {
+                builder.append(element.toString()).append("\n\t");
+            }
+        }
         return String.format("%s [%s=%s] \n\t%s", message, exception.getClass().getSimpleName(), exception.getMessage(), builder);
     }
 }

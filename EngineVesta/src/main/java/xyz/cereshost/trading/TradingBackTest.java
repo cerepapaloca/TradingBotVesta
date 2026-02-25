@@ -2,9 +2,9 @@ package xyz.cereshost.trading;
 
 import lombok.Getter;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.BackTestEngine;
+import xyz.cereshost.message.MediaNotification;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -91,6 +91,16 @@ public class TradingBackTest implements Trading {
             backTestEngine.getStrategy().closeOperation(closeOperation);
         }
         closeOperations.clear();
+    }
+
+    @Override
+    public @NotNull MediaNotification getMediaNotification() {
+        return MediaNotification.empty();
+    }
+
+    @Override
+    public void setMediaNotification(@NotNull MediaNotification mediaNotification) {
+
     }
 
     public static class OpenOperationBackTest extends OpenOperation {

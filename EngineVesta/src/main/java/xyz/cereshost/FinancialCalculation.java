@@ -104,7 +104,7 @@ public class FinancialCalculation {
         Arrays.fill(signal, Double.NaN);
         Arrays.fill(hist, Double.NaN);
 
-        if (n == 0 || longPeriod <= 0 || shortPeriod <= 0 || longPeriod <= shortPeriod) {
+        if (n == 0 || shortPeriod <= 0 || longPeriod <= shortPeriod) {
             return new MACDResult(macd, signal, hist);
         }
 

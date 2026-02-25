@@ -1,31 +1,35 @@
 package xyz.cereshost.trading;
 
 import lombok.Getter;
+import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import xyz.cereshost.BinanceApiRest;
 import xyz.cereshost.DataSource;
-import xyz.cereshost.io.IOMarket;
-import xyz.cereshost.io.IOdata;
-import xyz.cereshost.utils.BuilderData;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
+import xyz.cereshost.exception.BinanceCodeWeakException;
+import xyz.cereshost.io.IOMarket;
+import xyz.cereshost.message.MediaNotification;
+import xyz.cereshost.message.Notifiable;
 import xyz.cereshost.strategy.TradingStrategy;
+import xyz.cereshost.utils.BuilderData;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
-public class TradingLoopBinance {
+public class TradingLoopBinance implements Notifiable {
 
     private static final long CANDLE_MS = 60_000;
     private static final long OFFSET = 5_000;
@@ -38,6 +42,8 @@ public class TradingLoopBinance {
     private final PredictionEngine engine;
     @Getter
     private final TradingStrategy strategy;
+    @NotNull @Getter @Setter
+    private MediaNotification mediaNotification;
 
     private static final ExecutorService WORKERS = Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r);
@@ -45,15 +51,20 @@ public class TradingLoopBinance {
                 return t;
             });
 
-    public TradingLoopBinance(String symbol, @Nullable PredictionEngine engine, TradingStrategy tradingStrategy) {
+    public TradingLoopBinance(@NotNull String symbol,
+                              @Nullable PredictionEngine engine,
+                              @NotNull TradingStrategy tradingStrategy,
+                              @NotNull BinanceApi binanceApi,
+                              @Nullable MediaNotification mediaNotification
+    ) {
         this.symbol = symbol;
         this.engine = engine;
         this.strategy = tradingStrategy;
+        this.mediaNotification = Objects.requireNonNullElse(mediaNotification, MediaNotification.empty());
         try {
-            IOdata.ApiKeysBinance apiKeysBinance = IOdata.loadApiKeysBinance();
-            BinanceApiRest binanceApiRest = new BinanceApiRest(apiKeysBinance.key(), apiKeysBinance.secret(), true);
-            binanceApiRest.setExceptionHandler(this::stop);
-            trading = new TradingBinance(binanceApiRest, IOMarket.loadMarkets(DataSource.LOCAL_NETWORK_MINIMAL, symbol));
+            binanceApi.setExceptionHandler(this::stop);
+            binanceApi.setMediaNotification(this.mediaNotification);
+            trading = new TradingBinance(binanceApi, mediaNotification, IOMarket.loadMarkets(DataSource.LOCAL_NETWORK_MINIMAL, symbol));
             trading.setTradingLoopBinance(this);
         } catch (InterruptedException | IOException e) {
             throw new RuntimeException(e);
@@ -63,6 +74,7 @@ public class TradingLoopBinance {
     public boolean isClose = false;
 
     public void startCandleLoop() {
+        trading.updateOrdensSimple();
         WORKERS.submit(() -> {
             while (!Thread.currentThread().isInterrupted() && !isClose) {
                 try {
@@ -78,17 +90,15 @@ public class TradingLoopBinance {
 
                     Vesta.info("🕑 Tiempo de procesamiento: %.2fss", (float) (System.currentTimeMillis() - time)/1000f);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    Vesta.sendErrorException("Error en el loop", e);
                     LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(1));
                 }
             }
         });
     }
 
-
-
     public static long getBinanceServerTime() throws Exception {
-        URL url = new URL("https://api.binance.com/api/v3/time");
+        URL url = URI.create("https://api.binance.com/api/v3/time").toURL();
         HttpURLConnection con = (HttpURLConnection) url.openConnection();
         con.setRequestMethod("GET");
 
@@ -116,7 +126,7 @@ public class TradingLoopBinance {
         });
 
         executor.execute(() -> {
-            trading.syncWithBinance();
+            trading.updateOrdens(symbol);
             latch.countDown();
         });
 
@@ -131,12 +141,15 @@ public class TradingLoopBinance {
             result = null;
         }
         trading.getOpens().forEach(Trading.OpenOperation::next);
-        trading.updateState(symbol);
         strategy.executeStrategy(result, visible, trading);
     }
 
     public void stop(Exception e){
-        Vesta.sendErrorException("Deteniendo Loop por: ", e);
-        isClose = true;
+        if (!(e instanceof BinanceCodeWeakException)) {
+            Vesta.sendErrorException("Deteniendo Loop por: ", e);
+            mediaNotification.critical(String.format("**Deteniendo Loop** por: %s. Revisar Consola para más información", e.getMessage()));
+            isClose = true;
+        }
+
     }
 }

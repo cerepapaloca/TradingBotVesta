@@ -7,8 +7,11 @@ import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.io.IOMarket;
+import xyz.cereshost.message.DiscordNotification;
 import xyz.cereshost.packet.PacketHandler;
 import xyz.cereshost.strategy.GammaStrategy;
+import xyz.cereshost.strategy.TestStrategy;
+import xyz.cereshost.trading.BinanceApiRest;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.trading.TradingLoopBinance;
 import xyz.cereshost.utils.BuilderData;
@@ -122,7 +125,7 @@ public class Main {
 //                }
 //                Vesta.info(roiMap.toString());
             }
-            case "trading" -> new TradingLoopBinance("XRPUSDC", null, new GammaStrategy()).startCandleLoop();
+            case "trading" -> new TradingLoopBinance("XRPUSDC", null, new GammaStrategy(), new BinanceApiRest(true), new DiscordNotification()).startCandleLoop();
             case "extract" -> IOMarket.extractFirstBin(Path.of(IOMarket.STORAGE_DIR + "\\" + SYMBOL +"\\trades"));
             case "diagnose" -> ModelDiagnostics.run();
         }

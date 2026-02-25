@@ -19,6 +19,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.stream.Stream;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -42,8 +43,6 @@ public class IOdata {
                 StandardOpenOption.TRUNCATE_EXISTING
         );
     }
-
-    private static boolean flipflop;
 
     public static Path createTrainingCacheDir() throws IOException {
         Path dir = new CacheProperties(VestaEngine.LOOK_BACK, BuilderData.FEATURES, 5, Main.SYMBOLS_TRAINING, Main.MAX_MONTH_TRAINING, -1).getPath();
@@ -225,7 +224,7 @@ public class IOdata {
     /**
      * Cargar ambos normalizadores
      */
-    public static Pair<XNormalizer, YNormalizer> loadNormalizers() throws IOException, JsonIOException, FileNotFoundException {
+    public static Pair<XNormalizer, YNormalizer> loadNormalizers() throws IOException, JsonIOException {
         XNormalizer xNorm = loadXNormalizer();
         YNormalizer yNorm = loadYNormalizer();
         return new Pair<>(xNorm, yNorm);
@@ -328,7 +327,7 @@ public class IOdata {
         public Path getPath() {
             return Paths.get(CACHE_DIR, "cache", this.getUUID().toString());
         }
-    };
+    }
 
     private static Path getDir() throws IOException {
         try (var stream = Files.list(Paths.get(CACHE_DIR, "cache"))) {
@@ -349,7 +348,7 @@ public class IOdata {
     }
 
     public static TrainingData getBuiltData() throws IOException {
-        CacheProperties cacheProperties = loadCacheProperties();
+        CacheProperties cacheProperties = Objects.requireNonNull(loadCacheProperties());
         List<Path> cacheFiles = new ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(Path.of(CACHE_DIR, "cache", cacheProperties.getUUID().toString()))) {
             for (Path path : stream) {
@@ -388,7 +387,29 @@ public class IOdata {
         }
     }
 
+    public record DiscordConfig(String token, String userRaw){
+        public List<String> users(){
+            return Arrays.asList(userRaw.split(","));
+        }
+    }
 
+    public static DiscordConfig loadDiscordConfig() throws IOException {
+        Path path = Paths.get("discord.properties");
+        if (Files.exists(path)){
+            Properties properties = new Properties();
+            properties.load(Files.newInputStream(path));
+            return new DiscordConfig(properties.getProperty("token"), properties.getProperty("users"));
+        }else {
+            Properties props = new Properties();
+            props.setProperty("token", "");
+            props.setProperty("users", "");
+
+            try (OutputStream os = Files.newOutputStream(path)) {
+                props.store(os, "configuración de discord");
+            }
+            return new DiscordConfig("", "");
+        }
+    }
 }
 
 

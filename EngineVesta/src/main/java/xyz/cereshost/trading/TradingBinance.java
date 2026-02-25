@@ -4,9 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.BinanceApiRest;
+import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Market;
+import xyz.cereshost.message.MediaNotification;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,20 +16,24 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class TradingBinance implements Trading {
 
-    private final BinanceApiRest binanceApiRest;
+    private static final double POSITION_EPSILON = 1.0e-8;
+    private final BinanceApi binanceApiRest;
     private int lastLeverage = 1;
     private double lastBalance = 0;
     @Setter
     private TradingLoopBinance tradingLoopBinance;
+    @Getter @Setter @NotNull
+    private MediaNotification mediaNotification;
 
     // Mapa para vincular tu UUID interno con los IDs de órdenes de Binance
     private final ConcurrentHashMap<UUID, BinanceOpenOperation> activeOperations = new ConcurrentHashMap<>();
     private final List<CloseOperation> closedOperations = Collections.synchronizedList(new ArrayList<>());
     private final Market market;
 
-    public TradingBinance(BinanceApiRest binanceApiRest, Market market) {
+    public TradingBinance(@NotNull BinanceApi binanceApiRest, @Nullable MediaNotification mediaNotification, @NotNull Market market) {
         this.binanceApiRest = binanceApiRest;
         this.market = market;
+        this.mediaNotification = Objects.requireNonNullElse(mediaNotification, MediaNotification.empty());
     }
 
     @Override
@@ -39,11 +44,7 @@ public class TradingBinance implements Trading {
 
             tradingLoopBinance.getExecutor().execute(() -> {
                 if (lastLeverage != leverage) {
-                    try {
-                        binanceApiRest.changeLeverage(symbol, leverage);
-                    } catch (Exception e) {
-                        tradingLoopBinance.stop(e);
-                    }
+                    binanceApiRest.changeLeverage(symbol, leverage);
                 }
                 lastLeverage = leverage;
                 latch.countDown();
@@ -65,11 +66,7 @@ public class TradingBinance implements Trading {
             });
             AtomicReference<Double> currentPrice = new AtomicReference<>(0d);
             tradingLoopBinance.getExecutor().execute(() -> {
-                try {
-                    currentPrice.set(binanceApiRest.getTickerPrice(symbol));
-                } catch (Exception e) {
-                    tradingLoopBinance.stop(e);
-                }
+                currentPrice.set(binanceApiRest.getTickerPrice(symbol));
                 latch.countDown();
             });
             latch.await();
@@ -88,9 +85,13 @@ public class TradingBinance implements Trading {
             String colorRed = "\u001B[31m";
             String reset = "\u001B[0m";
             String displayDireccion = direccion == DireccionOperation.LONG ? colorGreen + direccion.name() + reset : colorRed + direccion.name() + reset;
-            Vesta.info(String.format("🔓 Abriendo %s, con un margen: %.3f$. " + colorRed + " TP %.2f%% (%.4f$) " + colorGreen + "SL %.2f%% (%.4f$)" + reset + " (%s)",
+            Vesta.info(String.format("🔓 Abriendo operacion %s, con un margen: %.3f$. " + colorRed + " TP %.2f%% (%.4f$) " + colorGreen + "SL %.2f%% (%.4f$)" + reset + " (%s)",
                     displayDireccion, amountUSDT, tpPercent, op.getTpPrice(), slPercent, op.getSlPrice(), op.getUuid()
             ));
+            info("Abriendo operacion **%s** con un margen: %.3f$. **TP %.2f%%** (%.4f$) **SL %.2f%%** (%.4f$)",  direccion.name(), amountUSDT,
+                    tpPercent, op.getTpPrice(),
+                    slPercent, op.getSlPrice()
+            );
             // obtener Precios
             double tpPrice = op.getTpPrice();
             double slPrice = op.getSlPrice();
@@ -102,31 +103,20 @@ public class TradingBinance implements Trading {
             String closeSide = (side.equals("BUY")) ? "SELL" : "BUY";
 
             tradingLoopBinance.getExecutor().execute(() ->{
-                long slOrderId = 0;
-                try {
-                    slOrderId = binanceApiRest.placeAlgoOrder(symbol, closeSide, "STOP_MARKET", null, slPrice, true, true);
-                } catch (Exception e) {
-                    tradingLoopBinance.stop(e);
-                }
+                long slOrderId = binanceApiRest.placeAlgoOrder(symbol, closeSide, "STOP_MARKET", null, slPrice, true, true);
                 op.setSlBinanceId(slOrderId);
                 op.setSlIsAlgo(true);
             });
 
             tradingLoopBinance.getExecutor().execute(() -> {
-                long tpOrderId = 0;
-                try {
-                    tpOrderId = binanceApiRest.placeAlgoOrder(symbol, closeSide, "TAKE_PROFIT_MARKET", null, tpPrice, true, true);
-                } catch (Exception e) {
-                    tradingLoopBinance.stop(e);
-                }
+                long tpOrderId = binanceApiRest.placeAlgoOrder(symbol, closeSide, "TAKE_PROFIT_MARKET", null, tpPrice, true, true);
                 op.setTpBinanceId(tpOrderId);
                 op.setTpIsAlgo(true);
             });
 
             activeOperations.put(op.getUuid(), op);
-        } catch (Exception e) {
-            Vesta.error("Binance Error Open Async: " + e.getMessage());
-            e.printStackTrace();
+        } catch (InterruptedException e) {
+            Vesta.sendErrorException("Binance Error Open Async", e);
         }
     }
 
@@ -138,7 +128,8 @@ public class TradingBinance implements Trading {
         String symbol = getMarket().getSymbol();
         try {
             CountDownLatch latch = new CountDownLatch(2);
-            Vesta.info("🔒 Cerrando operación " + uuidOpenOperation + " por " + reason);
+            Vesta.info("🔒 Cerrando operacion: %s por %s", uuidOpenOperation, reason);
+            info("Cerrando operacion: %s por %s", uuidOpenOperation, reason);
 
             // 1. Cancelar SL y TP pendientes
             tradingLoopBinance.getExecutor().execute(() -> {
@@ -158,11 +149,7 @@ public class TradingBinance implements Trading {
             String qtyStr = binanceApiRest.formatQuantity(symbol, quantity);
 
             tradingLoopBinance.getExecutor().execute(() -> {
-                try {
-                    binanceApiRest.placeOrder(symbol, closeSide, "MARKET", qtyStr, null, true, false);
-                } catch (Exception e) {
-                    tradingLoopBinance.stop(e);
-                }
+                binanceApiRest.placeOrder(symbol, closeSide, "MARKET", qtyStr, null, true, false);
             });
 
             // 3. Registrar cierre
@@ -173,9 +160,8 @@ public class TradingBinance implements Trading {
 
             closedOperations.add(closeOp);
             activeOperations.remove(uuidOpenOperation);
-
-        } catch (Exception e) {
-            Vesta.error("Binance Error Close: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Vesta.sendErrorException("Binance Error Open Async", e);
         }
     }
 
@@ -247,73 +233,125 @@ public class TradingBinance implements Trading {
         Vesta.info("📃 " + log);
     }
 
-    public void syncWithBinance() {
+    public void updateOrdensSimple() {
         String symbol = getMarket().getSymbol();
         lastBalance = 0;
-        // 1. Obtener posiciones actuales
-        TreeMap<String, String> params = new TreeMap<>();
-        params.put("symbol", symbol);
-        JsonNode positions = binanceApiRest.sendSignedRequest("GET", "/fapi/v2/positionRisk", params);
-        // Si no hay posición abierta pero tenemos operaciones activas, limpiar
-        if (positions.isArray() && positions.isEmpty() && !activeOperations.isEmpty()) {
-            Vesta.warning("No hay posición en Binance pero tenemos operaciones activas. Limpiando...");
-            activeOperations.clear();
+        try {
+            if (!hasOpenPositionOnBinance(symbol)) {
+                reconcileNoPositionOnBinance(symbol, "syncWithBinance");
+            }
+        } catch (Exception e) {
+            Vesta.error("Binance sync error: " + e.getMessage());
+        }
+    }
+
+    public void updateOrdens(String symbol) {
+        if (activeOperations.isEmpty()) {
             return;
         }
 
-        // 2. Verificar cada posición
-        for (JsonNode position : positions) {
-            String posSymbol = position.get("symbol").asText();
-            if (symbol.equals(posSymbol)) {
-                double positionAmt = position.get("positionAmt").asDouble();
-                if (Math.abs(positionAmt) <= 0) {
-                    // Posición cerrada en Binance
-                    Vesta.warning("Posición cerrada en Binance. Limpiando operaciones locales...");
-                    activeOperations.clear();
+        try {
+            if (!hasOpenPositionOnBinance(symbol)) {
+                reconcileNoPositionOnBinance(symbol, "updateState");
+                return;
+            }
+        } catch (Exception e) {
+            Vesta.error("Error checking Binance position: " + e.getMessage());
+            return;
+        }
+
+        List<Map.Entry<UUID, BinanceOpenOperation>> snapshot = new ArrayList<>(activeOperations.entrySet());
+        for (Map.Entry<UUID, BinanceOpenOperation> entry : snapshot) {
+            UUID uuid = entry.getKey();
+            BinanceOpenOperation op = entry.getValue();
+            if (!activeOperations.containsKey(uuid)) {
+                continue;
+            }
+
+            try {
+                if (binanceApiRest.checkOrderFilled(symbol, op.getSlBinanceId(), op.isSlIsAlgo())) {
+                    Vesta.info("Binance: SL detectado ejecutado para " + op.getUuid());
+                    binanceApiRest.cancelOrder(symbol, op.getTpBinanceId(), op.isTpIsAlgo());
+                    closeAndRemoveOperation(op,
+                            op.getDireccion() == DireccionOperation.LONG ? ExitReason.LONG_STOP_LOSS : ExitReason.SHORT_STOP_LOSS,
+                            "sl_filled");
+                    continue;
                 }
+
+                if (binanceApiRest.checkOrderFilled(symbol, op.getTpBinanceId(), op.isTpIsAlgo())) {
+                    Vesta.info("Binance: TP detectado ejecutado para " + op.getUuid());
+                    binanceApiRest.cancelOrder(symbol, op.getSlBinanceId(), op.isSlIsAlgo());
+                    closeAndRemoveOperation(op,
+                            op.getDireccion() == DireccionOperation.LONG ? ExitReason.LONG_TAKE_PROFIT : ExitReason.SHORT_TAKE_PROFIT,
+                            "tp_filled");
+                }
+            } catch (Exception e) {
+                Vesta.error("Error updating state: " + e.getMessage());
             }
         }
     }
 
-    public void updateState(String symbol) {
-        Iterator<Map.Entry<UUID, BinanceOpenOperation>> it = activeOperations.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<UUID, BinanceOpenOperation> entry = it.next();
-            BinanceOpenOperation op = entry.getValue();
-            tradingLoopBinance.getExecutor().execute(() -> {
-                try {
-                    // Verificar estado del SL
-                    if (binanceApiRest.checkOrderFilled(symbol, op.getSlBinanceId(), op.isSlIsAlgo())) {
-                        Vesta.info("Binance: SL detectado ejecutado para " + op.getUuid());
-                        // Cancelar el TP restante
-                        binanceApiRest.cancelOrder(symbol, op.getTpBinanceId(), op.isTpIsAlgo());
-                        // Registrar cierre
-                        var close = new BinanceCloseOperation(op, op.getDireccion() == DireccionOperation.LONG ?
-                                ExitReason.LONG_STOP_LOSS : ExitReason.SHORT_STOP_LOSS);
-                        closedOperations.add(close);
-                        it.remove();
-                        tradingLoopBinance.getStrategy().closeOperation(close);
-                        return;
-                    }
+    private boolean hasOpenPositionOnBinance(String symbol) {
+        TreeMap<String, String> params = new TreeMap<>();
+        params.put("symbol", symbol);
+        JsonNode positions = binanceApiRest.sendSignedRequest("GET", "/fapi/v2/positionRisk", params);
 
-                    // Verificar estado del TP
-                    if (binanceApiRest.checkOrderFilled(symbol, op.getTpBinanceId(), op.isTpIsAlgo())) {
-                        Vesta.info("Binance: TP detectado ejecutado para " + op.getUuid());
-                        // Cancelar el SL restante
-                        binanceApiRest.cancelOrder(symbol, op.getSlBinanceId(), op.isSlIsAlgo());
-                        // Registrar cierre
-                        var close = new BinanceCloseOperation(op, op.getDireccion() == DireccionOperation.LONG ?
-                                ExitReason.LONG_TAKE_PROFIT : ExitReason.SHORT_TAKE_PROFIT);
-                        closedOperations.add(close);
-                        tradingLoopBinance.getStrategy().closeOperation(close);
-                        it.remove();
-                    }
-
-                } catch (Exception e) {
-                    Vesta.error("Error updating state: " + e.getMessage());
-                }
-            });
+        if (positions == null || positions.isNull()) {
+            return false;
         }
+
+        if (positions.isArray()) {
+            for (JsonNode position : positions) {
+                if (!symbol.equalsIgnoreCase(position.path("symbol").asText())) {
+                    continue;
+                }
+                if (Math.abs(position.path("positionAmt").asDouble(0.0)) > POSITION_EPSILON) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (positions.isObject() && symbol.equalsIgnoreCase(positions.path("symbol").asText(symbol))) {
+            return Math.abs(positions.path("positionAmt").asDouble(0.0)) > POSITION_EPSILON;
+        }
+
+        return false;
+    }
+
+    private void reconcileNoPositionOnBinance(String symbol, String source) {
+        if (activeOperations.isEmpty()) {
+            return;
+        }
+
+        Vesta.warning("No hay posición activa en Binance para " + symbol + ". Reconciliando estado local (" + source + ").");
+        List<BinanceOpenOperation> snapshot = new ArrayList<>(activeOperations.values());
+        for (BinanceOpenOperation op : snapshot) {
+            binanceApiRest.cancelOrder(symbol, op.getSlBinanceId(), op.isSlIsAlgo());
+            binanceApiRest.cancelOrder(symbol, op.getTpBinanceId(), op.isTpIsAlgo());
+            closeAndRemoveOperation(op, ExitReason.STRATEGY, "binance_position_closed");
+        }
+    }
+
+    private void closeAndRemoveOperation(BinanceOpenOperation op, ExitReason reason, String source) {
+        if (!activeOperations.remove(op.getUuid(), op)) {
+            return;
+        }
+
+//        double exitPrice = op.getEntryPrice();
+//        try {
+//            exitPrice = binanceApiRest.getTickerPrice(getMarket().getSymbol());
+//        } catch (Exception e) {
+//            Vesta.warning("No se pudo obtener precio de salida en reconciliación: " + e.getMessage());
+//        }
+
+        BinanceCloseOperation close = new BinanceCloseOperation(op, reason);
+        closedOperations.add(close);
+
+        if (tradingLoopBinance != null && tradingLoopBinance.getStrategy() != null) {
+            tradingLoopBinance.getStrategy().closeOperation(close);
+        }
+        Vesta.info("Operación reconciliada por Binance: " + op.getUuid() + " (" + source + ")");
     }
 
     @Getter

@@ -1,39 +1,48 @@
-package xyz.cereshost;
+package xyz.cereshost.trading;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.exception.BinanceApiRequestException;
-import xyz.cereshost.exception.BinanceCodeException;
 import xyz.cereshost.exception.BinanceApiSignedRequestException;
+import xyz.cereshost.exception.BinanceCodeException;
+import xyz.cereshost.exception.BinanceCodeWeakException;
+import xyz.cereshost.io.IOdata;
+import xyz.cereshost.message.MediaNotification;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.util.*;
+import java.util.List;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 
 @Getter
 @Setter
-public final class BinanceApiRest {
+public final class BinanceApiRest implements BinanceApi {
 
     private final String apiKey;
     private final String secretKey;
     private final String baseUrl;
-    private final List<Integer> weakErrosCode = List.of(-2021);
+    // Errores "idempotentes" que no deben detener el loop (ej: cancelar una orden ya cerrada).
+    private static final List<Integer> WEAK_ERROS_CODE = List.of(-2021, -2011);
     private final HttpClient client = HttpClient.newHttpClient();
 
-    @NotNull
-    private Consumer<Exception> exceptionHandler = e -> {};
+    @NotNull private MediaNotification mediaNotification = MediaNotification.empty();
+    @NotNull private Consumer<Exception> exceptionHandler = e -> {};
+
+    public BinanceApiRest(boolean isTestNet) throws IOException {
+        IOdata.ApiKeysBinance apiKeysBinance = IOdata.loadApiKeysBinance();
+        this.apiKey = apiKeysBinance.key();
+        this.secretKey = apiKeysBinance.secret();
+        this.baseUrl = isTestNet ? "https://testnet.binancefuture.com" : "https://fapi.binance.com";
+    }
 
     public BinanceApiRest(String apiKey, String secretKey, boolean isTestNet) {
         this.apiKey = apiKey;
@@ -41,6 +50,7 @@ public final class BinanceApiRest {
         this.baseUrl = isTestNet ? "https://testnet.binancefuture.com" : "https://fapi.binance.com";
     }
 
+    @Override
     public long placeOrder(String symbol,
                            String side,
                            String type,
@@ -69,13 +79,10 @@ public final class BinanceApiRest {
                 " closePosition:" + closePosition);
 
         JsonNode root = sendSignedRequest("POST", "/fapi/v1/order", params);
-        if (root.has("orderId")) {
-            return root.get("orderId").asLong();
-        } else {
-            throw new RuntimeException("Respuesta desconocida: " + root);
-        }
+        return root.get("orderId").asLong();
     }
 
+    @Override
     public long placeAlgoOrder(String symbol,
                                String side,
                                String type,
@@ -111,15 +118,10 @@ public final class BinanceApiRest {
 
         // Usar el endpoint de órdenes algorítmicas
         JsonNode root = sendSignedRequest("POST", "/fapi/v1/algoOrder", params);
-
-
-        if (root.has("algoId")) {
-            return root.get("algoId").asLong();   // ¡Devuelve el algoId, no orderId!
-        } else {
-            throw new RuntimeException("Respuesta desconocida: " + root);
-        }
+        return root.get("algoId").asLong();
     }
 
+    @Override
     public void cancelOrder(String symbol, long orderId, boolean isAlgoOrder) {
         try {
             if (orderId == 0) return;
@@ -137,6 +139,7 @@ public final class BinanceApiRest {
         }
     }
 
+    @Override
     public boolean checkOrderFilled(String symbol, long orderId, boolean isAlgoOrder) {
         if (orderId == 0) return false;
 
@@ -167,6 +170,7 @@ public final class BinanceApiRest {
         }
     }
 
+    @Override
     public void closeAll(String symbol) {
         try {
             // 1. Obtener posiciones actuales
@@ -203,6 +207,7 @@ public final class BinanceApiRest {
         }
     }
 
+    @Override
     public void changeLeverage(String symbol, int leverage) {
         TreeMap<String, String> params = new TreeMap<>();
         params.put("symbol", symbol);
@@ -210,6 +215,7 @@ public final class BinanceApiRest {
         sendSignedRequest("POST", "/fapi/v1/leverage", params);
     }
 
+    @Override
     public double getTickerPrice(String symbol) {
         TreeMap<String, String> params = new TreeMap<>();
         params.put("symbol", symbol);
@@ -217,6 +223,7 @@ public final class BinanceApiRest {
         return root.get("price").asDouble();
     }
 
+    @Override
     public JsonNode sendSignedRequest(String method, String endpoint, TreeMap<String, String> params) throws BinanceApiSignedRequestException {
         params.put("timestamp", String.valueOf(System.currentTimeMillis()));
         params.put("recvWindow", "20000");
@@ -235,7 +242,7 @@ public final class BinanceApiRest {
             // Parsear la respuesta
             ObjectMapper mapper = new ObjectMapper();
             JsonNode root = mapper.readTree(response.body());
-            checkRepose(root, method, endpoint);
+            checkRepose(root, method, endpoint, params.get("symbol"));
             return root;
         }catch (Exception e) {
             exceptionHandler.accept(e);
@@ -243,6 +250,7 @@ public final class BinanceApiRest {
         }
     }
 
+    @Override
     public JsonNode sendRequest(String method, String endpoint, TreeMap<String, String> params) throws BinanceApiRequestException {
         try {
             params.put("timestamp", String.valueOf(System.currentTimeMillis()));
@@ -256,7 +264,7 @@ public final class BinanceApiRest {
                     .build();
             ObjectMapper mapper = new ObjectMapper();
             JsonNode root = mapper.readTree(client.send(request, HttpResponse.BodyHandlers.ofString()).body());
-            checkRepose(root, method, endpoint);
+            checkRepose(root, method, endpoint, params.get("symbol"));
             return root;
         } catch (Exception e) {
             exceptionHandler.accept(e);
@@ -264,55 +272,23 @@ public final class BinanceApiRest {
         }
     }
 
-    public String buildQueryString(TreeMap<String, String> params) {
-        StringJoiner sj = new StringJoiner("&");
-        for (Map.Entry<String, String> entry : params.entrySet()) {
-            sj.add(entry.getKey() + "=" + entry.getValue());
-        }
-        return sj.toString();
-    }
-
-    public String hmacSha256(String data, String secret) throws NoSuchAlgorithmException, InvalidKeyException {
-        Mac sha256_HMAC = Mac.getInstance("HmacSHA256");
-        SecretKeySpec secret_key = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        sha256_HMAC.init(secret_key);
-        byte[] raw = sha256_HMAC.doFinal(data.getBytes(StandardCharsets.UTF_8));
-        StringBuilder hex = new StringBuilder(2 * raw.length);
-        for (byte b : raw) {
-            hex.append(String.format("%02x", b));
-        }
-        return hex.toString();
-    }
-
-    // TODO: hacer que esté método obtenga el formato automáticamente
-    public String formatQuantity(String symbol, double qty) {
-        if (symbol.startsWith("BTC")) return String.format(Locale.US, "%.3f", qty);
-        if (symbol.startsWith("ETH")) return String.format(Locale.US, "%.2f", qty);
-        if (symbol.startsWith("XRP")) return String.format(Locale.US, "%.1f", qty);
-
-        return String.format(Locale.US, "%.0f", qty); // Default int
-    }
-
-    public String formatPrice(String symbol, double price) {
-        if (symbol.startsWith("BTC")) return String.format(Locale.US, "%.1f", price);
-        if (symbol.startsWith("XRP")) return String.format(Locale.US, "%.4f", price);
-
-        return String.format(Locale.US, "%.2f", price);
-    }
-
-    private void checkRepose(JsonNode node, String method, String endpoint) throws BinanceCodeException {
+    @Override
+    public void checkRepose(@NotNull JsonNode node, @NotNull String method, @NotNull String endpoint, @Nullable String symbol) throws BinanceCodeException {
         if (node.has("code") && node.get("code").asInt() != 0) {
-            if (node.get("code").asInt() == 200) {
+            int code = node.get("code").asInt();
+            if (code == 200) {
                 Vesta.info("✅ operacion Ok (%s:%s)", method, endpoint);
             }else {
-                if (weakErrosCode.contains(node.get("code").asInt())) {
-                    try {
-                        throw new BinanceCodeException(node);
-                    }catch (BinanceCodeException e){
-                        Vesta.sendWaringException("Error al hacer una petición" , e);
-                    }
+                if (WEAK_ERROS_CODE.contains(code)) {
+                    if (code == -2021 && symbol != null) closeAll(symbol);
+                    BinanceCodeWeakException e = new BinanceCodeWeakException(node, method, endpoint);
+                    mediaNotification.waring("Error al hacer una petición: **%s**. Revisa la consola para más información", e.getMessage());
+                    Vesta.sendWaringException("Error al hacer una petición" , e);
+                    throw e;
                 }else {
-                    BinanceCodeException exception = new BinanceCodeException(node);
+                    if (symbol != null) closeAll(symbol);
+                    BinanceCodeException exception = new BinanceCodeException(node, method, endpoint);
+                    mediaNotification.error("Error al hacer una petición: **%s**. Revisa la consola para más información", exception.getMessage());
                     exceptionHandler.accept(exception);
                     throw exception;
                 }

@@ -9,13 +9,12 @@ import java.util.List;
 public class TestStrategy implements TradingStrategy {
     @Override
     public void executeStrategy(PredictionEngine.PredictionResult prediction, List<Candle> visibleCandles, Trading openOperations) {
-        if (openOperations.openSize() != 0){
+        if (openOperations.hasOpenOperation()){
             for (Trading.OpenOperation operation : openOperations.getOpens()){
                 openOperations.close(Trading.ExitReason.STRATEGY, operation.getUuid());
             }
         }else {
-            openOperations.open(0.9, 0.3, Trading.DireccionOperation.SHORT, openOperations.getAvailableBalance()/2, 1);
-
+            openOperations.open(0.9, 0.001, Trading.DireccionOperation.SHORT, openOperations.getAvailableBalance()/2, 1);
         }
     }
 

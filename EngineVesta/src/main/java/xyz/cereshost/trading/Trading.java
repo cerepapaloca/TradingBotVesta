@@ -3,13 +3,14 @@ package xyz.cereshost.trading;
 import lombok.Data;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.common.market.Market;
+import xyz.cereshost.message.Notifiable;
 
 import java.util.List;
 import java.util.UUID;
 
 import static xyz.cereshost.trading.Trading.DireccionOperation.SHORT;
 
-public interface Trading {
+public interface Trading extends Notifiable {
     // Abrir una operación
     void open(double tpPercent, double slPercent, DireccionOperation direccion, double amountUSDT, int leverage);
 
@@ -32,11 +33,10 @@ public interface Trading {
 
     double getAvailableBalance();
 
-     default void log(String s){};
+    default void log(String s){};
 
     @Data
     abstract class CloseOperation {
-
 
         private final double exitPrice;
         private final ExitReason reason;
@@ -109,7 +109,7 @@ public interface Trading {
     enum DireccionOperation {
         SHORT,
         LONG,
-        // OJO no se puede operar con neutral solo es una forma de identificar operacion sin movimiento ósea no hacer
+        // OJO no se puede operar con neutral solo es una forma de identificar operacion sin movimiento ósea no hacer nada
         NEUTRAL
     }
 
