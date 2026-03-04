@@ -8,7 +8,6 @@ import xyz.cereshost.engine.BackTestEngine;
 import xyz.cereshost.engine.VestaEngine;
 import xyz.cereshost.io.IOMarket;
 import xyz.cereshost.message.DiscordNotification;
-import xyz.cereshost.packet.PacketHandler;
 import xyz.cereshost.strategy.GammaStrategy;
 import xyz.cereshost.trading.BinanceApiRest;
 import xyz.cereshost.trading.Trading;
@@ -21,12 +20,10 @@ import xyz.cereshost.utils.ModelDiagnostics;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.text.DecimalFormat;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Main {
 
@@ -103,19 +100,24 @@ public class Main {
             case "backtest" -> {
                 Market market = new Market("SOLUSDC");
                 List<CompletableFuture<Market>> task = new ArrayList<>();
-                for (int day = 90; day >= 0; day--) {
+                for (int day = 30; day >= 0; day--) {
                     int finalDay = day;
                     task.add(CompletableFuture.supplyAsync(() -> {
                         try {
-                            return Objects.requireNonNull(IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, "SOLUSDC", finalDay), "Dia: " + finalDay);                        } catch (InterruptedException | IOException e) {
-                            throw new RuntimeException(e);
+                            return Objects.requireNonNull(IOMarket.loadMarkets(Main.DATA_SOURCE_FOR_BACK_TEST, "SOLUSDC", finalDay), "Dia: " + finalDay);
+                        } catch (InterruptedException | IOException e) {
+                            return null;
                         }
                     }, VestaEngine.EXECUTOR_AUXILIAR_BUILD));
                 }
                 for (CompletableFuture<Market> future : task) {
                     Market m = future.get();
+                    if (m == null) continue;
                     market.concat(m);
                 }
+                AtomicInteger i = new AtomicInteger(4);
+                market.concat(IOMarket.loadMarkets(DataSource.BINANCE, "SOLUSDC"));
+                market.getCandleSimples().removeIf(cs -> ((cs.openTime() % ((1000 * 60 * 60 * 24))) == 0));
                 Vesta.info("🔙 Ejecutando backtest...");
                 market.sortd();
                 showDataBackTest(new BackTestEngine(market, null, new GammaStrategy()).run());
@@ -125,7 +127,7 @@ public class Main {
 //                }
 //                Vesta.info(roiMap.toString());
             }
-            case "trading" -> new TradingTickLoop("SOLUSDC", null, new GammaStrategy(), new BinanceApiRest(false), new DiscordNotification()).startCandleLoop();
+            case "trading" -> new TradingTickLoop("SOLUSDC", null, new GammaStrategy(), new BinanceApiRest(true), new DiscordNotification()).startCandleLoop();
             case "extract" -> IOMarket.extractFirstBin(Path.of(IOMarket.STORAGE_DIR + "\\" + SYMBOL +"\\trades"));
             case "diagnose" -> ModelDiagnostics.run();
         }

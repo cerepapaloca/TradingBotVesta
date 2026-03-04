@@ -2,11 +2,13 @@ package xyz.cereshost.trading;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.DataSource;
 import xyz.cereshost.common.Vesta;
 import xyz.cereshost.common.market.Candle;
+import xyz.cereshost.common.market.CandleSimple;
 import xyz.cereshost.common.market.Market;
 import xyz.cereshost.engine.PredictionEngine;
 import xyz.cereshost.engine.VestaEngine;
@@ -23,6 +25,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.*;
@@ -33,6 +36,8 @@ public final class TradingTickLoop implements Notifiable {
 
     private static final long CANDLE_MS = 60_000;
     private static final long OFFSET = 1_500;
+    private static final int LOCAL_ZIP_WARMUP_DAYS = 5;
+    private static final int HISTORY_WINDOW_CANDLES = 5_500;
     private final String symbol;
     @Getter
     private final Executor executor = Executors.newFixedThreadPool(6);
@@ -44,8 +49,10 @@ public final class TradingTickLoop implements Notifiable {
     private final TradingStrategy strategy;
     @NotNull @Getter @Setter
     private MediaNotification mediaNotification;
+    @Nullable
+    private final Market localWarmupMarket;
 
-    private static final ExecutorService WORKERS = Executors.newSingleThreadExecutor(r -> {
+    private static final ScheduledExecutorService WORKERS = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r);
                 t.setName("Candle-Worker");
                 return t;
@@ -64,7 +71,20 @@ public final class TradingTickLoop implements Notifiable {
         try {
             binanceApi.setExceptionHandler(this::stop);
             binanceApi.setMediaNotification(this.mediaNotification);
-            trading = new TradingBinance(binanceApi, mediaNotification, IOMarket.loadMarkets(DataSource.BINANCE, symbol));
+
+            Market warmupMarket = IOMarket.loadMarketsRecentDays(symbol, LOCAL_ZIP_WARMUP_DAYS, true);
+            if (warmupMarket.getCandleSimples().isEmpty()) {
+                this.localWarmupMarket = null;
+                Vesta.warning("No se encontró histórico LOCAL_ZIP para warmup, usando solo BINANCE en vivo.");
+            } else {
+                this.localWarmupMarket = warmupMarket;
+                Vesta.info("Warmup cargado desde LOCAL_ZIP: %d días (%d velas).",
+                        LOCAL_ZIP_WARMUP_DAYS, warmupMarket.getCandleSimples().size()
+                );
+            }
+
+            Market bootMarket = loadMarkt();
+            trading = new TradingBinance(binanceApi, mediaNotification, bootMarket);
             trading.setTradingTickLoop(this);
         } catch (InterruptedException | IOException e) {
             throw new RuntimeException(e);
@@ -75,6 +95,16 @@ public final class TradingTickLoop implements Notifiable {
 
     public void startCandleLoop() {
         trading.updateOrdensSimple();
+        if (localWarmupMarket != null) {
+            WORKERS.scheduleAtFixedRate(() -> {
+                try {
+                    localWarmupMarket.clear();
+                    localWarmupMarket.concat(IOMarket.loadMarketsRecentDays(symbol, LOCAL_ZIP_WARMUP_DAYS, false));
+                } catch (InterruptedException | IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }, 12, 12, TimeUnit.HOURS);
+        }
         WORKERS.submit(() -> {
             while (!Thread.currentThread().isInterrupted() && !isClose) {
                 try {
@@ -120,11 +150,12 @@ public final class TradingTickLoop implements Notifiable {
 
         executor.execute(() -> {
             try {
-                market.set(IOMarket.loadMarkets(DataSource.BINANCE, symbol));
+                market.set(loadMarkt());
             } catch (InterruptedException | IOException e) {
                 stop(e);
+            } finally {
+                latch.countDown();
             }
-            latch.countDown();
         });
 
         executor.execute(() -> {
@@ -133,9 +164,24 @@ public final class TradingTickLoop implements Notifiable {
         });
 
         latch.await();
-        market.get().sortd();
-        List<Candle> allCandles = BuilderData.to1mCandles(market.get());
-        List<Candle> visible = allCandles.subList(VestaEngine.LOOK_BACK, allCandles.size() - 1);
+        Market tickMarket = market.get();
+        if (tickMarket == null) {
+            Vesta.warning("No se pudo cargar mercado para este tick.");
+            return;
+        }
+        tickMarket.getCandleSimples().removeIf(cs -> (cs.openTime() % (1000 * 60 * 60 * 24)) == 0);
+        List<Candle> allCandles = BuilderData.to1mCandles(tickMarket);
+        if (allCandles.size() <= VestaEngine.LOOK_BACK + 1) {
+            Vesta.warning("Histórico insuficiente para tick: %d velas", allCandles.size());
+            return;
+        }
+
+        int endExclusive = allCandles.size() - 1;
+        int startInclusive = Math.max(VestaEngine.LOOK_BACK, endExclusive - HISTORY_WINDOW_CANDLES);
+        if (startInclusive >= endExclusive) {
+            return;
+        }
+        List<Candle> visible = allCandles.subList(startInclusive, endExclusive);
         PredictionEngine.PredictionResult result;
         if (engine != null) {
             result = engine.predictNextPriceDetail(visible, symbol);
@@ -199,6 +245,19 @@ public final class TradingTickLoop implements Notifiable {
             updateStatus();
             isClose = true;
         }
-
     }
+
+    @Contract(pure = true, value = " -> new")
+    public Market loadMarkt() throws IOException, InterruptedException {
+        Market liveMarket = IOMarket.loadMarkets(DataSource.BINANCE, symbol);
+        if (localWarmupMarket == null || localWarmupMarket.getCandleSimples().isEmpty()) {
+            return liveMarket;
+        }
+
+        Market merged = new Market(symbol);
+        merged.concat(localWarmupMarket);
+        merged.concat(liveMarket);
+        merged.sortd();
+        return merged;
+    };
 }

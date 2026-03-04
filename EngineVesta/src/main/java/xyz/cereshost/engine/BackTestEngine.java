@@ -15,6 +15,7 @@ import xyz.cereshost.strategy.AlfaStrategy;
 import xyz.cereshost.strategy.TradingStrategy;
 import xyz.cereshost.trading.Trading;
 import xyz.cereshost.trading.TradingBackTest;
+import xyz.cereshost.utils.ChartUtils;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,7 +32,7 @@ public class BackTestEngine {
     @NotNull private final Market market;
     @NotNull private final TradingStrategy strategy;
     @Nullable private final PredictionEngine engine;
-    private double balance = 5.0;
+    private double balance = 5;
     private double currentPrice;
     private long currentTime;
 
@@ -51,6 +52,7 @@ public class BackTestEngine {
     public BackTestResult run() {
         market.sortd();
         List<Candle> allCandles = BuilderData.to1mCandles(market);
+        ChartUtils.showCandleChart("Mercado", allCandles, market.getSymbol());
         return run(allCandles);
     }
 
@@ -68,7 +70,8 @@ public class BackTestEngine {
         double initialBalance = balance;
 
         // Loop principal
-        for (int i = startIndex; i < totalSamples - 1; i++) {
+        for (int i = 5500; i < totalSamples - 1; i++) {
+
             // Obtener predicción
             List<Candle> window = allCandles.subList(i - lookBack, i + 1);
             PredictionEngine.PredictionResult prediction ;

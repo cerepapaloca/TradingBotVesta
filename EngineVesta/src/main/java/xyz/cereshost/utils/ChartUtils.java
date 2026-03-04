@@ -197,6 +197,7 @@ public class ChartUtils {
             double[] opens = new double[itemCount];
             double[] closes = new double[itemCount];
             double[] volumes = new double[itemCount];
+            XYSeries superTrendSeries = new XYSeries("SuperTrend");
 
             for (int i = 0; i < itemCount; i++) {
                 Candle candle = candles.get(i);
@@ -206,6 +207,12 @@ public class ChartUtils {
                 lows[i] = candle.low();
                 closes[i] = candle.close();
                 volumes[i] = candle.volumeBase();
+
+                // Candle.superTrend() almacena (lineaSuperTrend - close), por eso sumamos close para obtener el precio real de la linea.
+                double superTrendPrice = candle.close() + candle.superTrend();
+                if (Double.isFinite(superTrendPrice) && superTrendPrice > 0) {
+                    superTrendSeries.add(dates[i].getTime(), superTrendPrice);
+                }
             }
 
             // Crear dataset de velas
@@ -227,9 +234,26 @@ public class ChartUtils {
             DateAxis axis = (DateAxis) plot.getDomainAxis();
             axis.setDateFormatOverride(new SimpleDateFormat("dd/MM HH:mm"));
 
+            // Overlay: linea de SuperTrend
+            if (!superTrendSeries.isEmpty()) {
+                XYSeriesCollection superTrendDataset = new XYSeriesCollection();
+                superTrendDataset.addSeries(superTrendSeries);
+
+                XYLineAndShapeRenderer superTrendRenderer = new XYLineAndShapeRenderer(true, false);
+                superTrendRenderer.setSeriesPaint(0, new Color(255, 215, 0));
+                superTrendRenderer.setSeriesStroke(0, new BasicStroke(1.7f));
+
+                plot.setDataset(1, superTrendDataset);
+                plot.setRenderer(1, superTrendRenderer);
+            }
+
             // Ajusta el zoon
             double minPrice = Arrays.stream(lows).min().orElse(0);
             double maxPrice = Arrays.stream(highs).max().orElse(0);
+            if (!superTrendSeries.isEmpty()) {
+                minPrice = Math.min(minPrice, superTrendSeries.getMinY());
+                maxPrice = Math.max(maxPrice, superTrendSeries.getMaxY());
+            }
 
             double padding = (maxPrice - minPrice) * 0.02; // pading
 

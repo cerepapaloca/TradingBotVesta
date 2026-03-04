@@ -49,15 +49,47 @@ public class IOMarket {
     private static final String EXT_BIN = ".bin";
     private static final String EXT_ZST = ".zst";
     private static final String EXT_BIN_ZST = ".bin.zst";
-    // Base de referencia para indices diarios (ajustar si cambia el dataset)
-    private static final LocalDate BASE_DATE = LocalDate.of(2025, 12, 31);
+    // Base dinámica de referencia para índices diarios.
+    // dayIndex=1 => ayer (dataset diario completo más reciente).
+    private static final int DEFAULT_LOOKBACK_DAY_INDEX = 1;
 
+    public static Market loadMarketsRecentDays(String s, int days, boolean loadTrades) throws InterruptedException, IOException {
+        int normalizedDays = Math.max(1, days);
+        Market merged = new Market(s);
+
+        // Cargar desde el día más antiguo al más reciente para mantener orden temporal.
+        for (int dayIndex = normalizedDays; dayIndex >= DEFAULT_LOOKBACK_DAY_INDEX; dayIndex--) {
+            Market dayMarket;
+            try {
+                dayMarket = loadMarkets(DataSource.LOCAL_ZIP, s, dayIndex, loadTrades);
+            } catch (IOException e) {
+                Vesta.warning("No se pudo cargar LOCAL_ZIP %s (idx=%d): %s", s, dayIndex, e.getMessage());
+                continue;
+            }
+            if (dayMarket == null) {
+                continue;
+            }
+            if (dayMarket.getCandleSimples().isEmpty() || dayMarket.getTrades().isEmpty()) {
+                continue;
+            }
+            merged.concat(dayMarket);
+        }
+
+        if (!merged.getCandleSimples().isEmpty() || !merged.getTrades().isEmpty()) {
+            merged.sortd();
+        }
+        return merged;
+    }
 
     public static Market loadMarkets(DataSource data, String s) throws InterruptedException, IOException {
-        return loadMarkets(data, s, -1);
+        return loadMarkets(data, s, -1, true);
     }
 
     public static Market loadMarkets(DataSource data, String s, int dayIndex) throws InterruptedException, IOException {
+        return loadMarkets(data, s, dayIndex, true);
+    }
+
+    public static Market loadMarkets(DataSource data, String s, int dayIndex, boolean loadTrades) throws InterruptedException, IOException {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicLong lastUpdate = new AtomicLong();
         AtomicReference<Market> marketFinal = new AtomicReference<>(null);
@@ -75,7 +107,7 @@ public class IOMarket {
             case BINANCE -> {
                 long timeTotal = System.currentTimeMillis();
                 Vesta.info("📡 Solicitud de dato a binance del mercado: " + s);
-                String raw = Utils.getRequest("https://fapi.binance.com/fapi/v1/klines" + "?symbol=" + s + "&interval=1m&limit=" + 1500);
+                String raw = Utils.getRequest("https://fapi.binance.com/fapi/v1/klines" + "?symbol=" + s + "&interval=1m&limit=" + 1438);
                 ObjectMapper mapper1 = new ObjectMapper();
                 JsonNode root1;
                 try {
@@ -85,7 +117,7 @@ public class IOMarket {
                 }
                 ArrayDeque<CandleSimple> deque = new ArrayDeque<>();
                 Vesta.info("📂 Datos recibidos de binance del mercado: " + s + " (" + raw.getBytes(StandardCharsets.UTF_8).length / 1024 + "mb)");
-                for (int i = 0; i < 1000; i++) {
+                for (int i = 0; i < 1438; i++) {
                     JsonNode kline = root1.get(i);
 
                     double baseVolume = kline.get(5).asDouble();
@@ -103,25 +135,27 @@ public class IOMarket {
                             kline.get(4).asDouble(), // close
                             new Volumen(quoteVolume, baseVolume, takerBuyQuoteVolume, sellQuoteVolume, deltaUSDT, buyRatio)));
                 }
-//                ObjectMapper mapper2 = new ObjectMapper();
-//                JsonNode root2;
-//                try {
-//                    root2 = mapper2.readTree(Utils.getRequest("https://fapi.binance.com/fapi/v1/trades" + "?symbol=" + s + "&limit=" + 200));
-//                } catch (JsonProcessingException e) {
-//                    throw new RuntimeException(e);
-//                }
-//                Deque<Trade> trades = new ArrayDeque<>();
-//                for (JsonNode trade : root2) {
-//                    double quoteQty = trade.get("quoteQty").asDouble();
-//                    double price = trade.get("price").asDouble();
-//                    boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
-//                    long time = trade.get("time").asLong();
-//                    trades.add(new Trade(time,(float) price, (float) quoteQty, isBuyerMaker));
-//                }
-
                 Market market = new Market(s);
+                if (loadTrades){
+                    ObjectMapper mapper2 = new ObjectMapper();
+                    JsonNode root2;
+                    try {
+                        root2 = mapper2.readTree(Utils.getRequest("https://fapi.binance.com/fapi/v1/trades" + "?symbol=" + s + "&limit=" + 200));
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException(e);
+                    }
+                    Deque<Trade> trades = new ArrayDeque<>();
+                    for (JsonNode trade : root2) {
+                        double quoteQty = trade.get("quoteQty").asDouble();
+                        double price = trade.get("price").asDouble();
+                        boolean isBuyerMaker = trade.get("isBuyerMaker").asBoolean();
+                        long time = trade.get("time").asLong();
+                        trades.add(new Trade(time, (float) price, (float) quoteQty, isBuyerMaker));
+                    }
+                    market.addTrade(trades);
+                }
+
                 market.addCandles(deque);
-//                market.addTrade(trades);
                 marketFinal.set(market);
                 Vesta.info("✅ Datos procesado de binance del mercado: %s (%.2fs)", s, (float) (System.currentTimeMillis() - timeTotal) / 1000);
                 latch.countDown();
@@ -139,9 +173,14 @@ public class IOMarket {
                 File klineFile = ensureFileCached(baseDir, s, "klines", targetDate);
                 Deque<CandleSimple> candles = parseKlinesFromFile(klineFile);
                 Vesta.info("%d/%02d/%02d (idx=%d) 💾 Leyendo zst local de trades", targetYear, targetMonth, targetDay, normalizedDayIndex);
-                File tradeFile = ensureFileCached(baseDir, s, "trades", targetDate);
-                Deque<Trade> trades = parseTradesFromFile(tradeFile);
-                if (candles.isEmpty() || trades.isEmpty()) {
+                Deque<Trade> trades;
+                if (loadTrades){
+                    File tradeFile = ensureFileCached(baseDir, s, "trades", targetDate);
+                    trades = parseTradesFromFile(tradeFile);
+                }else {
+                    trades = new ArrayDeque<>();
+                }
+                if (candles.isEmpty()) {
                     Vesta.info("Datos incompletos o corruptos para %s en %d/%02d/%02d (idx=%d)", s, targetYear, targetMonth, targetDay, normalizedDayIndex);
                     latch.countDown();
                     return marketFinal.get();
@@ -152,32 +191,34 @@ public class IOMarket {
                 LinkedHashSet<CandleSimple> candlesSorted = Market.sortInChunks(candles, 10_000, CandleSimple::openTime);
                 LinkedHashSet<Trade> tradeSorted = Market.sortInChunks(trades, 10_000, Trade::time);
 
-                // 3. Lógica de CORTE (Sincronización de tiempos)
-                long minTimeCandles = candlesSorted.getFirst().openTime();
-                long maxTimeCandles = candlesSorted.getLast().openTime();
+                if (loadTrades){
+                    // 3. Lógica de CORTE (Sincronización de tiempos)
+                    long minTimeCandles = candlesSorted.getFirst().openTime();
+                    long maxTimeCandles = candlesSorted.getLast().openTime();
 
-                long minTimeTrades = tradeSorted.getFirst().time();
-                long maxTimeTrades = tradeSorted.getLast().time();
+                    long minTimeTrades = tradeSorted.getFirst().time();
+                    long maxTimeTrades = tradeSorted.getLast().time();
 
-                long commonStart = Math.max(minTimeCandles, minTimeTrades);
-                long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
+                    long commonStart = Math.max(minTimeCandles, minTimeTrades);
+                    long commonEnd = Math.min(maxTimeCandles, maxTimeTrades);
 
-                Vesta.info("%d/%02d/%02d (idx=%d) ✂️ Ajustando %s a ventana comun: %d - %d", targetYear, targetMonth, targetDay, normalizedDayIndex, s, commonStart, commonEnd);
-                // borrar por inicio
-                while (!candlesSorted.isEmpty() && candlesSorted.getFirst().openTime() < commonStart) {
-                    candlesSorted.removeFirst();
-                }
-                // borrar por final
-                while (!candlesSorted.isEmpty() && candlesSorted.getLast().openTime() > commonEnd) {
-                    candlesSorted.removeLast();
-                }
+                    Vesta.info("%d/%02d/%02d (idx=%d) ✂️ Ajustando %s a ventana comun: %d - %d", targetYear, targetMonth, targetDay, normalizedDayIndex, s, commonStart, commonEnd);
+                    // borrar por inicio
+//                    while (!candlesSorted.isEmpty() && candlesSorted.getFirst().openTime() < commonStart) {
+//                        candlesSorted.removeFirst();
+//                    }
+                    // borrar por final
+                    while (!candlesSorted.isEmpty() && candlesSorted.getLast().openTime() > commonEnd) {
+                        candlesSorted.removeLast();
+                    }
 
-                // mismo para trades
-                while (!tradeSorted.isEmpty() && tradeSorted.getFirst().time() < commonStart) {
-                    tradeSorted.removeFirst();
-                }
-                while (!tradeSorted.isEmpty() && tradeSorted.getLast().time() > commonEnd) {
-                    tradeSorted.removeLast();
+                    // mismo para trades
+                    while (!tradeSorted.isEmpty() && tradeSorted.getFirst().time() < commonStart) {
+                        tradeSorted.removeFirst();
+                    }
+                    while (!tradeSorted.isEmpty() && tradeSorted.getLast().time() > commonEnd) {
+                        tradeSorted.removeLast();
+                    }
                 }
 
                 final Market market = new Market(s);
@@ -200,17 +241,22 @@ public class IOMarket {
 
     public static LocalDate resolveDateFromDayIndex(int dayIndex) {
         int normalized = Math.max(1, dayIndex);
-        return BASE_DATE.minusDays(normalized - 1L);
+        return getReferenceBaseDate().minusDays(normalized - 1L);
     }
 
     public static int resolveDayIndex(LocalDate date) {
-        long days = ChronoUnit.DAYS.between(date, BASE_DATE);
+        long days = ChronoUnit.DAYS.between(date, getReferenceBaseDate());
         return (int) days + 1;
     }
 
     public static YearMonth resolveMonthFromIndex(int monthIndex) {
         int normalized = Math.max(1, monthIndex);
-        return YearMonth.from(BASE_DATE).minusMonths(normalized - 1L);
+        return YearMonth.from(getReferenceBaseDate()).minusMonths(normalized - 1L);
+    }
+
+    private static LocalDate getReferenceBaseDate() {
+        // Evita pedir archivos del día en curso (aún incompletos).
+        return LocalDate.now().minusDays(1);
     }
 
 

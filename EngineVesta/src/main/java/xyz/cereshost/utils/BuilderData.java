@@ -330,7 +330,9 @@ public class BuilderData {
     public static @NotNull List<Candle> to1mCandles(@NotNull Market market) {
 
         //market.sortd();
-        int idx = 0;
+        // Índice de indicadores: debe avanzar solo cuando existe una vela real,
+        // no por cada minuto del rango (para evitar desalineación con gaps).
+        int indicatorIdx = 0;
 
         // CandleSimple por minuto
         BaseBarSeries series = new BaseBarSeriesBuilder().build();
@@ -386,13 +388,13 @@ public class BuilderData {
         RSIIndicator rsi16 = new RSIIndicator(indicator, 16);
 
         // SuperTren
-        SuperTrendIndicator superTrend = new SuperTrendIndicator(series, 5, 0.35);
+        SuperTrendIndicator superTrend = new SuperTrendIndicator(series, 5, 0.4);
 
 
         // MACD
         //MACDIndicator macd = new MACDIndicator(indicator, 12, 26);
 //        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 6, 16, 9);
-        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 8, 18, 2);
+        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 12, 22, 6);
         double[] macdArr = macdRes.macd();
         double[] signalArr = macdRes.signal();
         double[] histArr = macdRes.histogram();
@@ -412,6 +414,7 @@ public class BuilderData {
         for (long minute = startMinute; minute <= endMinute; minute += 60_000L) {
             // OHLC + VOLUMEN
             CandleSimple cs = simpleByMinute.get(minute);
+            boolean hasRealCandle = cs != null;
 
             double open, high, low, close;
             double volumeBase = 0;
@@ -473,12 +476,15 @@ public class BuilderData {
             }
             double depthImbalance = (bidLiq + askLiq == 0) ? 0 : (bidLiq - askLiq) / (bidLiq + askLiq);
 
+            // Si falta una vela en este minuto, reutilizamos el último índice válido de indicadores.
+            int indicatorIndex = hasRealCandle ? indicatorIdx : Math.max(0, indicatorIdx - 1);
+
             try {
 
                 // MACD
-                double macdVal = checkDouble(macdArr, idx);
-                double macdSignal = checkDouble(signalArr, idx);
-                double macdHist = checkDouble(histArr, idx);
+                double macdVal = checkDouble(macdArr, indicatorIndex);
+                double macdSignal = checkDouble(signalArr, indicatorIndex);
+                double macdHist = checkDouble(histArr, indicatorIndex);
 
                 candles.add(new Candle(
                         minute,
@@ -491,9 +497,9 @@ public class BuilderData {
                         checkDouble(buyQV),
                         checkDouble(sellQV),
 
-                        checkDouble(vn.get("ratio")[idx]),
-                        checkDouble(vn.get("zscore")[idx]),
-                        checkDouble(vn.get("perAtr")[idx]),
+                        checkDouble(vn.get("ratio")[indicatorIndex]),
+                        checkDouble(vn.get("zscore")[indicatorIndex]),
+                        checkDouble(vn.get("perAtr")[indicatorIndex]),
 
                         checkDouble(deltaUSDT),
                         checkDouble(buyRatio),
@@ -502,24 +508,26 @@ public class BuilderData {
                         checkDouble(depthImbalance),
                         checkDouble(mid),
                         checkDouble(spread),
-                        rsi4.getValue(idx).doubleValue(),
-                        rsi8.getValue(idx).doubleValue(),
-                        rsi16.getValue(idx).doubleValue(),
+                        rsi4.getValue(indicatorIndex).doubleValue(),
+                        rsi8.getValue(indicatorIndex).doubleValue(),
+                        rsi16.getValue(indicatorIndex).doubleValue(),
                         macdVal,
                         macdSignal,
                         macdHist,
-                        nvi.getValue(idx).doubleValue(),
-                        facadeBand.upper().getValue(idx).doubleValue(),
-                        facadeBand.middle().getValue(idx).doubleValue(),
-                        facadeBand.lower().getValue(idx).doubleValue(),
-                        facadeBand.bandwidth().getValue(idx).doubleValue(),
-                        facadeBand.percentB().getValue(idx).doubleValue(),
-                        atr14.getValue(idx).doubleValue(),
-                        (float) (superTrend.getValue(idx).floatValue() - close)
+                        nvi.getValue(indicatorIndex).doubleValue(),
+                        facadeBand.upper().getValue(indicatorIndex).doubleValue(),
+                        facadeBand.middle().getValue(indicatorIndex).doubleValue(),
+                        facadeBand.lower().getValue(indicatorIndex).doubleValue(),
+                        facadeBand.bandwidth().getValue(indicatorIndex).doubleValue(),
+                        facadeBand.percentB().getValue(indicatorIndex).doubleValue(),
+                        atr14.getValue(indicatorIndex).doubleValue(),
+                        (float) (superTrend.getValue(indicatorIndex).floatValue() - close)
                 ));
             } catch (IllegalArgumentException ignored) {
             }
-            idx++;
+            if (hasRealCandle) {
+                indicatorIdx++;
+            }
         }
         closes.clear();
         return candles;
