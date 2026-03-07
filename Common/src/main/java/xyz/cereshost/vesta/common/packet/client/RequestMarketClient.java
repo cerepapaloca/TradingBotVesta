@@ -1,0 +1,13 @@
+package xyz.cereshost.vesta.common.client;
+
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import xyz.cereshost.vesta.common.packet.PacketClient;
+
+@Getter
+@RequiredArgsConstructor
+public class RequestMarketClient extends PacketClient {
+
+    private final String symbol;
+    private final boolean allMarket;
+}
