@@ -1,4 +1,4 @@
-package xyz.cereshost.vesta.common.server;
+package xyz.cereshost.vesta.common.packet.server;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;

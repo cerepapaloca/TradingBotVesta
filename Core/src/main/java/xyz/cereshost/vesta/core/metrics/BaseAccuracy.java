@@ -1,9 +1,7 @@
 package xyz.cereshost.vesta.core.metrics;
 
 import ai.djl.ndarray.NDArray;
-import ai.djl.ndarray.NDList;
 import ai.djl.training.evaluator.Evaluator;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.ConcurrentHashMap;
 

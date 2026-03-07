@@ -39,7 +39,7 @@ public class GammaStrategy implements TradingStrategy {
         }
 
         Candle prev = visibleCandles.get(visibleCandles.size() - 2);
-        Candle curr = visibleCandles.get(visibleCandles.size() - 1);
+        Candle curr = visibleCandles.getLast();
         if (!isFinite(prev.macdVal()) || !isFinite(prev.macdSignal())
                 || !isFinite(curr.macdVal()) || !isFinite(curr.macdSignal())) {
             operations.log("MACD dio infinito");
@@ -202,22 +202,22 @@ public class GammaStrategy implements TradingStrategy {
                 if (max && (dirMACD == Trading.DireccionOperation.SHORT)) return;
                 if (min && (dirMACD == Trading.DireccionOperation.LONG)) return;
 
-        double rsi8 = curr.rsi8();
-        double rsi16 = curr.rsi16();
-        if (!isFinite(rsi8) || !isFinite(rsi16)) {
-            return;
-        }
+                double rsi8 = curr.rsi8();
+                double rsi16 = curr.rsi16();
+                if (!isFinite(rsi8) || !isFinite(rsi16)) {
+                    return;
+                }
 
-        boolean longSignal = rsi8 <= 2;
-        boolean shortSignal = rsi8 >= 98;
-        if (longSignal) if (dirMACD != Trading.DireccionOperation.LONG) {
-            operations.log("El SuperTrend cancela Long");
-            return;
-        }
-        if (shortSignal) if (dirMACD != Trading.DireccionOperation.SHORT) {
-            operations.log("El SuperTrend cancela Short");
-            return;
-        }
+                boolean longSignal = rsi8 <= 2;
+                boolean shortSignal = rsi8 >= 98;
+                if (longSignal) if (dirMACD != Trading.DireccionOperation.LONG) {
+                    operations.log("El SuperTrend cancela Long");
+                    return;
+                }
+                if (shortSignal) if (dirMACD != Trading.DireccionOperation.SHORT) {
+                    operations.log("El SuperTrend cancela Short");
+                    return;
+                }
 //        if (curr.superTrendSlow() > 0) if (dirMACD != Trading.DireccionOperation.LONG) {
 //            operations.log("El SuperTrend cancela Long");
 //            return;
@@ -264,7 +264,7 @@ public class GammaStrategy implements TradingStrategy {
             if (reason.equals(Trading.ExitReason.SHORT_STOP_LOSS)){
                 shortBan = true;
             }
-        };
+        }
     }
 
     private static Trading.DireccionOperation getTrend(List<Candle> candles) {

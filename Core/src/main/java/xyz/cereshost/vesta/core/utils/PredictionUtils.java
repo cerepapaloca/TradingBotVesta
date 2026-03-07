@@ -8,8 +8,7 @@ public class PredictionUtils {
     public static float clampRatio(float ratio) {
         if (!Float.isFinite(ratio)) return 0f;
         if (ratio > 1f) return 1f;
-        if (ratio < -1f) return -1f;
-        return ratio;
+        return Math.max(ratio, -1f);
     }
 
     /**

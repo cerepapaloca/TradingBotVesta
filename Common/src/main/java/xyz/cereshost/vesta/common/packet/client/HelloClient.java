@@ -1,4 +1,4 @@
-package xyz.cereshost.vesta.common.client;
+package xyz.cereshost.vesta.common.packet.client;
 
 import xyz.cereshost.vesta.common.packet.PacketClient;
 

@@ -18,7 +18,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * - crea las máscaras en un subManager dedicado (uno por key device:T:dtype)
  * - expone getMaskAndDerived(rootMgr, T, dtype) -> {mask, invMask, negInf}
  * - soporta update y clearSubManagers() para cerrar subManagers y liberar RAM
- *
  * Uso recomendado:
  * - Al inicio del forward: NDArray[] triple = CausalMaskManager.getMaskAndDerived(rootMgr, T, dtype);
  * - Si necesitas la máscara en tu subManager local: maskCopy = triple[0].toDevice(localSubMgr.getDevice(), false);

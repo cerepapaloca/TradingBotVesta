@@ -121,7 +121,7 @@ public class DeltaStrategy implements TradingStrategy {
             if (reason.equals(Trading.ExitReason.SHORT_STOP_LOSS)){
                 shortBan = true;
             }
-        };
+        }
     }
 
     private static Trading.DireccionOperation detectRsiDivergenceSignal(List<Candle> candles) {

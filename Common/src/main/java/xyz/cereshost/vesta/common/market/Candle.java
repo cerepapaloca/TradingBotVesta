@@ -78,9 +78,7 @@ public record Candle(
 
         // sombras pequeñas
         if (upperWick / range > 0.25) return false;
-        if (lowerWick / range > 0.25) return false;
-
-        return true;
+        return !(lowerWick / range > 0.25);
     }
 
     public boolean isWeakCandle() {

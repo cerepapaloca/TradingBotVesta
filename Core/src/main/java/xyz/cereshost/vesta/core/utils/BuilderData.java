@@ -7,6 +7,7 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.ta4j.core.*;
 import org.ta4j.core.indicators.ATRIndicator;
+import org.ta4j.core.indicators.MACDIndicator;
 import org.ta4j.core.indicators.RSIIndicator;
 import org.ta4j.core.indicators.averages.EMAIndicator;
 import org.ta4j.core.indicators.bollinger.*;
@@ -394,10 +395,8 @@ public class BuilderData {
         // MACD
         //MACDIndicator macd = new MACDIndicator(indicator, 12, 26);
 //        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 6, 16, 9);
-        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 6, 22, 5);
-        double[] macdArr = macdRes.macd();
-        double[] signalArr = macdRes.signal();
-        double[] histArr = macdRes.histogram();
+        int countBar = 5;
+        MACDIndicator macdIndicator = new MACDIndicator(indicator, 6, 22);
 
         // NVI
         NVIIndicator nvi = new NVIIndicator(series);
@@ -485,11 +484,6 @@ public class BuilderData {
 
             try {
 
-                // MACD
-                double macdVal = checkDouble(macdArr, indicatorIndex);
-                double macdSignal = checkDouble(signalArr, indicatorIndex);
-                double macdHist = checkDouble(histArr, indicatorIndex);
-
                 candles.add(new Candle(
                         minute,
                         checkDouble(open), checkDouble(high), checkDouble(low), checkDouble(close),
@@ -515,9 +509,9 @@ public class BuilderData {
                         rsi4.getValue(indicatorIndex).doubleValue(),
                         rsi8.getValue(indicatorIndex).doubleValue(),
                         rsi16.getValue(indicatorIndex).doubleValue(),
-                        macdVal,
-                        macdSignal,
-                        macdHist,
+                        macdIndicator.getValue(indicatorIndex).doubleValue(),
+                        macdIndicator.getSignalLine(countBar).getValue(indicatorIndex).doubleValue(),
+                        macdIndicator.getHistogram(countBar).getValue(indicatorIndex).doubleValue(),
                         nvi.getValue(indicatorIndex).doubleValue(),
                         facadeBand.upper().getValue(indicatorIndex).doubleValue(),
                         facadeBand.middle().getValue(indicatorIndex).doubleValue(),
