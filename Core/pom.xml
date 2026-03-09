@@ -11,7 +11,7 @@
         <version>1.0</version>
     </parent>
 
-    <groupId>xyz.cereshost.vesta</groupId>
+    <groupId>xyz.cereshost.vesta.core</groupId>
     <artifactId>Core</artifactId>
 
     <properties>

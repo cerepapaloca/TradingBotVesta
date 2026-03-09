@@ -172,7 +172,7 @@ public final class TradingTickLoop implements Notifiable {
             return;
         }
 
-
+        Vesta.info("💰 Precio del %s: %.2f", symbol, allCandles.getLast().close());
         PredictionEngine.PredictionResult result;
         if (engine != null) {
             int endExclusive = allCandles.size() - 1;

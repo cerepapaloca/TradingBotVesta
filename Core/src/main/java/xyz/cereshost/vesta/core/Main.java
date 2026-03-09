@@ -8,6 +8,7 @@ import xyz.cereshost.vesta.core.engine.VestaEngine;
 import xyz.cereshost.vesta.core.io.IOMarket;
 import xyz.cereshost.vesta.common.market.Market;
 import xyz.cereshost.vesta.core.message.DiscordNotification;
+import xyz.cereshost.vesta.core.strategy.KappaStrategy;
 import xyz.cereshost.vesta.core.strategy.ZetaStrategy;
 import xyz.cereshost.vesta.core.trading.BinanceApiRest;
 import xyz.cereshost.vesta.core.trading.Trading;
@@ -99,7 +100,7 @@ public class Main {
             case "backtest" -> {
                 Market market = new Market("SOLUSDC");
                 List<CompletableFuture<Market>> task = new ArrayList<>();
-                for (int day = 90; day >= 0; day--) {
+                for (int day = 60; day >= 0; day--) {
                     int finalDay = day;
                     task.add(CompletableFuture.supplyAsync(() -> {
                         try {
@@ -115,7 +116,6 @@ public class Main {
                     market.concat(m);
                 }
 //                market.concat(IOMarket.loadMarkets(DataSource.BINANCE, "SOLUSDC"));
-                market.getCandleSimples().removeIf(cs -> ((cs.openTime() % ((1000 * 60 * 60 * 24))) == 0));
                 Vesta.info("🔙 Ejecutando backtest...");
                 market.sortd();
                 showDataBackTest(new BackTestEngine(market, null, new ZetaStrategy()).run());

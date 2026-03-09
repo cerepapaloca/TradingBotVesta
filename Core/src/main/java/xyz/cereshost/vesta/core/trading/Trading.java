@@ -113,6 +113,10 @@ public interface Trading extends Notifiable {
             }
         }
 
+        public boolean isProfit(){
+            return getRoiRaw() > 0;
+        }
+
         public boolean isUpDireccion(){
             return direccion == LONG;
         }

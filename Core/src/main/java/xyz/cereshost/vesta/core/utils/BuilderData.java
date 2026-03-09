@@ -394,7 +394,10 @@ public class BuilderData {
 
         // MACD
         //MACDIndicator macd = new MACDIndicator(indicator, 12, 26);
-//        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 6, 16, 9);
+        FinancialCalculation.MACDResult macdRes = FinancialCalculation.computeMACD(closes, 6, 16, 9);
+        double[] macdArr = macdRes.macd();
+        double[] signalArr = macdRes.signal();
+        double[] histArr = macdRes.histogram();
         int countBar = 5;
         MACDIndicator macdIndicator = new MACDIndicator(indicator, 6, 22);
 
@@ -405,7 +408,7 @@ public class BuilderData {
         BollingerBandFacade facadeBand = new BollingerBandFacade(indicator, 20, 2);
 
         // ATR
-        ATRIndicator atr14 = new ATRIndicator(series, 14);
+        ATRIndicator atr14 = new ATRIndicator(series, 10);
 
         // MAE
         EMAIndicator emaFast = new EMAIndicator(indicator, 10);
@@ -484,6 +487,10 @@ public class BuilderData {
 
             try {
 
+                double macdVal = checkDouble(macdArr, indicatorIndex);
+                double macdSignal = checkDouble(signalArr, indicatorIndex);
+                double macdHist = checkDouble(histArr, indicatorIndex);
+
                 candles.add(new Candle(
                         minute,
                         checkDouble(open), checkDouble(high), checkDouble(low), checkDouble(close),
@@ -509,9 +516,9 @@ public class BuilderData {
                         rsi4.getValue(indicatorIndex).doubleValue(),
                         rsi8.getValue(indicatorIndex).doubleValue(),
                         rsi16.getValue(indicatorIndex).doubleValue(),
-                        macdIndicator.getValue(indicatorIndex).doubleValue(),
-                        macdIndicator.getSignalLine(countBar).getValue(indicatorIndex).doubleValue(),
-                        macdIndicator.getHistogram(countBar).getValue(indicatorIndex).doubleValue(),
+                        macdVal,//macdIndicator.getValue(indicatorIndex).doubleValue(),
+                        macdSignal,// macdIndicator.getSignalLine(countBar).getValue(indicatorIndex).doubleValue(),
+                        macdHist,// macdIndicator.getHistogram(countBar).getValue(indicatorIndex).doubleValue(),
                         nvi.getValue(indicatorIndex).doubleValue(),
                         facadeBand.upper().getValue(indicatorIndex).doubleValue(),
                         facadeBand.middle().getValue(indicatorIndex).doubleValue(),
