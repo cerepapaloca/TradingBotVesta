@@ -3,9 +3,11 @@ package xyz.cereshost.vesta.core.trading.backtest;
 import lombok.Getter;
 import lombok.Setter;
 import org.jetbrains.annotations.NotNull;
-import xyz.cereshost.vesta.core.trading.TradingManager;
+import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.vesta.common.market.Market;
 import xyz.cereshost.vesta.core.message.MediaNotification;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
+import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,7 +38,7 @@ public class TradingManagerBackTest implements TradingManager {
     }
 
     @Override
-    public OpenOperation open(double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSD, int leverage) {
+    public @Nullable OpenOperation open(double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSD, int leverage) {
         // Lo minimo para invertir en Binance
         if (amountUSD *leverage < 5)return null;
         double currentPrice = backTestEngine.getCurrentPrice();
@@ -49,8 +51,15 @@ public class TradingManagerBackTest implements TradingManager {
     }
 
     @Override
-    public void close(ExitReason reason, OpenOperation openOperation) {
-        closeOperations.add(new BackTestCloseOperation(backTestEngine.getCurrentPrice(), backTestEngine.getCurrentTime(), reason, openOperation));
+    public @Nullable CloseOperation close(ExitReason reason, OpenOperation openOperation) {
+        BackTestCloseOperation closeOperation = new BackTestCloseOperation(backTestEngine.getCurrentPrice(), backTestEngine.getCurrentTime(), reason, openOperation);
+        closeOperations.add(closeOperation);
+        return closeOperation;
+    }
+
+    @Override
+    public @Nullable LimiteOperation limit(double entryPrice, double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSD, int leverage) {
+        throw new UnsupportedOperationException("Not supported yet.");
     }
 
     public void closeForEngine(BackTestCloseOperation backTestCloseOperation){

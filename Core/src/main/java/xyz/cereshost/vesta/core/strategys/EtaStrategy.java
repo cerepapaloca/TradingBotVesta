@@ -4,6 +4,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
 import xyz.cereshost.vesta.common.market.Candle;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.util.List;
@@ -64,7 +65,7 @@ public class EtaStrategy implements TradingStrategy {
     }
 
     private void openGapTrade(@NotNull TradingManager operations,
-                              @NotNull TradingManager.DireccionOperation direction,
+                              @NotNull DireccionOperation direction,
                               double targetPrice) {
         double currentPrice = operations.getCurrentPrice();
         if (!Double.isFinite(currentPrice) || currentPrice <= 0 || !Double.isFinite(targetPrice) || targetPrice <= 0) {
@@ -129,7 +130,7 @@ public class EtaStrategy implements TradingStrategy {
         if (upGap) {
             return new GapSetup(
                     true,
-                    INVERT_GAP_DIRECTION ? TradingManager.DireccionOperation.LONG : TradingManager.DireccionOperation.SHORT,
+                    INVERT_GAP_DIRECTION ? DireccionOperation.LONG : DireccionOperation.SHORT,
                     prevBodyHigh
             );
         }
@@ -138,7 +139,7 @@ public class EtaStrategy implements TradingStrategy {
         if (downGap) {
             return new GapSetup(
                     true,
-                    INVERT_GAP_DIRECTION ? TradingManager.DireccionOperation.SHORT : TradingManager.DireccionOperation.LONG,
+                    INVERT_GAP_DIRECTION ? DireccionOperation.SHORT : DireccionOperation.LONG,
                     prevBodyLow
             );
         }
@@ -156,13 +157,13 @@ public class EtaStrategy implements TradingStrategy {
         REVERSE_POSITION
     }
 
-    private record GapSetup(boolean valid, TradingManager.DireccionOperation direction, double targetPrice) {
+    private record GapSetup(boolean valid, DireccionOperation direction, double targetPrice) {
         private static GapSetup none() {
-            return new GapSetup(false, TradingManager.DireccionOperation.NEUTRAL, Double.NaN);
+            return new GapSetup(false, DireccionOperation.NEUTRAL, Double.NaN);
         }
     }
 
-    private record PendingEntry(TradingManager.DireccionOperation direction, double targetPrice) {
+    private record PendingEntry(DireccionOperation direction, double targetPrice) {
 
     }
 }

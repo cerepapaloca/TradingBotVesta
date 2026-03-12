@@ -408,7 +408,7 @@ public class BuilderData {
         BollingerBandFacade facadeBand = new BollingerBandFacade(indicator, 20, 2);
 
         // ATR
-        ATRIndicator atr14 = new ATRIndicator(series, 10);
+        ATRIndicator atr14 = new ATRIndicator(series, 14);
 
         // MAE
         EMAIndicator emaFast = new EMAIndicator(indicator, 10);

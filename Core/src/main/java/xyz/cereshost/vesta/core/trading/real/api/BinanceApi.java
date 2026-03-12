@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.vesta.core.exception.BinanceCodeException;
 import xyz.cereshost.vesta.core.message.Notifiable;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
+import xyz.cereshost.vesta.core.trading.TimeInForce;
+import xyz.cereshost.vesta.core.trading.TypeOrder;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -19,18 +22,20 @@ import java.util.function.Consumer;
 public interface BinanceApi extends Notifiable {
 
     long placeAlgoOrder(String symbol,
-                               String side,
-                               String type,
-                               String quantity,
-                               Double stopPrice,
-                               boolean reduceOnly,
-                               boolean closePosition
+                        DireccionOperation direccion,
+                        TypeOrder type,
+                        TimeInForce timeInForce,
+                        String quantity,
+                        Double stopPrice,
+                        boolean reduceOnly,
+                        boolean closePosition
     );
 
 
     long placeOrder(String symbol,
-                    String side,
-                    String type,
+                    DireccionOperation direccion,
+                    TypeOrder type,
+                    TimeInForce timeInForce,
                     String quantity,
                     Double stopPrice,
                     boolean reduceOnly,
@@ -39,9 +44,9 @@ public interface BinanceApi extends Notifiable {
 
     void cancelOrder(String symbol, long orderId, boolean isAlgoOrder);
 
-    boolean checkOrderFilled(String symbol, long orderId, boolean isAlgoOrder);
-
     void closeAll(String symbol);
+
+    boolean checkOrderFilled(String symbol, long orderId, boolean isAlgoOrder);
 
     void changeLeverage(String symbol, int leverage);
 
@@ -49,13 +54,13 @@ public interface BinanceApi extends Notifiable {
 
     double getBalance(String symbol);
 
-    JsonNode sendSignedRequest(String method, String endpoint, TreeMap<String, String> params);
-
-    JsonNode sendRequest(String method, String endpoint, TreeMap<String, String> params);
-
     void checkRepose(JsonNode node, String method, String endpoint, String symbol) throws BinanceCodeException;
 
     void setExceptionHandler(Consumer<Exception> consumer);
+
+    JsonNode sendSignedRequest(String method, String endpoint, TreeMap<String, String> params);
+
+    JsonNode sendRequest(String method, String endpoint, TreeMap<String, String> params);
 
     default String buildQueryString(@NotNull TreeMap<String, String> params) {
         StringJoiner sj = new StringJoiner("&");

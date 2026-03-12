@@ -2,6 +2,7 @@ package xyz.cereshost.vesta.core.strategys;
 
 import xyz.cereshost.vesta.common.market.Candle;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.util.List;
@@ -17,7 +18,7 @@ public class DefaultStrategy implements TradingStrategy {
             openOperations.open(
                     pred.getTpPercent(),
                     pred.getSlPercent(),
-                    TradingManager.DireccionOperation.LONG,
+                    DireccionOperation.LONG,
                     openOperations.getAvailableBalance()/2,
                     4
             );

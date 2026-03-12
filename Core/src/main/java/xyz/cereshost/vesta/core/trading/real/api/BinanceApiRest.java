@@ -13,6 +13,10 @@ import xyz.cereshost.vesta.core.exception.BinanceCodeException;
 import xyz.cereshost.vesta.core.exception.BinanceCodeWeakException;
 import xyz.cereshost.vesta.core.io.IOdata;
 import xyz.cereshost.vesta.core.message.MediaNotification;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
+import xyz.cereshost.vesta.core.trading.TimeInForce;
+import xyz.cereshost.vesta.core.trading.TradingManager;
+import xyz.cereshost.vesta.core.trading.TypeOrder;
 
 import java.io.IOException;
 import java.net.URI;
@@ -57,8 +61,9 @@ public final class BinanceApiRest implements BinanceApi {
 
     @Override
     public long placeOrder(String symbol,
-                           String side,
-                           String type,
+                           DireccionOperation side,
+                           TypeOrder type,
+                           TimeInForce timeInForce,
                            String quantity,
                            Double stopPrice,
                            boolean reduceOnly,
@@ -67,8 +72,9 @@ public final class BinanceApiRest implements BinanceApi {
         // Para órdenes no condicionales (MARKET, LIMIT), seguir usando el endpoint tradicional
         TreeMap<String, String> params = new TreeMap<>();
         params.put("symbol", symbol);
-        params.put("side", side);
-        params.put("type", type);
+        params.put("side", side.getSide());
+        params.put("type", type.name());
+        params.put("timeInForce", timeInForce.name());
         if (closePosition) {
             params.put("closePosition", "true");
         } else if (quantity != null) {
@@ -89,19 +95,20 @@ public final class BinanceApiRest implements BinanceApi {
 
     @Override
     public long placeAlgoOrder(String symbol,
-                               String side,
-                               String type,
+                               DireccionOperation side,
+                               TypeOrder type,
+                               TimeInForce timeInForce,
                                String quantity,
                                Double stopPrice,
-                                boolean reduceOnly,
+                               boolean reduceOnly,
                                boolean closePosition
     ) {
         TreeMap<String, String> params = new TreeMap<>();
         params.put("algoType", "CONDITIONAL");          // Obligatorio para órdenes condicionales
         params.put("symbol", symbol);
-        params.put("side", side);
-        params.put("type", type);                       // STOP_MARKET, TAKE_PROFIT_MARKET
-        params.put("timeInForce", "GTC");               // Recomendado para condicionales
+        params.put("side", side.getSide());
+        params.put("type", type.name());                       // STOP_MARKET, TAKE_PROFIT_MARKET
+        params.put("timeInForce", timeInForce.name());         // Recomendado para condicionales
 
         // Si se quiere cerrar la posición completa, se usa closePosition y NO se envía quantity
         if (closePosition) {

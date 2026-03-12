@@ -2,8 +2,9 @@ package xyz.cereshost.vesta.core.strategys;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import xyz.cereshost.vesta.core.ia.PredictionEngine;
 import xyz.cereshost.vesta.common.market.Candle;
+import xyz.cereshost.vesta.core.ia.PredictionEngine;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.util.ArrayList;
@@ -23,7 +24,7 @@ public class GammaStrategy implements TradingStrategy {
     private static final double SL_TREND = 0;
 
     @NotNull
-    private TradingManager.DireccionOperation direccionOperationWindow = TradingManager.DireccionOperation.NEUTRAL;
+    private DireccionOperation direccionOperationWindow = DireccionOperation.NEUTRAL;
     private int candlesValid;
 
     boolean isPeekClose = false;
@@ -110,8 +111,8 @@ public class GammaStrategy implements TradingStrategy {
 
         trend = getTrend(visibleCandles);
         double deltaMae = curr.emaSlow() - prev.emaSlow();
-        TradingManager.DireccionOperation dirSuperTrendFast = curr.superTrendFast() > 0 ? TradingManager.DireccionOperation.LONG : TradingManager.DireccionOperation.SHORT;
-        TradingManager.DireccionOperation dirSuperTrendMedium = curr.superTrendMedium() > 0 ? TradingManager.DireccionOperation.LONG : TradingManager.DireccionOperation.SHORT;
+        DireccionOperation dirSuperTrendFast = curr.superTrendFast() > 0 ? DireccionOperation.LONG : DireccionOperation.SHORT;
+        DireccionOperation dirSuperTrendMedium = curr.superTrendMedium() > 0 ? DireccionOperation.LONG : DireccionOperation.SHORT;
 
         switch (trend){
             case LONG -> {
@@ -119,7 +120,7 @@ public class GammaStrategy implements TradingStrategy {
                 TradingManager.OpenOperation op = operations.open(
                         tpPercent + TP_TREND + (deltaMae),
                         slPercent + SL_TREND + (deltaMae*1.5),
-                        TradingManager.DireccionOperation.LONG, operations.getAvailableBalance() / 2, 4);
+                        DireccionOperation.LONG, operations.getAvailableBalance() / 2, 4);
                 if (op != null){
                     op.getFlags().add("trend");
                 }
@@ -129,25 +130,25 @@ public class GammaStrategy implements TradingStrategy {
                 TradingManager.OpenOperation op = operations.open(
                         tpPercent + TP_TREND + (deltaMae),
                         slPercent + SL_TREND + (deltaMae*1.5),
-                        TradingManager.DireccionOperation.SHORT, operations.getAvailableBalance() / 2, 4);
+                        DireccionOperation.SHORT, operations.getAvailableBalance() / 2, 4);
                 if (op != null){
                     op.getFlags().add("trend");
                 }
             }
             case NEUTRAL -> {
 //                if (Math.abs(curr.macdVal()) < 0.00005 || Math.abs(curr.macdSignal()) < 0.00005) return;
-                TradingManager.DireccionOperation dirSuperTrendSlow = curr.superTrendSlow() > 0 ? TradingManager.DireccionOperation.LONG : TradingManager.DireccionOperation.SHORT;
+                DireccionOperation dirSuperTrendSlow = curr.superTrendSlow() > 0 ? DireccionOperation.LONG : DireccionOperation.SHORT;
 
-                TradingManager.DireccionOperation dirMACD;
+                DireccionOperation dirMACD;
 
                 if (candlesValid != 0){
                     candlesValid--;
                 }else {
-                    direccionOperationWindow = TradingManager.DireccionOperation.NEUTRAL;
+                    direccionOperationWindow = DireccionOperation.NEUTRAL;
                 }
 
                 if (!validMACD) {
-                    if (direccionOperationWindow ==  TradingManager.DireccionOperation.NEUTRAL) {
+                    if (direccionOperationWindow ==  DireccionOperation.NEUTRAL) {
                         operations.log("MACD no cumple con la condición para operar");
                         return;
                     }else {
@@ -155,13 +156,13 @@ public class GammaStrategy implements TradingStrategy {
                     }
                 }else {
                     candlesValid = 4;
-                    dirMACD = crossUp ? TradingManager.DireccionOperation.LONG : TradingManager.DireccionOperation.SHORT;
+                    dirMACD = crossUp ? DireccionOperation.LONG : DireccionOperation.SHORT;
                 }
 
-                if (dirMACD == TradingManager.DireccionOperation.LONG && prev.macdHist() > 0) {
+                if (dirMACD == DireccionOperation.LONG && prev.macdHist() > 0) {
                     return;
                 }
-                if (dirMACD == TradingManager.DireccionOperation.SHORT && prev.macdHist() < 0) {
+                if (dirMACD == DireccionOperation.SHORT && prev.macdHist() < 0) {
                     return;
                 }
 
@@ -177,11 +178,11 @@ public class GammaStrategy implements TradingStrategy {
                 boolean min = false;
                 boolean max = false;
 
-                if (longBan) if (dirMACD == TradingManager.DireccionOperation.LONG) {
+                if (longBan) if (dirMACD == DireccionOperation.LONG) {
                     shortBan = false;
                     return;
                 }
-                if (shortBan)  if (dirMACD == TradingManager.DireccionOperation.SHORT) {
+                if (shortBan)  if (dirMACD == DireccionOperation.SHORT) {
                     longBan = false;
                     return;
                 }
@@ -199,8 +200,8 @@ public class GammaStrategy implements TradingStrategy {
                     if (!max) max = isHigh(candles, 30);
                 }
 
-                if (max && (dirMACD == TradingManager.DireccionOperation.SHORT)) return;
-                if (min && (dirMACD == TradingManager.DireccionOperation.LONG)) return;
+                if (max && (dirMACD == DireccionOperation.SHORT)) return;
+                if (min && (dirMACD == DireccionOperation.LONG)) return;
 
                 double rsi8 = curr.rsi8();
                 double rsi16 = curr.rsi16();
@@ -210,11 +211,11 @@ public class GammaStrategy implements TradingStrategy {
 
                 boolean longSignal = rsi8 <= 2;
                 boolean shortSignal = rsi8 >= 98;
-                if (longSignal) if (dirMACD != TradingManager.DireccionOperation.LONG) {
+                if (longSignal) if (dirMACD != DireccionOperation.LONG) {
                     operations.log("El SuperTrend cancela Long");
                     return;
                 }
-                if (shortSignal) if (dirMACD != TradingManager.DireccionOperation.SHORT) {
+                if (shortSignal) if (dirMACD != DireccionOperation.SHORT) {
                     operations.log("El SuperTrend cancela Short");
                     return;
                 }
@@ -238,15 +239,15 @@ public class GammaStrategy implements TradingStrategy {
     }
 
     private int coolDown = 0;
-    private TradingManager.DireccionOperation trend = TradingManager.DireccionOperation.NEUTRAL;
+    private DireccionOperation trend = DireccionOperation.NEUTRAL;
 
     @Override
     public void closeOperation(TradingManager.CloseOperation closeOperation, TradingManager operations) {
         isPeekClose = false;
         TradingManager.ExitReason reason = closeOperation.getReason();
         if (closeOperation.getOpenOperation().getFlags().contains("inversion") && (reason == TradingManager.ExitReason.STRATEGY)) {
-            TradingManager.DireccionOperation direccion = closeOperation.getOpenOperation().isUpDireccion()
-                    ? TradingManager.DireccionOperation.SHORT : TradingManager.DireccionOperation.LONG;
+            DireccionOperation direccion = closeOperation.getOpenOperation().isUpDireccion()
+                    ? DireccionOperation.SHORT : DireccionOperation.LONG;
             TradingManager.OpenOperation op = operations.open(
                     closeOperation.getOpenOperation().getTpPercent(),
                     closeOperation.getOpenOperation().getSlPercent(),
@@ -267,17 +268,17 @@ public class GammaStrategy implements TradingStrategy {
         }
     }
 
-    private static TradingManager.DireccionOperation getTrend(List<Candle> candles) {
+    private static DireccionOperation getTrend(List<Candle> candles) {
         Candle prev = candles.get(candles.size() - 2);
         Candle curr = candles.getLast();
         double deltaMae = curr.emaSlow() - prev.emaSlow();
         if (deltaMae > 0.0008){
-            return TradingManager.DireccionOperation.LONG;
+            return DireccionOperation.LONG;
         }
         if (deltaMae < -0.0008){
-            return TradingManager.DireccionOperation.SHORT;
+            return DireccionOperation.SHORT;
         }
-        return TradingManager.DireccionOperation.NEUTRAL;
+        return DireccionOperation.NEUTRAL;
     }
 
     private static double calcSlPercent(Candle candle) {

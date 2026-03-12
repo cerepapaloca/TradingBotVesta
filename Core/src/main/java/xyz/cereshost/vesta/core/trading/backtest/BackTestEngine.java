@@ -11,6 +11,7 @@ import xyz.cereshost.vesta.common.market.Market;
 import xyz.cereshost.vesta.common.market.Trade;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
 import xyz.cereshost.vesta.core.strategys.DefaultStrategy;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.utils.BuilderData;
 import xyz.cereshost.vesta.core.strategys.TradingStrategy;
 import xyz.cereshost.vesta.core.trading.TradingManager;
@@ -30,7 +31,7 @@ public class BackTestEngine {
     @NotNull private final Market market;
     @NotNull private final TradingStrategy strategy;
     @Nullable private final PredictionEngine engine;
-    private double balance = 5;
+    private double balance = 7;
     private double currentPrice;
     private long currentTime;
 
@@ -85,7 +86,7 @@ public class BackTestEngine {
             if (operations.getLastOpenOperation().isEmpty())stats.nothing++;
             for (TradingManagerBackTest.BackTestOpenOperation setup : operations.getLastOpenOperation()){
                 if (setup != null) {
-                    if (setup.getDireccion() != TradingManager.DireccionOperation.NEUTRAL) {
+                    if (setup.getDireccion() != DireccionOperation.NEUTRAL) {
                         switch (setup.getDireccion()) {
                             case LONG -> stats.longs++;
                             case SHORT -> stats.shorts++;
@@ -173,10 +174,10 @@ public class BackTestEngine {
 
     private static double getGrossPnL(TradingManager.@NotNull CloseOperation closeOperation, TradingManager.OpenOperation openOperation, double qty) {
         double grossPnL;
-        if (openOperation.getDireccion() == TradingManager.DireccionOperation.LONG) {
+        if (openOperation.getDireccion() == DireccionOperation.LONG) {
             // LONG
             grossPnL = (closeOperation.getExitPrice() - openOperation.getEntryPrice()) * qty;
-        } else if (openOperation.getDireccion() == TradingManager.DireccionOperation.SHORT) {
+        } else if (openOperation.getDireccion() == DireccionOperation.SHORT) {
             // SHORT
             grossPnL = (openOperation.getEntryPrice() - closeOperation.getExitPrice()) * qty;
         } else {
@@ -445,7 +446,7 @@ public class BackTestEngine {
 
         private final float tpPercent;
         private final float slPercent;
-        private final TradingManager.DireccionOperation direction;
+        private final DireccionOperation direction;
         private final double exitPrice;
         private final TradingManager.ExitReason exitReason;
         private final long exitTime;
@@ -460,7 +461,7 @@ public class BackTestEngine {
                 double slPrice,
                 float tpPercent,
                 float slPercent,
-                TradingManager.DireccionOperation direction,
+                DireccionOperation direction,
                 double exitPrice,
                 TradingManager.ExitReason exitReason,
                 long entryTime,

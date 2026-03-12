@@ -2,6 +2,7 @@ package xyz.cereshost.vesta.core.strategys;
 
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
 import xyz.cereshost.vesta.common.market.Candle;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.util.List;
@@ -19,7 +20,7 @@ public class TestStrategy implements TradingStrategy {
             boolean b = isHigh(visibleCandles, 60);
             if (!isPeekClose) isPeekClose = b;
             if (isPeekClose && !b)
-                openOperations.open(0.4, 0.2, TradingManager.DireccionOperation.SHORT, openOperations.getAvailableBalance()/2, 1);
+                openOperations.open(0.4, 0.2, DireccionOperation.SHORT, openOperations.getAvailableBalance()/2, 1);
         }
     }
 

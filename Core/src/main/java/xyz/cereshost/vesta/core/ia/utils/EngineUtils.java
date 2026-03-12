@@ -20,6 +20,7 @@ import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.vesta.common.Vesta;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.io.IOException;
@@ -42,7 +43,7 @@ public class EngineUtils {
             float ratio,
             float confidence
     ) {
-        public TradingManager.DireccionOperation toOperation() {
+        public DireccionOperation toOperation() {
             return directionToOperation(direction);
         }
     }
@@ -77,14 +78,14 @@ public class EngineUtils {
         return PredictionUtils.directionFromRatioThreshold(ratio, THRESHOLD_RATIO);
     }
 
-    public static @NotNull TradingManager.DireccionOperation directionToOperation(int direction) {
+    public static @NotNull DireccionOperation directionToOperation(int direction) {
         if (direction > 0) {
-            return TradingManager.DireccionOperation.LONG;
+            return DireccionOperation.LONG;
         }
         if (direction < 0) {
-            return TradingManager.DireccionOperation.SHORT;
+            return DireccionOperation.SHORT;
         }
-        return TradingManager.DireccionOperation.NEUTRAL;
+        return DireccionOperation.NEUTRAL;
     }
 
 //    public static void checkEngines() {
@@ -382,7 +383,7 @@ public class EngineUtils {
             int hits = 0;
             int fails = 0;
             for (ResultEvaluate prediction : resultEvaluate) {
-                if (prediction.getPredDirection() == TradingManager.DireccionOperation.NEUTRAL || prediction.getRealDirection() == TradingManager.DireccionOperation.NEUTRAL) continue;
+                if (prediction.getPredDirection() == DireccionOperation.NEUTRAL || prediction.getRealDirection() == DireccionOperation.NEUTRAL) continue;
                 // ley de los signos
                 if (prediction.getPredDirection() == prediction.getRealDirection()) {
                     hits++;
@@ -466,7 +467,7 @@ public class EngineUtils {
             return hits;
         }
 
-        public int[] hitRate(TradingManager.DireccionOperation direccion){
+        public int[] hitRate(DireccionOperation direccion){
             int[] hits = new int[3];
             for (ResultEvaluate prediction : resultEvaluate){
                 if (prediction.getRealDirection() == direccion) {
@@ -563,11 +564,11 @@ public class EngineUtils {
             return realDir - predDir;
         }
 
-        public TradingManager.DireccionOperation getRealDirection() {
+        public DireccionOperation getRealDirection() {
             return directionToOperation(directionFromRatio(realDir));
         }
 
-        public TradingManager.DireccionOperation getPredDirection() {
+        public DireccionOperation getPredDirection() {
             return directionToOperation(directionFromRatio(predDir));
         }
     }

@@ -2,6 +2,7 @@ package xyz.cereshost.vesta.core.strategys;
 
 import xyz.cereshost.vesta.common.market.Candle;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.time.Instant;
@@ -109,9 +110,9 @@ public class KappaStrategy implements TradingStrategy {
 
         if (!operations.hasOpenOperation()) {
             if (buyCondition) {
-                openOperation(operations, TradingManager.DireccionOperation.LONG, current.close());
+                openOperation(operations, DireccionOperation.LONG, current.close());
             } else if (sellCondition) {
-                openOperation(operations, TradingManager.DireccionOperation.SHORT, current.close());
+                openOperation(operations, DireccionOperation.SHORT, current.close());
             }
         }
 
@@ -124,10 +125,10 @@ public class KappaStrategy implements TradingStrategy {
 
     @Override
     public void closeOperation(TradingManager.CloseOperation closeOperation, TradingManager operations) {
-        trailingStates.remove(closeOperation.getUuidOpenOperation());
+        trailingStates.remove(closeOperation.getUuid());
     }
 
-    private void openOperation(TradingManager operations, TradingManager.DireccionOperation direction, double entryPrice) {
+    private void openOperation(TradingManager operations, DireccionOperation direction, double entryPrice) {
         if (!Double.isFinite(entryPrice) || entryPrice <= 0.0) {
             return;
         }

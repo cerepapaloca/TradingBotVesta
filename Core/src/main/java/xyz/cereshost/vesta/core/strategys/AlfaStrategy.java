@@ -3,6 +3,7 @@ package xyz.cereshost.vesta.core.strategys;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
 import xyz.cereshost.vesta.common.market.Candle;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.util.List;
@@ -19,7 +20,7 @@ public class AlfaStrategy implements TradingStrategy {
 //                o.setTpPercent(tpMinimo + 0.1);
 //            }
         }
-        if (pred.directionOperation() == TradingManager.DireccionOperation.NEUTRAL) {
+        if (pred.directionOperation() == DireccionOperation.NEUTRAL) {
             operations.log("Momento no optimo para operar");
             return;
         }

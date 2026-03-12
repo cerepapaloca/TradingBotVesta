@@ -3,6 +3,7 @@ package xyz.cereshost.vesta.core.strategys;
 import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
 import xyz.cereshost.vesta.common.market.Candle;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 
 import java.util.List;
@@ -34,7 +35,7 @@ public class DeltaStrategy implements TradingStrategy {
         double close = curr.close();
         if (!isFinite(close) || close <= 0) return;
 
-        TradingManager.DireccionOperation signal = detectRsiDivergenceSignal(visibleCandles);
+        DireccionOperation signal = detectRsiDivergenceSignal(visibleCandles);
 
         for (TradingManager.OpenOperation o : operations.getOpens()) {
             if (o.getMinutesOpen() >= MAX_OPEN_CANDLES) {
@@ -42,11 +43,11 @@ public class DeltaStrategy implements TradingStrategy {
                 continue;
             }
 
-            if (signal == TradingManager.DireccionOperation.LONG && o.getDireccion() == TradingManager.DireccionOperation.SHORT) {
+            if (signal == DireccionOperation.LONG && o.getDireccion() == DireccionOperation.SHORT) {
                 operations.close(TradingManager.ExitReason.STRATEGY_INVERSION, o);
                 continue;
             }
-            if (signal == TradingManager.DireccionOperation.SHORT && o.getDireccion() == TradingManager.DireccionOperation.LONG) {
+            if (signal == DireccionOperation.SHORT && o.getDireccion() == DireccionOperation.LONG) {
                 operations.close(TradingManager.ExitReason.STRATEGY_INVERSION, o);
                 continue;
             }
@@ -72,16 +73,16 @@ public class DeltaStrategy implements TradingStrategy {
         }
 
         if (operations.hasOpenOperation()) return;
-        if (signal == TradingManager.DireccionOperation.NEUTRAL) return;
+        if (signal == DireccionOperation.NEUTRAL) return;
 
         double slPercent = calcSlPercent(curr);
         double tpPercent = clamp(slPercent * RISK_REWARD, MIN_TP_PCT, MAX_TP_PCT);
 
-        if (longBan) if (signal == TradingManager.DireccionOperation.LONG) {
+        if (longBan) if (signal == DireccionOperation.LONG) {
             shortBan = false;
             return;
         }
-        if (shortBan)  if (signal == TradingManager.DireccionOperation.SHORT) {
+        if (shortBan)  if (signal == DireccionOperation.SHORT) {
             longBan = false;
             return;
         }
@@ -108,7 +109,7 @@ public class DeltaStrategy implements TradingStrategy {
                     0.3,
                     0.1,
                     closeOperation.getOpenOperation().isUpDireccion()
-                            ? TradingManager.DireccionOperation.SHORT : TradingManager.DireccionOperation.LONG,
+                            ? DireccionOperation.SHORT : DireccionOperation.LONG,
                     operations.getAvailableBalance() / 2, 4
             );
             if (op != null){
@@ -124,12 +125,12 @@ public class DeltaStrategy implements TradingStrategy {
         }
     }
 
-    private static TradingManager.DireccionOperation detectRsiDivergenceSignal(List<Candle> candles) {
+    private static DireccionOperation detectRsiDivergenceSignal(List<Candle> candles) {
         int size = candles.size();
         int from = Math.max(PIVOT_LEFT, size - LOOKBACK_CANDLES);
         int to = size - 1 - PIVOT_RIGHT;
         if (to - from < 4) {
-            return TradingManager.DireccionOperation.NEUTRAL;
+            return DireccionOperation.NEUTRAL;
         }
 
         int lowPrev = -1;
@@ -152,9 +153,9 @@ public class DeltaStrategy implements TradingStrategy {
         boolean bearish = isBearishDivergence(candles, highPrev, highLast);
 
         if (bullish == bearish) {
-            return TradingManager.DireccionOperation.NEUTRAL;
+            return DireccionOperation.NEUTRAL;
         }
-        return bullish ? TradingManager.DireccionOperation.LONG : TradingManager.DireccionOperation.SHORT;
+        return bullish ? DireccionOperation.LONG : DireccionOperation.SHORT;
     }
 
     private static boolean isBullishDivergence(List<Candle> candles, int prevIdx, int lastIdx) {

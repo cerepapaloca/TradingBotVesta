@@ -4,6 +4,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.vesta.core.ia.PredictionEngine;
 import xyz.cereshost.vesta.common.market.Candle;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 import xyz.cereshost.vesta.core.utils.StrategyUtils;
 
@@ -38,7 +39,7 @@ public class EpsilonStrategy implements TradingStrategy {
 
     private boolean isPeekClose = false;
     @NotNull
-    private TradingManager.DireccionOperation direccionOperationWindow = TradingManager.DireccionOperation.NEUTRAL;
+    private DireccionOperation direccionOperationWindow = DireccionOperation.NEUTRAL;
     private int candlesValid;
 
     @Override
@@ -123,14 +124,14 @@ public class EpsilonStrategy implements TradingStrategy {
 
 
 
-        TradingManager.DireccionOperation direction = signal.direction() > 0
-                ? TradingManager.DireccionOperation.LONG
-                : TradingManager.DireccionOperation.SHORT;
+        DireccionOperation direction = signal.direction() > 0
+                ? DireccionOperation.LONG
+                : DireccionOperation.SHORT;
 
-        if (direction == TradingManager.DireccionOperation.LONG && prev.macdHist() > -0.0012) {
+        if (direction == DireccionOperation.LONG && prev.macdHist() > -0.0012) {
             return;
         }
-        if (direction == TradingManager.DireccionOperation.SHORT && prev.macdHist() < 0.0012) {
+        if (direction == DireccionOperation.SHORT && prev.macdHist() < 0.0012) {
             return;
         }
 
@@ -189,7 +190,7 @@ public class EpsilonStrategy implements TradingStrategy {
                     0.3,
                     0.05,
                     closeOperation.getOpenOperation().isUpDireccion()
-                            ? TradingManager.DireccionOperation.SHORT : TradingManager.DireccionOperation.LONG,
+                            ? DireccionOperation.SHORT : DireccionOperation.LONG,
                     operations.getAvailableBalance() / 2, 4
             );
             if (op != null){
@@ -209,7 +210,7 @@ public class EpsilonStrategy implements TradingStrategy {
         return signal.direction() > 0;
     }
 
-    private static boolean passesFilters(Candle candle, TradingManager.DireccionOperation direction) {
+    private static boolean passesFilters(Candle candle, DireccionOperation direction) {
         double rsi = candle.rsi16();
         if (!Double.isFinite(rsi)) return false;
 
@@ -218,11 +219,11 @@ public class EpsilonStrategy implements TradingStrategy {
         boolean stLongBias = stMedium < 0 || stSlow < 0;
         boolean stShortBias = stMedium > 0 || stSlow > 0;
 
-        if (direction == TradingManager.DireccionOperation.LONG) {
+        if (direction == DireccionOperation.LONG) {
             if (!stLongBias) return false;
             return rsi >= 50.0;
         }
-        if (direction == TradingManager.DireccionOperation.SHORT) {
+        if (direction == DireccionOperation.SHORT) {
             if (!stShortBias) return false;
             return rsi <= 50.0;
         }
@@ -245,11 +246,11 @@ public class EpsilonStrategy implements TradingStrategy {
         return clamp(tp, MIN_TP_PERCENT, MAX_TP_PERCENT);
     }
 
-    private boolean isDirectionInCooldown(TradingManager.DireccionOperation direction) {
-        if (direction == TradingManager.DireccionOperation.LONG) {
+    private boolean isDirectionInCooldown(DireccionOperation direction) {
+        if (direction == DireccionOperation.LONG) {
             return longCooldown > 0;
         }
-        if (direction == TradingManager.DireccionOperation.SHORT) {
+        if (direction == DireccionOperation.SHORT) {
             return shortCooldown > 0;
         }
         return true;

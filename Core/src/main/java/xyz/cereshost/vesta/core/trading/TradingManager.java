@@ -2,17 +2,19 @@ package xyz.cereshost.vesta.core.trading;
 
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import lombok.experimental.Delegate;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.vesta.common.market.Market;
 import xyz.cereshost.vesta.core.exception.OperationFilled;
 import xyz.cereshost.vesta.core.message.Notifiable;
 
 import java.util.*;
 
-import static xyz.cereshost.vesta.core.trading.TradingManager.DireccionOperation.LONG;
-import static xyz.cereshost.vesta.core.trading.TradingManager.DireccionOperation.SHORT;
+import static xyz.cereshost.vesta.core.trading.DireccionOperation.LONG;
+import static xyz.cereshost.vesta.core.trading.DireccionOperation.SHORT;
 
 public interface TradingManager extends Notifiable {
     /**
@@ -24,14 +26,16 @@ public interface TradingManager extends Notifiable {
      * @param leverage La cantidad de apaleamiento
      * @return la nueva instancia de la operación
      */
-    OpenOperation open(double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSD, int leverage);
+    @Nullable OpenOperation open(double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSD, int leverage);
 
     /**
      * Cierras una Operación previamente Abierta
      * @param reason Razón de la salida
      * @param openOperation La operacion que se va a cerrar
      */
-    void close(ExitReason reason, OpenOperation openOperation);
+    @Nullable CloseOperation close(ExitReason reason, OpenOperation openOperation);
+
+    @Nullable LimiteOperation limit(double entryPrice, double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSD, int leverage);
 
     int closeSize();
 
@@ -113,20 +117,13 @@ public interface TradingManager extends Notifiable {
         }
     }
 
+    @EqualsAndHashCode(callSuper = true)
     @Data
-    abstract class OpenOperation {
-        private final UUID uuid = UUID.randomUUID();
+    abstract class OpenOperation extends LimiteOperation {
         private double tpPercent;
         private double slPercent;
 
         private final long entryTime;
-        private final double entryPrice;
-        private final double originalTpPercent;
-        private final double originalSlPercent;
-        private final DireccionOperation direccion;
-        private final double amountInitUSDT;
-        private final int leverage;
-        private final TradingManager tradingManager;
         /**
          * Lista de banderas para identificar una operación
          */
@@ -134,18 +131,11 @@ public interface TradingManager extends Notifiable {
 
         // Ojo el TP y SL en Porcentajes ABS sin apalancar
         public OpenOperation(@NotNull TradingManager tradingManager, double entryPrice, double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSDT, int leverage) {
+            super(entryPrice, direccion, tpPercent, slPercent, amountUSDT, leverage, tradingManager);
             this.tpPercent = tpPercent;
             this.slPercent = slPercent;
 
-            this.originalTpPercent = tpPercent;
-            this.originalSlPercent = slPercent;
-
             this.entryTime = tradingManager.getCurrentTime();
-            this.entryPrice = entryPrice;
-            this.direccion = direccion;
-            this.amountInitUSDT = amountUSDT;
-            this.leverage = leverage;
-            this.tradingManager = tradingManager;
         }
 
         public void close(ExitReason reason) {
@@ -225,6 +215,28 @@ public interface TradingManager extends Notifiable {
         public void nextMinute() {
             minutesOpen++;
         }
+
+        @Override
+        public void setTimeInForce(TimeInForce timeInForce) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    @Data
+    abstract class LimiteOperation {
+        protected final UUID uuid = UUID.randomUUID();
+        protected final double entryPrice;
+        @NotNull
+        protected final DireccionOperation direccion;
+        protected final double originalTpPercent;
+        protected final double originalSlPercent;
+        protected final double amountInitUSDT;
+        protected final int leverage;
+        @NotNull
+        protected final TradingManager tradingManager;
+
+        @NotNull
+        protected TimeInForce timeInForce = TimeInForce.GTC;
     }
 
     /**
@@ -271,25 +283,6 @@ public interface TradingManager extends Notifiable {
         public boolean isStopLoss() {
             return this == LONG_STOP_LOSS || this == SHORT_STOP_LOSS;
         }
-    }
-
-    /**
-     * Direcciones de operación
-     */
-    enum DireccionOperation {
-        /**
-         * Operación Corta/Vender
-         */
-        SHORT,
-        /**
-         * Operación Larga/Comprar
-         */
-        LONG,
-        /**
-         * En caso qué sea lateral
-         * <strong>No se puede operar con neutral solo es una forma de identificar operacion sin movimiento ósea no hacer nada</strong>
-         */
-        NEUTRAL
     }
 
 }

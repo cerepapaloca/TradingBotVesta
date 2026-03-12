@@ -16,6 +16,7 @@ import xyz.cereshost.vesta.common.market.Market;
 import xyz.cereshost.vesta.core.message.MediaNotification;
 import xyz.cereshost.vesta.core.message.Notifiable;
 import xyz.cereshost.vesta.core.strategys.TradingStrategy;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.real.api.BinanceApi;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 import xyz.cereshost.vesta.core.utils.BuilderData;
@@ -200,7 +201,7 @@ public final class TradingTickLoop implements Notifiable {
             int longs = 0;
             int shorts = 0;
             for (TradingManager.OpenOperation op : trading.getOpens()) {
-                if (op.getDireccion().equals(TradingManager.DireccionOperation.LONG)) {
+                if (op.isUpDireccion()) {
                     longs++;
                 }else {
                     shorts++;

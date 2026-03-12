@@ -7,7 +7,9 @@ import xyz.cereshost.vesta.core.ia.VestaEngine;
 import xyz.cereshost.vesta.core.io.IOMarket;
 import xyz.cereshost.vesta.common.market.Market;
 import xyz.cereshost.vesta.core.message.DiscordNotification;
+import xyz.cereshost.vesta.core.strategys.BetaStrategy;
 import xyz.cereshost.vesta.core.strategys.LambdaStrategy;
+import xyz.cereshost.vesta.core.strategys.ZetaStrategy;
 import xyz.cereshost.vesta.core.trading.real.api.BinanceApiRest;
 import xyz.cereshost.vesta.core.trading.TradingManager;
 import xyz.cereshost.vesta.core.trading.real.TradingTickLoop;
@@ -58,11 +60,11 @@ public class Main {
                 Vesta.info("  MAE Promedio TP:           %.8f", evaluateResult.avgMaeTP());
                 Vesta.info("  MAE Promedio SL:           %.8f", evaluateResult.avgMaeSL());
                 Vesta.info("  Acierto de Tendencia:      %.2f%%S %.2f%%A %.2f%%F %.2f%%C", evaluateResult.hitRateSimple(), evaluateResult.hitRateAdvanced(), evaluateResult.hitRateSafe(), evaluateResult.hitRateConfident(0.7f));
-                int[] longHits = evaluateResult.hitRate(TradingManager.DireccionOperation.LONG);
+                int[] longHits = evaluateResult.hitRate(DireccionOperation.LONG);
                 Vesta.info("  Real Long                  %d L %d S %d N", longHits[0], longHits[1], longHits[2]);
-                int[] shortHits = evaluateResult.hitRate(TradingManager.DireccionOperation.SHORT);
+                int[] shortHits = evaluateResult.hitRate(DireccionOperation.SHORT);
                 Vesta.info("  Real Short                 %d L %d S %d N", shortHits[0],  shortHits[1], shortHits[2]);
-                int[] NeutralHits = evaluateResult.hitRate(TradingManager.DireccionOperation.NEUTRAL);
+                int[] NeutralHits = evaluateResult.hitRate(DireccionOperation.NEUTRAL);
                 Vesta.info("  Real Neutral               %d L %d S %d N", NeutralHits[0], NeutralHits[1], NeutralHits[2]);
                 ChartUtils.showPredictionComparison("Backtest " + String.join(" ", symbols), evaluateResult.resultEvaluate());
                 List<EngineUtils.ResultEvaluate> resultEvaluate = evaluateResult.resultEvaluate();
@@ -99,7 +101,7 @@ public class Main {
             case "backtest" -> {
                 Market market = new Market("SOLUSDC");
                 List<CompletableFuture<Market>> task = new ArrayList<>();
-                for (int day = 7; day >= 0; day--) {
+                for (int day = 30; day >= 0; day--) {
                     int finalDay = day;
                     task.add(CompletableFuture.supplyAsync(() -> {
                         try {
@@ -116,9 +118,9 @@ public class Main {
                 }
                 Vesta.info("🔙 Ejecutando backtest...");
                 market.sortd();
-                showDataBackTest(new BackTestEngine(market, null, new LambdaStrategy()).run());
+                showDataBackTest(new BackTestEngine(market, null, new BetaStrategy()).run());
             }
-            case "trading" -> new TradingTickLoop("SOLUSDC", null, new LambdaStrategy(), new BinanceApiRest(false), new DiscordNotification()).startCandleLoop();
+            case "trading" -> new TradingTickLoop("SOLUSDC", null, new BetaStrategy(), new BinanceApiRest(false), new DiscordNotification()).startCandleLoop();
             case "extract" -> IOMarket.extractFirstBin(Path.of(IOMarket.STORAGE_DIR + "\\" + SYMBOL +"\\trades"));
             case "diagnose" -> ModelDiagnostics.run();
         }
@@ -139,7 +141,7 @@ public class Main {
         ChartUtils.plot("BackTest ROI (Walk-Forward)", "Trades", List.of(
                 new ChartUtils.DataPlot("ROI%", stats.getTradesComplete().stream().map(BackTestEngine.CompleteTrade::getPnlPercent).toList())
         ));
-        ChartUtils.animateCandlePredictions(stats.getMarket().getSymbol(), stats.getMarket().getCandleSimples().stream().toList(), stats.getAllTrades(), BuilderData.DEFAULT_FUTURE_WINDOW, 200);
+        //ChartUtils.animateCandlePredictions(stats.getMarket().getSymbol(), stats.getMarket().getCandleSimples().stream().toList(), stats.getAllTrades(), BuilderData.DEFAULT_FUTURE_WINDOW, 200);
         ChartUtils.showCandleChartWithTrades("Trades", stats.getMarket().getCandleSimples().stream().toList(), stats.getMarket().getSymbol(), stats.getTradesComplete());
         double winRate = stats.getTotalTrades() > 0 ? (double) stats.getWins() / stats.getTotalTrades() * 100 : 0;
         double avgHoldMinutes = stats.getTotalTrades() > 0 ? (stats.getHoldAvg() / 1000.0 / 60.0) : 0;

@@ -8,7 +8,9 @@ import org.jetbrains.annotations.Nullable;
 import xyz.cereshost.vesta.common.Vesta;
 import xyz.cereshost.vesta.common.market.Market;
 import xyz.cereshost.vesta.core.message.MediaNotification;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.trading.TradingManager;
+import xyz.cereshost.vesta.core.trading.TypeOrder;
 import xyz.cereshost.vesta.core.trading.real.api.BinanceApi;
 
 import java.util.*;
@@ -29,7 +31,7 @@ public class TradingManagerBinance implements TradingManager {
 
     // Mapa para vincular tu UUID interno con los IDs de órdenes de Binance
     private final ConcurrentHashMap<UUID, BinanceOpenOperation> activeOperations = new ConcurrentHashMap<>();
-    private final List<CloseOperation> closedOperations = Collections.synchronizedList(new ArrayList<>());
+    private final List<BinanceCloseOperation> closedOperations = Collections.synchronizedList(new ArrayList<>());
     private final Market market;
 
     public TradingManagerBinance(@NotNull BinanceApi binanceApi, @Nullable MediaNotification mediaNotification, @NotNull Market market) {
@@ -98,20 +100,19 @@ public class TradingManagerBinance implements TradingManager {
             double tpPrice = op.getTpPrice();
             double slPrice = op.getSlPrice();
 
-            String side = (direccion == DireccionOperation.LONG) ? "BUY" : "SELL";
-            long entryOrderId = binanceApi.placeOrder(symbol, side, "MARKET", qtyStr, null, false, false);
+            long entryOrderId = binanceApi.placeOrder(symbol, direccion, TypeOrder.MARKET, op.getTimeInForce(), qtyStr, null, false, false);
             op.setEntryBinanceId(entryOrderId);
 
-            String closeSide = (side.equals("BUY")) ? "SELL" : "BUY";
+            DireccionOperation direccionInverse = direccion.inverse();
 
             tradingTickLoop.getExecutor().execute(() ->{
-                long slOrderId = binanceApi.placeAlgoOrder(symbol, closeSide, "STOP_MARKET", null, slPrice, true, true);
+                long slOrderId = binanceApi.placeAlgoOrder(symbol, direccionInverse, TypeOrder.STOP_LOSS, op.getTimeInForce(), null, slPrice, true, true);
                 op.setSlBinanceId(slOrderId);
                 op.setSlIsAlgo(true);
             });
 
             tradingTickLoop.getExecutor().execute(() -> {
-                long tpOrderId = binanceApi.placeAlgoOrder(symbol, closeSide, "TAKE_PROFIT_MARKET", null, tpPrice, true, true);
+                long tpOrderId = binanceApi.placeAlgoOrder(symbol, direccionInverse, TypeOrder.TAKE_PROFIT,  op.getTimeInForce(),null, tpPrice, true, true);
                 op.setTpBinanceId(tpOrderId);
                 op.setTpIsAlgo(true);
             });
@@ -125,9 +126,9 @@ public class TradingManagerBinance implements TradingManager {
     }
 
     @Override
-    public void close(ExitReason reason, OpenOperation openOperation) {
+    public CloseOperation close(ExitReason reason, OpenOperation openOperation) {
         BinanceOpenOperation op = activeOperations.get(openOperation.getUuid());
-        if (op == null) return;
+        if (op == null) return null;
 
         String symbol = getMarket().getSymbol();
         try {
@@ -147,26 +148,32 @@ public class TradingManagerBinance implements TradingManager {
             latch.await();
             // 2. Cerrar posición (Market opuesto)
             // Usamos closePosition=true para cerrar cualquier remanente con seguridad
-            String closeSide = (op.getDireccion() == DireccionOperation.LONG) ? "SELL" : "BUY";
 
             double quantity = (op.getAmountInitUSDT() * op.getLeverage()) / op.getEntryPrice();
             String qtyStr = binanceApi.formatQuantity(symbol, quantity);
 
             tradingTickLoop.getExecutor().execute(() -> {
-                binanceApi.placeOrder(symbol, closeSide, "MARKET", qtyStr, null, true, false);
+                binanceApi.placeOrder(symbol, op.getDireccion().inverse(), TypeOrder.MARKET, op.getTimeInForce(), qtyStr, null, true, false);
             });
 
             // 3. Registrar cierre
             double exitPrice = binanceApi.getTickerPrice(symbol);
-            CloseOperation closeOp = new BinanceCloseOperation(
+            BinanceCloseOperation closeOp = new BinanceCloseOperation(
                     exitPrice, System.currentTimeMillis(), reason, op
             );
 
             closedOperations.add(closeOp);
             activeOperations.remove(op.getUuid());
+            return closeOp;
         } catch (InterruptedException e) {
             Vesta.sendErrorException("Binance Error Open Async", e);
+            return null;
         }
+    }
+
+    @Override
+    public @Nullable LimiteOperation limit(double entryPrice, double tpPercent, double slPercent, @NotNull DireccionOperation direccion, double amountUSD, int leverage) {
+        return null;
     }
 
     @Override
@@ -356,15 +363,15 @@ public class TradingManagerBinance implements TradingManager {
 
         @Override
         public synchronized void setTpPercent(double tpPercent) {
-            updateProtectionOrder(true, tpPercent, "TAKE_PROFIT_MARKET");
+            updateProtectionOrder(true, tpPercent, TypeOrder.TAKE_PROFIT);
         }
 
         @Override
         public synchronized void setSlPercent(double slPercent) {
-            updateProtectionOrder(false, slPercent, "STOP_MARKET");
+            updateProtectionOrder(false, slPercent, TypeOrder.STOP_LOSS);
         }
 
-        private void updateProtectionOrder(boolean isTpOrder, double newPercent, @NotNull String orderType) {
+        private void updateProtectionOrder(boolean isTpOrder, double newPercent, @NotNull TypeOrder orderType) {
             if (!Double.isFinite(newPercent)) {
                 Vesta.warning("Valor inválido para %s en %s: %s",
                         isTpOrder ? "TP" : "SL", getUuid(), newPercent);
@@ -378,7 +385,6 @@ public class TradingManagerBinance implements TradingManager {
             }
 
             String symbol = tradingBinance.getMarket().getSymbol();
-            String closeSide = (getDireccion() == DireccionOperation.LONG) ? "SELL" : "BUY";
 
             double oldPercent = isTpOrder ? getTpPercent() : getSlPercent();
             long oldOrderId = isTpOrder ? getTpBinanceId() : getSlBinanceId();
@@ -394,7 +400,7 @@ public class TradingManagerBinance implements TradingManager {
             try {
                 tradingBinance.binanceApi.cancelOrder(symbol, oldOrderId, oldIsAlgo);
                 long newOrderId = tradingBinance.binanceApi.placeAlgoOrder(
-                        symbol, closeSide, orderType, null, triggerPrice, true, true
+                        symbol, getDireccion().inverse(), orderType, getTimeInForce(), null, triggerPrice, true, true
                 );
 
                 if (isTpOrder) {

@@ -14,6 +14,7 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import xyz.cereshost.vesta.common.Vesta;
 import xyz.cereshost.vesta.common.market.Candle;
+import xyz.cereshost.vesta.core.trading.DireccionOperation;
 import xyz.cereshost.vesta.core.utils.BuilderData;
 import xyz.cereshost.vesta.core.ia.utils.YNormalizer;
 import xyz.cereshost.vesta.core.ia.utils.XNormalizer;
@@ -185,7 +186,7 @@ public class PredictionEngine {
         private final double confident;
         private final int direction;   // -1 Short, 0 Neutral, 1 Long
 
-        public TradingManager.DireccionOperation directionOperation() {
+        public DireccionOperation directionOperation() {
             return EngineUtils.directionToOperation(direction);
         }
         public double getTpDistance() {

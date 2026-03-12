@@ -12,6 +12,7 @@ import org.jfree.chart.axis.NumberAxis;
 import org.jfree.chart.axis.ValueAxis;
 import org.jfree.chart.plot.*;
 import org.jfree.chart.renderer.xy.CandlestickRenderer;
+import org.jfree.chart.renderer.xy.XYAreaRenderer;
 import org.jfree.chart.renderer.xy.XYItemRenderer;
 import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
 import org.jfree.data.category.DefaultCategoryDataset;
@@ -782,8 +783,8 @@ public class ChartUtils {
             for (int i = 0; i < ExtraData.size(); i++) {
                 BackTestEngine.CompleteTrade stat = ExtraData.get(i);
                 // Calcular magnitud del TP (en porcentaje de log return)
-                float tpMagnitude = Math.abs(stat.getTpPercent() * 10000); // Convertir a puntos base
-                float slMagnitude = Math.abs(stat.getSlPercent() * 10000); // Convertir a puntos base
+                float tpMagnitude = Math.abs(stat.getTpPercent()); // Convertir a puntos base
+                float slMagnitude = Math.abs(stat.getSlPercent()); // Convertir a puntos base
                 float roi = (float) (stat.getPnlPercent() * 100); // Convertir a porcentaje
 
                 dataList.add(new TPSLROIData(tpMagnitude, slMagnitude, roi));
@@ -1121,25 +1122,6 @@ public class ChartUtils {
     }
 
     /**
-     * Clase auxiliar para bins de magnitud
-     */
-    private static class MagnitudeBin {
-        float min;
-        float max;
-        int totalSamples;
-        int correctSamples;
-        double avgError;
-
-        MagnitudeBin(float min, float max) {
-            this.min = min;
-            this.max = max;
-            this.totalSamples = 0;
-            this.correctSamples = 0;
-            this.avgError = 0;
-        }
-    }
-
-    /**
      * Calcular media de una lista
      */
     private static double calculateMean(List<Float> values) {
@@ -1227,11 +1209,38 @@ public class ChartUtils {
 
             // Preparar renderer para agregar anotaciones
             CandlestickRenderer renderer = new CandlestickRenderer();
-            plot.setRenderer(renderer);
+
+            XYSeriesCollection balanceDataset = buildBalanceDataset(candles, trades);
+            int candleDatasetIndex = 0;
+            int markerDatasetIndex = 1;
+            if (balanceDataset != null) {
+                candleDatasetIndex = 1;
+                markerDatasetIndex = 2;
+
+                NumberAxis balanceAxis = new NumberAxis("Balance");
+                balanceAxis.setAutoRangeIncludesZero(false);
+                balanceAxis.setLabelPaint(Color.WHITE);
+                balanceAxis.setTickLabelPaint(Color.WHITE);
+                plot.setRangeAxis(1, balanceAxis);
+
+                XYAreaRenderer balanceRenderer = new XYAreaRenderer();
+                balanceRenderer.setSeriesPaint(0, new Color(0, 140, 255, 50));
+                balanceRenderer.setSeriesOutlinePaint(0, new Color(0, 140, 255, 140));
+                balanceRenderer.setSeriesOutlineStroke(0, new BasicStroke(1.2f));
+                balanceRenderer.setOutline(true);
+
+                plot.setDataset(0, balanceDataset);
+                plot.setRenderer(0, balanceRenderer);
+                plot.mapDatasetToRangeAxis(0, 1);
+            }
+
+            plot.setDataset(candleDatasetIndex, dataset);
+            plot.setRenderer(candleDatasetIndex, renderer);
+            plot.mapDatasetToRangeAxis(candleDatasetIndex, 0);
 
             // Agregar anotaciones para cada trade
             if (trades != null && !trades.isEmpty()) {
-                addTradeAnnotations(plot, trades, timeToIndex, candles);
+                addTradeAnnotations(plot, trades, timeToIndex, candles, markerDatasetIndex);
             }
 
             // Agregar leyenda para colores
@@ -1264,6 +1273,47 @@ public class ChartUtils {
             Vesta.error("Error mostrando gráfico: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private static XYSeriesCollection buildBalanceDataset(List<CandleSimple> candles, List<BackTestEngine.CompleteTrade> trades) {
+        if (candles == null || candles.isEmpty() || trades == null || trades.isEmpty()) {
+            return null;
+        }
+
+        List<BackTestEngine.CompleteTrade> sorted = new ArrayList<>(trades);
+        sorted.sort(Comparator.comparingLong(BackTestEngine.CompleteTrade::getExitTime));
+
+        BackTestEngine.CompleteTrade first = sorted.getFirst();
+        double initialBalance = first.getBalance() - first.getPnl();
+        if (!Double.isFinite(initialBalance)) {
+            return null;
+        }
+
+        XYSeries balanceSeries = new XYSeries("Balance", true, true);
+        long startTime = candles.getFirst().openTime();
+        balanceSeries.add(startTime, initialBalance);
+
+        long lastTime = startTime;
+        double lastBalance = initialBalance;
+        for (BackTestEngine.CompleteTrade trade : sorted) {
+            double balance = trade.getBalance();
+            if (!Double.isFinite(balance)) {
+                continue;
+            }
+            long time = trade.getExitTime();
+            balanceSeries.add(time, balance);
+            lastTime = time;
+            lastBalance = balance;
+        }
+
+        long endTime = candles.getLast().openTime();
+        if (endTime > lastTime && Double.isFinite(lastBalance)) {
+            balanceSeries.add(endTime, lastBalance);
+        }
+
+        XYSeriesCollection dataset = new XYSeriesCollection();
+        dataset.addSeries(balanceSeries);
+        return dataset;
     }
 
     private static DefaultHighLowDataset buildHighLowDataset(
@@ -1327,7 +1377,8 @@ public class ChartUtils {
     }
 
     private static void addTradeAnnotations(XYPlot plot, List<BackTestEngine.CompleteTrade> trades,
-                                            Map<Long, Integer> timeToIndex, List<CandleSimple> candles) {
+                                            Map<Long, Integer> timeToIndex, List<CandleSimple> candles,
+                                            int datasetIndex) {
 
         // Crear un dataset para markers
         XYSeriesCollection datasetMarkers = new XYSeriesCollection();
@@ -1353,9 +1404,9 @@ public class ChartUtils {
                 double entryX = entryCandle.openTime();
 
                 // Agregar marker de entrada
-                if (trade.getDirection() == TradingManager.DireccionOperation.LONG) {
+                if (trade.getDirection() == DireccionOperation.LONG) {
                     entryLongSeries.add(entryX, trade.getEntryPrice());
-                } else if (trade.getDirection() == TradingManager.DireccionOperation.SHORT) {
+                } else if (trade.getDirection() == DireccionOperation.SHORT) {
                     entryShortSeries.add(entryX, trade.getEntryPrice());
                 }
 
@@ -1466,8 +1517,8 @@ public class ChartUtils {
         }
 
         // Agregar el renderer al plot
-        plot.setDataset(1, datasetMarkers);
-        plot.setRenderer(1, markerRenderer);
+        plot.setDataset(datasetIndex, datasetMarkers);
+        plot.setRenderer(datasetIndex, markerRenderer);
     }
 
     private static int findClosestCandleIndex(List<CandleSimple> candles, long time) {
@@ -1502,16 +1553,16 @@ public class ChartUtils {
         if (trades != null && !trades.isEmpty()) {
             // Contar estadísticas
             long longWins = trades.stream()
-                    .filter(t -> t.getDirection() == TradingManager.DireccionOperation.LONG && t.getPnl() > 0)
+                    .filter(t -> t.getDirection() == DireccionOperation.LONG && t.getPnl() > 0)
                     .count();
             long longLosses = trades.stream()
-                    .filter(t -> t.getDirection() == TradingManager.DireccionOperation.LONG && t.getPnl() <= 0)
+                    .filter(t -> t.getDirection() == DireccionOperation.LONG && t.getPnl() <= 0)
                     .count();
             long shortWins = trades.stream()
-                    .filter(t -> t.getDirection() == TradingManager.DireccionOperation.SHORT && t.getPnl() > 0)
+                    .filter(t -> t.getDirection() == DireccionOperation.SHORT && t.getPnl() > 0)
                     .count();
             long shortLosses = trades.stream()
-                    .filter(t -> t.getDirection() == TradingManager.DireccionOperation.SHORT && t.getPnl() <= 0)
+                    .filter(t -> t.getDirection() == DireccionOperation.SHORT && t.getPnl() <= 0)
                     .count();
 
             String legendText = String.format(
@@ -1554,8 +1605,8 @@ public class ChartUtils {
         for (int i = 0; i < trades.size(); i++) {
             BackTestEngine.CompleteTrade trade = trades.get(i);
 
-            String direction = trade.getDirection() == TradingManager.DireccionOperation.LONG ? "LONG" :
-                    trade.getDirection() == TradingManager.DireccionOperation.SHORT ? "SHORT" : "NEUT";
+            String direction = trade.getDirection() == DireccionOperation.LONG ? "LONG" :
+                    trade.getDirection() == DireccionOperation.SHORT ? "SHORT" : "NEUT";
 
             String exitReason = trade.getExitReason().name()
                     .replace("LONG_", "")
