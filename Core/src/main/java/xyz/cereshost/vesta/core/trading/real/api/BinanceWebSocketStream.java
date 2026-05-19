@@ -215,4 +215,9 @@ public final class BinanceWebSocketStream extends BinanceWebSocket {
         exceptionHandler.accept(exception);
         throw exception;
     }
+
+    @Override
+    public @NotNull HashMap<String, Double> getBalance(@NotNull Boolean isFuture) {
+        throw new UnsupportedOperationException();
+    }
 }

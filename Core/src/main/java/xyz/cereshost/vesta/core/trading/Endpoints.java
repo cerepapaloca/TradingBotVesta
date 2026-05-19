@@ -14,7 +14,6 @@ public enum Endpoints {
     API4("https://api4.binance.com", false, false, true),
     API_GCP("https://api-gcp.binance.com", false, false, true),
     TESTNET("https://testnet.binance.vision", true, false, true),
-    API_TESTNET("https://api1.testnet.binance.vision", true, false, true),
     FAPI("https://fapi.binance.com", false, true, true),
     DEMO_FAPI("https://demo-fapi.binance.com", true, true, true),
     API_WSS_TEST("wss://ws-api.testnet.binance.vision/ws-api/v3", true, false, false),

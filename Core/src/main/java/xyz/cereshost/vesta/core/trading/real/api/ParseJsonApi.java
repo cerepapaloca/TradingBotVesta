@@ -24,6 +24,10 @@ public class ParseJsonApi {
         Set<SymbolConfigurable> symbols = new HashSet<>();
         for (JsonNode info : node.get("symbols")) {
             String symbol = info.get("symbol").asText();
+//            Iterator<String> iterator = info.fieldNames();
+//            while (iterator.hasNext()) {
+//                System.out.println(iterator.next());
+//            }
             symbols.add(
                     isFuture ?
                             new SymbolConfigurable(
@@ -107,6 +111,20 @@ public class ParseJsonApi {
             ));
         }
         return ticker24Hs;
+    }
+
+    public HashMap<String, Double> parseBalance(JsonNode node, Boolean isFuture) {
+        HashMap<String, Double> balances = new HashMap<>();
+        if  (isFuture) {
+            for (JsonNode root : node){
+                balances.put(root.get("asset").asText(), root.get("balance").asDouble());
+            }
+        }else {
+            for (JsonNode root : node.get("balances")){
+                balances.put(root.get("asset").asText(), root.get("balance").asDouble());
+            }
+        }
+        return balances;
     }
 
 

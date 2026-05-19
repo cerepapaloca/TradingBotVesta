@@ -51,14 +51,13 @@ public final class BinanceApiRest extends BaseConnector implements BinanceApi {
         super(Endpoints.FAPI);
 
         this.futureBaseUrl = isTestNet ? Endpoints.DEMO_FAPI : Endpoints.FAPI;
-        Endpoints best = getBestEndpoint();
-        this.spotBaseUrl = isTestNet ? Endpoints.API_TESTNET : Endpoints.API1;
+        this.spotBaseUrl = isTestNet ? Endpoints.TESTNET : useBest ? getBestEndpoint() : Endpoints.API;
     }
 
     public BinanceApiRest(String apiKey, String secretKey, boolean isTestNet, boolean useBest) {
         super(Endpoints.API1);
         this.futureBaseUrl = isTestNet ? Endpoints.DEMO_FAPI : Endpoints.FAPI;
-        this.spotBaseUrl = isTestNet ? Endpoints.API_TESTNET : Endpoints.API1;
+        this.spotBaseUrl = isTestNet ? Endpoints.TESTNET : useBest ? getBestEndpoint() : Endpoints.API;
     }
 
     @Override
@@ -109,7 +108,7 @@ public final class BinanceApiRest extends BaseConnector implements BinanceApi {
                            @NotNull DireccionOperation side,
                            @NotNull TypeOrder type,
                            @Nullable TimeInForce timeInForce,
-                           @NotNull Double quantityLeverageCoin,
+                           @NotNull Double quantity,
                            @Nullable Double price,
                            @NotNull Boolean reduceOnly,
                            @NotNull Boolean closePosition
@@ -120,19 +119,20 @@ public final class BinanceApiRest extends BaseConnector implements BinanceApi {
         params.put("symbol", symbol.name());
         params.put("side", side.getSide());
         params.put("type", type.name());
-        params.put("quantity", symbol.formatQuantity(quantityLeverageCoin));
-        params.put("closePosition", String.valueOf(closePosition));
+        params.put("quantity", symbol.formatQuantity(quantity));
+        if (symbol.getIsFuture()) params.put("closePosition", String.valueOf(closePosition));
         if (type.isLimit()) {
             if (timeInForce == null) throw new IllegalArgumentException("Se requiere TimeInForce para ordenes Limites");
             if (price == null) throw new IllegalArgumentException("Se requiere Price para ordenes Limites");
 
             params.put("timeInForce", timeInForce.name());
             params.put("price", symbol.formatPrice(price));
-
         }
         if (reduceOnly) params.put("reduceOnly", "true");
 
-        JsonNode root = sendSignedRequest("POST", "/fapi/v1/order", params);
+        JsonNode root = symbol.getIsFuture() ?
+                sendSignedRequest("POST", "/fapi/v1/order", params) :
+                sendSignedRequest("POST", "/api/v3/order", params);
         return root.get("orderId").asLong();
     }
     @Override
@@ -298,8 +298,8 @@ public final class BinanceApiRest extends BaseConnector implements BinanceApi {
            return exchangeInfoSpot;
         }
 
-        if (isFuture) exchangeInfo = sendPublicRequest("GET", "/api/v3/exchangeInfo", new TreeMap<>());
-        else exchangeInfo = sendPublicRequest("GET", "/fapi/v1/exchangeInfo", new TreeMap<>());
+        if (isFuture) exchangeInfo = sendPublicRequest("GET", "/fapi/v1/exchangeInfo", new TreeMap<>());
+        else exchangeInfo = sendPublicRequest("GET", "/api/v3/exchangeInfo", new TreeMap<>());
 
         ExchangeInfo result = ParseJsonApi.parseExchangeInfo(exchangeInfo, isFuture);
 
@@ -350,6 +350,15 @@ public final class BinanceApiRest extends BaseConnector implements BinanceApi {
     }
 
     @Override
+    public @NotNull HashMap<String, Double> getBalance(@NotNull Boolean isFuture) {
+        JsonNode node;
+        if (isFuture) node = sendPublicRequest("GET", "/fapi/v3/account", new TreeMap<>());
+        else node = sendPublicRequest("GET", "/api/v3/account", new TreeMap<>());
+
+        return ParseJsonApi.parseBalance(node, isFuture);
+    }
+
+    @Override
     public @NotNull Set<Ticker24H> getTicker24H(@Nullable Symbol symbol) {
         JsonNode node;
         if (symbol == null) node = sendPublicRequest("GET", "/api/v3/ticker/24hr", Map.of());
@@ -371,7 +380,7 @@ public final class BinanceApiRest extends BaseConnector implements BinanceApi {
         try {
             String queryString = buildQueryString(params);
             String signature = hmacSha256(queryString, apiKey.secret());
-            String finalUrl = futureBaseUrl + endpoint + "?" + queryString + "&signature=" + signature;
+            String finalUrl = getBaseURL(endpoint) + endpoint + "?" + queryString + "&signature=" + signature;
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(finalUrl))
@@ -408,7 +417,6 @@ public final class BinanceApiRest extends BaseConnector implements BinanceApi {
                     ? endpoint
                     : endpoint + "?" + queryString
             );
-
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(finalUrl))
                     .method(method, HttpRequest.BodyPublishers.noBody())

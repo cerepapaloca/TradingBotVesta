@@ -1,5 +1,6 @@
 package xyz.cereshost.vesta.core.trading.abitrage;
 
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import org.jetbrains.annotations.Blocking;
@@ -18,13 +19,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 @RequiredArgsConstructor
 public class TriangularArbitrage {
 
     private static final double PROFIT_EPSILON = 1e-12;
-    private static final double DEFAULT_FEE_RATE = 0.001; // 0.1% aprox
+    private static final double DEFAULT_FEE_RATE = 0.00075; // 0.075% aprox
     private static final int MIN_CYCLE_LENGTH = 3;
     private static final int MAX_CYCLE_LENGTH = 3;
 
@@ -37,6 +39,7 @@ public class TriangularArbitrage {
     @NotNull private final ConcurrentMap<String, BookTicker> liveTickers = new ConcurrentHashMap<>();
     @NotNull private final AtomicBoolean calculationInProgress = new AtomicBoolean(false);
     @NotNull private final AtomicBoolean calculationRequested = new AtomicBoolean(false);
+    @NotNull private final BlockingDeque<AtomicReference<BookTicker>> pendingUpdatedTicker = new LinkedBlockingDeque<>(256);
     @Nullable private volatile Executor calculationExecutor = null;
 
     @Blocking
@@ -70,11 +73,13 @@ public class TriangularArbitrage {
 
                 Set<String> symbolsToSubscribe = getSpotTradingSymbols(Objects.requireNonNull(exchangeInfoSpot), bookTicker24H);
                 liveTickers.keySet().retainAll(symbolsToSubscribe);
+                Consumer<BookTicker> listener = this::onBookTickerUpdate;
+                streamListener = listener;
                 binanceApi.getStream().subscribeIndividualSymbolBookTickerStreams(
                         symbolsToSubscribe,
-                        this::onBookTickerUpdate
+                        listener
                 );
-                requestCalculation();
+                requestCalculation(null);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 stopSearch();
@@ -89,7 +94,7 @@ public class TriangularArbitrage {
         });
     }
 
-    private void stopSearch() {
+    public void stopSearch() {
         started = false;
         Consumer<BookTicker> listener = streamListener;
         if (listener != null) {
@@ -98,20 +103,44 @@ public class TriangularArbitrage {
         streamListener = null;
         exchangeInfoSpot = null;
         liveTickers.clear();
+        pendingUpdatedTicker.clear();
         calculationRequested.set(false);
+        lastTriangular.clear();
     }
 
     private void onBookTickerUpdate(@NotNull BookTicker bookTicker) {
         if (!started) {
             return;
         }
-        liveTickers.put(bookTicker.symbol(), bookTicker);
-        requestCalculation();
+        requestCalculation(bookTicker);
     }
 
-    private void requestCalculation() {
+    private void requestCalculation(@Nullable BookTicker updatedTicker) {
+        if (updatedTicker != null) {
+            liveTickers.put(updatedTicker.symbol(), updatedTicker);
+            enqueueUpdatedTicker(new AtomicReference<>(updatedTicker));
+        } else {
+            enqueueUpdatedTicker(new AtomicReference<>(null));
+        }
+
         calculationRequested.set(true);
         tryStartCalculationLoop();
+    }
+
+    private void enqueueUpdatedTicker(@NotNull AtomicReference<BookTicker> updatedTickerRef) {
+        if (pendingUpdatedTicker.offerLast(updatedTickerRef)) {
+            return;
+        }
+
+        // Cola llena: descartamos el mÃ¡s antiguo para conservar el estado mÃ¡s reciente.
+        pendingUpdatedTicker.pollFirst();
+        if (pendingUpdatedTicker.offerLast(updatedTickerRef)) {
+            return;
+        }
+
+        // Fallback defensivo frente a carreras extremas.
+        pendingUpdatedTicker.clear();
+        pendingUpdatedTicker.offerLast(updatedTickerRef);
     }
 
     private void tryStartCalculationLoop() {
@@ -130,11 +159,19 @@ public class TriangularArbitrage {
             while (started && calculationRequested.getAndSet(false)) {
                 ExchangeInfo exchangeInfo = exchangeInfoSpot;
                 if (exchangeInfo == null) {
-                    continue;
+                    return;
                 }
+                // Coalescemos ráfagas: procesamos el evento más reciente disponible.
+                AtomicReference<BookTicker> updatedTickerRef = pendingUpdatedTicker.pollLast();
+                if (updatedTickerRef == null) {
+                    updatedTickerRef = pendingUpdatedTicker.pollFirst();
+                }
+                pendingUpdatedTicker.clear();
+                BookTicker updatedTicker = updatedTickerRef == null ? null : updatedTickerRef.get();
                 List<TriangularArbitrageOpportunity> list = findTriangularArbitrageOpportunities(
                         exchangeInfo,
-                        new HashMap<>(liveTickers)
+                        new HashMap<>(liveTickers),
+                        updatedTicker
                 );
                 onOpportunity.accept(list);
             }
@@ -259,8 +296,22 @@ public class TriangularArbitrage {
             @NotNull ExchangeInfo exchangeInfo,
             @NotNull Map<String, BookTicker> tickers
     ) {
+        return findTriangularArbitrageOpportunities(exchangeInfo, tickers, null);
+    }
 
-        Map<String, List<ArbitrageEdge>> outgoingByFromAsset = new HashMap<>();
+    private final ConcurrentMap<String, LifeTime> lastTriangular = new ConcurrentHashMap<>();
+
+    @SneakyThrows
+    public synchronized @NotNull List<TriangularArbitrageOpportunity> findTriangularArbitrageOpportunities(
+            @NotNull ExchangeInfo exchangeInfo,
+            @NotNull Map<String, BookTicker> tickers,
+            @Nullable BookTicker updatedTicker
+    ) {
+
+        Map<String, ArrayList<ArbitrageEdge>> outgoingByFromAsset = new HashMap<>();
+        String updatedSymbol = updatedTicker == null ? null : updatedTicker.symbol();
+        Set<String> trackedAssets = trackedAssetsFromLastTriangular();
+        Set<String> startAssetsToAnalyze = null;
 
         for (SymbolConfigurable symbolConfigurable : exchangeInfo.symbols()) {
             if (!MarketStatus.TRADING.equals(symbolConfigurable.getMarketStatus())) {
@@ -302,8 +353,8 @@ public class TriangularArbitrage {
             if (sellRate > 0.0) {
                 addEdge(outgoingByFromAsset, new ArbitrageEdge(
                         symbolName,
-                        new NameSymbol(baseAsset),
-                        new NameSymbol(quoteAsset),
+                        new NameAsset(baseAsset),
+                        new NameAsset(quoteAsset),
                         sellRate,
                         -Math.log(sellRate),
                         "SELL",
@@ -314,13 +365,23 @@ public class TriangularArbitrage {
             if (buyRate > 0.0) {
                 addEdge(outgoingByFromAsset, new ArbitrageEdge(
                         symbolName,
-                        new NameSymbol(quoteAsset),
-                        new NameSymbol(baseAsset),
+                        new NameAsset(quoteAsset),
+                        new NameAsset(baseAsset),
                         buyRate,
                         -Math.log(buyRate),
                         "BUY",
                         ask
                 ));
+            }
+
+            if ((updatedSymbol != null && updatedSymbol.equals(symbolName))
+                    || trackedAssets.contains(baseAsset)
+                    || trackedAssets.contains(quoteAsset)) {
+                if (startAssetsToAnalyze == null) {
+                    startAssetsToAnalyze = new LinkedHashSet<>(2);
+                }
+                startAssetsToAnalyze.add(baseAsset);
+                startAssetsToAnalyze.add(quoteAsset);
             }
         }
 
@@ -328,16 +389,33 @@ public class TriangularArbitrage {
             return List.of();
         }
 
+        if (updatedSymbol != null) {
+            if (startAssetsToAnalyze == null || startAssetsToAnalyze.isEmpty()) {
+                return List.of();
+            }
+            startAssetsToAnalyze.retainAll(outgoingByFromAsset.keySet());
+            if (startAssetsToAnalyze.isEmpty()) {
+                return List.of();
+            }
+        }
+
         Set<String> seenCycles = new HashSet<>();
         List<TriangularArbitrageOpportunity> opportunities = new ArrayList<>();
+        Set<String> startAssets = new LinkedHashSet<>();
+        startAssets.addAll(Objects.requireNonNullElseGet(startAssetsToAnalyze, outgoingByFromAsset::keySet));
+        startAssets.addAll(trackedAssets);
+        startAssets.retainAll(outgoingByFromAsset.keySet());
+        if (startAssets.isEmpty()) {
+            return List.of();
+        }
 
-        for (String startAsset : outgoingByFromAsset.keySet()) {
+        for (String startAsset : startAssets) {
             Deque<ArbitrageEdge> path = new ArrayDeque<>(MAX_CYCLE_LENGTH);
             Set<String> visitedAssets = new HashSet<>();
             visitedAssets.add(startAsset);
             searchCyclesFrom(
-                    new NameSymbol(startAsset),
-                    new NameSymbol(startAsset),
+                    new NameAsset(startAsset),
+                    new NameAsset(startAsset),
                     outgoingByFromAsset,
                     path,
                     new IntegerAtomic(0),
@@ -346,30 +424,40 @@ public class TriangularArbitrage {
                     opportunities
             );
         }
+        Set<String> activeCycleKeys = new HashSet<>();
+        for (TriangularArbitrageOpportunity opportunity : opportunities) {
+            activeCycleKeys.add(canonicalCycleKey(opportunity.assetsCycle()));
+        }
+        lastTriangular.keySet().removeIf(key -> !activeCycleKeys.contains(key));
 
         opportunities.sort(Comparator.comparingDouble(TriangularArbitrageOpportunity::profitPercent).reversed());
-        return opportunities;
+
+        return opportunities;/*.stream()
+                .filter(opportunity -> opportunity.edges().stream()
+                        .anyMatch(edge -> updatedSymbol.equals(edge.symbol())))
+                .toList();*/
     }
 
-    private void addEdge(@NotNull Map<String, List<ArbitrageEdge>> outgoingByFromAsset,
+
+    private void addEdge(@NotNull Map<String, ArrayList<ArbitrageEdge>> outgoingByFromAsset,
                          @NotNull ArbitrageEdge edge) {
         outgoingByFromAsset
-                .computeIfAbsent(edge.fromAsset().symbol, key -> new ArrayList<>())
+                .computeIfAbsent(edge.fromAsset().asset, key -> new ArrayList<>())
                 .add(edge);
     }
 
 
     private void searchCyclesFrom(
-            @NotNull NameSymbol startAsset,
-            @NotNull NameSymbol currentAsset,
-            @NotNull Map<String, List<ArbitrageEdge>> outgoingByFromAsset,
+            @NotNull TriangularArbitrage.NameAsset startAsset,
+            @NotNull TriangularArbitrage.NameAsset currentAsset,
+            @NotNull Map<String, ArrayList<ArbitrageEdge>> outgoingByFromAsset,
             @NotNull Deque<ArbitrageEdge> path,
             @NotNull IntegerAtomic sizePath,
             @NotNull Set<String> visitedAssets,
             @NotNull Set<String> seenCycles,
             @NotNull List<TriangularArbitrageOpportunity> opportunities
     ) {
-        List<ArbitrageEdge> outgoing = outgoingByFromAsset.get(currentAsset.symbol);
+        ArrayList<ArbitrageEdge> outgoing = outgoingByFromAsset.get(currentAsset.asset);
         if (outgoing == null || outgoing.isEmpty()) {
             return;
         }
@@ -378,9 +466,7 @@ public class TriangularArbitrage {
             int nextLength = sizePath.get() + 1;
 
 
-            if ((startAsset.hash
-                    -
-                    edge.toAsset.hash) == 0) {
+            if ((startAsset.hash == edge.toAsset.hash)) {
                 if (nextLength < MIN_CYCLE_LENGTH || nextLength > MAX_CYCLE_LENGTH) {
                     continue;
                 }
@@ -403,13 +489,13 @@ public class TriangularArbitrage {
             if (nextLength >= MAX_CYCLE_LENGTH) {
                 continue;
             }
-            if (visitedAssets.contains(edge.toAsset().symbol)) {
+            if (visitedAssets.contains(edge.toAsset().asset)) {
                 continue;
             }
 
             path.addLast(edge);
             sizePath.increment();
-            visitedAssets.add(edge.toAsset().symbol);
+            visitedAssets.add(edge.toAsset().asset);
             searchCyclesFrom(
                     startAsset,
                     edge.toAsset(),
@@ -420,7 +506,7 @@ public class TriangularArbitrage {
                     seenCycles,
                     opportunities
             );
-            visitedAssets.remove(edge.toAsset().symbol);
+            visitedAssets.remove(edge.toAsset().asset);
             sizePath.decrement();
             path.removeLast();
         }
@@ -433,7 +519,7 @@ public class TriangularArbitrage {
         }
 
         ArbitrageEdge first = cycleEdges.getFirst();
-        String startAsset = first.fromAsset().symbol;
+        String startAsset = first.fromAsset().asset;
         String currentAsset = startAsset;
 
         List<String> cycleAssets = new ArrayList<>(cycleLength + 1);
@@ -447,11 +533,11 @@ public class TriangularArbitrage {
 
         for (int i = 0; i < cycleLength; i++) {
             ArbitrageEdge edge = cycleEdges.get(i);
-            if (!currentAsset.equals(edge.fromAsset().symbol)) {
+            if (!currentAsset.equals(edge.fromAsset().asset)) {
                 return null;
             }
 
-            currentAsset = edge.toAsset().symbol;
+            currentAsset = edge.toAsset().asset;
             cycleAssets.add(currentAsset);
 
             rateProduct *= edge.rate();
@@ -475,13 +561,27 @@ public class TriangularArbitrage {
             return null;
         }
 
+        String cycleKey = canonicalCycleKey(cycleAssets);
+        LifeTime lifeTime = lastTriangular.computeIfAbsent(cycleKey, s -> new LifeTime()).nextTicks();
+
         return new TriangularArbitrageOpportunity(
                 cycleAssets,
                 List.copyOf(cycleEdges),
+                lifeTime,
                 rateProduct,
                 (rateProduct - 1.0) * 100.0,
                 totalWeight
         );
+    }
+
+    private @NotNull Set<String> trackedAssetsFromLastTriangular() {
+        Set<String> trackedAssets = new HashSet<>();
+        for (String cycleKey : lastTriangular.keySet()) {
+            String[] assets = cycleKey.split("->");
+            int limit = Math.max(0, assets.length - 1); // el último repite el inicio
+            trackedAssets.addAll(Arrays.asList(assets).subList(0, limit));
+        }
+        return trackedAssets;
     }
 
     private @NotNull String canonicalCycleKey(@NotNull List<String> cycleAssets) {
@@ -515,8 +615,8 @@ public class TriangularArbitrage {
 
     public record ArbitrageEdge(
             String symbol,
-            NameSymbol fromAsset,
-            NameSymbol toAsset,
+            NameAsset fromAsset,
+            NameAsset toAsset,
             double rate,
             double weight,
             String action,
@@ -526,19 +626,41 @@ public class TriangularArbitrage {
     public record TriangularArbitrageOpportunity(
             List<String> assetsCycle,
             List<ArbitrageEdge> edges,
+            LifeTime lifeTime,
             double rateProduct,
             double profitPercent,
             double totalWeight
     ) {}
 
-    public static class NameSymbol{
-        public final String symbol;
-        public final int hash;
+    @Getter
+    public static class LifeTime {
+        private final long dateOpen = System.currentTimeMillis();
+        private int ticks;
 
-        public NameSymbol(String symbol) {
-            this.symbol = symbol;
-            int h = 0;
-            for (byte b : symbol.getBytes(StandardCharsets.UTF_8)) {
+
+        public LifeTime nextTicks() {
+            this.ticks++;
+            return this;
+        }
+    }
+
+    public static class NameAsset {
+        public final String asset;
+        public final long hash;
+
+        private static final HashMap<String, Byte[]> cacheBytes = new HashMap<>();
+
+        public NameAsset(String asset) {
+            this.asset = asset;
+            long h = 0;
+            for (byte b : cacheBytes.computeIfAbsent(asset, a -> {
+                byte[] bytes = a.getBytes(StandardCharsets.UTF_8);
+                Byte[] byteArray = new Byte[bytes.length];
+                for (int i = 0; i < bytes.length; i++) {
+                    byteArray[i] = bytes[i];
+                }
+                return byteArray;
+            })) {
                 h = 7 * ((h + 37) << b);
             }
             this.hash = h;

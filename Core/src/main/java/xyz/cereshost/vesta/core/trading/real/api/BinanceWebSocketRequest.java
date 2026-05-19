@@ -70,6 +70,11 @@ public final class BinanceWebSocketRequest extends BinanceWebSocket {
         return exchangeInfoSpot;
     }
 
+    @Override
+    public @NotNull HashMap<String, Double> getBalance(@NotNull Boolean isFuture) {
+        throw new UnsupportedOperationException();
+    }
+
     public @NotNull Set<Ticker24H> getTicker24H(@Nullable Symbol symbol) {
         JsonNode node = (symbol == null)
                 ? sendPublicRequest("ticker.24hr", Map.of())

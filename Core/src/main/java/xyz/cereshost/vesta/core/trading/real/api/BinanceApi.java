@@ -84,6 +84,8 @@ public interface BinanceApi extends Notifiable {
 
     @NotNull Double getBalance(@NotNull Symbol symbol);
 
+    @NotNull HashMap<String, Double> getBalance(@NotNull Boolean isFuture);
+
     @NotNull Set<Ticker24H> getTicker24H(@Nullable Symbol symbol);
 
     void signContract();
